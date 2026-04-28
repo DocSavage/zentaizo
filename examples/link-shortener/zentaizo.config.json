@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "name": "link-shortener",
+  "description": "A small multi-repo URL shortener system used as a simple Zentaizo example.",
+  "sources": {
+    "repos": [
+      {
+        "name": "shortener-api",
+        "url": "https://github.com/example/shortener-api.git",
+        "ref": "main",
+        "description": "REST API for creating, resolving, and deleting short links"
+      },
+      {
+        "name": "shortener-web",
+        "url": "https://github.com/example/shortener-web.git",
+        "ref": "main",
+        "description": "Web UI for creating and managing links"
+      },
+      {
+        "name": "shortener-client",
+        "url": "https://github.com/example/shortener-client.git",
+        "ref": "main",
+        "description": "Client library used by scripts and integrations"
+      },
+      {
+        "name": "deployment",
+        "url": "https://github.com/example/shortener-deployment.git",
+        "ref": "main",
+        "description": "Deployment configuration and scheduled jobs"
+      }
+    ],
+    "docs": [
+      {
+        "name": "api-reference",
+        "url": "https://example.com/shortener/api",
+        "description": "Public API reference"
+      }
+    ],
+    "papers": [],
+    "notes": []
+  },
+  "summaries": {
+    "output_dir": "summaries",
+    "levels": ["system", "source", "module"]
+  }
+}

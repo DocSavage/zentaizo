@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "zentaizo"
+version = "0.1.0"
+description = "A hierarchical context workspace for AI assistants working across repos, docs, papers, and notes."
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+  { name = "Zentaizo contributors" }
+]
+dependencies = []
+
+[project.scripts]
+zentaizo = "zentaizo.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+.pixi/
+dist/
+build/
+*.egg-info/
+.DS_Store
+
+# Example/generated workspaces can contain many cloned repos and documents.
+*-atlas/
+*.lock.tmp
