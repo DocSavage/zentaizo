@@ -7,7 +7,8 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 
-CONFIG_NAME = "zentaizo.config.json"
+ATLAS_NAME = "zentaizo.atlas.json"
+LEGACY_CONFIG_NAME = "zentaizo.config.json"
 LOCK_NAME = "zentaizo.lock.json"
 BEGIN_MARKER = "<!-- BEGIN zentaizo -->"
 END_MARKER = "<!-- END zentaizo -->"
@@ -30,7 +31,7 @@ def write_json(path: pathlib.Path, data: dict) -> None:
     path.write_text(json.dumps(data, indent=2) + "\n")
 
 
-def default_config(name: str) -> dict:
+def default_atlas(name: str) -> dict:
     return {
         "version": 1,
         "name": name,
@@ -94,19 +95,30 @@ def workspace_readme(name: str) -> str:
 
 This is a Zentaizo workspace: a local context atlas for an AI assistant.
 
+## First Step
+
+This workspace intentionally starts without `{ATLAS_NAME}`. The first useful interaction is to ask an AI assistant to help identify the repos, docs, papers, notes, deployment material, and issue context that belong in this atlas.
+
+Example prompt:
+
+> Use the Zentaizo instructions in `AGENTS.md` to interview me and draft `{ATLAS_NAME}` for this project. Do not write to assistant memory or global rule files.
+
 ## Workflow
 
 ```bash
-# 1. Describe related sources.
-$EDITOR {CONFIG_NAME}
+# 1. Create the human-authored source atlas with AI assistance.
+$EDITOR {ATLAS_NAME}
 
-# 2. Fetch source snapshots and update {LOCK_NAME}.
+# 2. Check the source atlas shape.
+zentaizo validate
+
+# 3. Fetch source snapshots and update {LOCK_NAME}.
 zentaizo fetch
 
-# 3. Prepare hierarchical summaries.
+# 4. Prepare hierarchical summaries.
 zentaizo summarize
 
-# 4. Give another repository access to this context.
+# 5. Give another repository access to this context.
 zentaizo provide-info /path/to/repo-you-are-editing
 ```
 
@@ -128,6 +140,20 @@ def workspace_agents(name: str) -> str:
     return f"""# Assistant Context
 
 This directory is a Zentaizo workspace for `{name}`.
+
+## First Task
+
+If `{ATLAS_NAME}` is missing, make creating it the first task. Interview the user to identify the source material that defines this system, then draft `{ATLAS_NAME}` as the human-authored context atlas.
+
+Use the `zentaizo` skill if it is available. If it is not available, follow this workflow directly:
+
+1. Identify the system boundary: the product, service, research area, or ecosystem this workspace should explain.
+2. List core repositories, including services, frontends, clients, SDKs, shared libraries, schemas, deployment, tests, and examples.
+3. List durable docs, papers, specs, design notes, issue reports, traces, and local notes that future assistants should consult.
+4. Separate core sources from useful background. Put unresolved relevance or version questions in `summaries/open-questions.md`.
+5. Write `{ATLAS_NAME}` with explicit JSON: `version`, `name`, `description`, grouped `sources`, and summarization settings.
+
+Do not write to Claude Memory, ChatGPT Memory, global Codex memory, IDE-wide rule stores, or other personal memory systems unless the user explicitly asks. Keep durable project context in this workspace as committed markdown, JSON, and lock files.
 
 ## Source Consultation
 
@@ -163,8 +189,6 @@ def create_workspace(args: argparse.Namespace) -> int:
     ]:
         (target / subdir).mkdir(parents=True, exist_ok=True)
 
-    write_json(target / CONFIG_NAME, default_config(name))
-    write_json(target / LOCK_NAME, initial_lock(name))
     (target / "README.md").write_text(workspace_readme(name))
     (target / "AGENTS.md").write_text(workspace_agents(name))
     (target / ".gitignore").write_text(
@@ -180,13 +204,37 @@ def create_workspace(args: argparse.Namespace) -> int:
     )
 
     print(f"Created Zentaizo workspace: {target}")
-    print(f"Next: edit {target / CONFIG_NAME}")
+    print(f"Next: start an AI session in {target} to create {ATLAS_NAME}")
     return 0
+
+
+def find_atlas(workspace: pathlib.Path) -> pathlib.Path | None:
+    atlas = workspace / ATLAS_NAME
+    if atlas.exists():
+        return atlas
+
+    legacy = workspace / LEGACY_CONFIG_NAME
+    if legacy.exists():
+        return legacy
+
+    return None
+
+
+def missing_atlas_message(workspace: pathlib.Path) -> str:
+    return (
+        f"Missing source atlas: {workspace / ATLAS_NAME}\n"
+        f"Start an AI session in this workspace and ask it to help create {ATLAS_NAME} "
+        "from the relevant repos, docs, papers, notes, and issue context."
+    )
 
 
 def load_workspace(path: str) -> tuple[pathlib.Path, dict]:
     workspace = pathlib.Path(path).resolve()
-    config = read_json(workspace / CONFIG_NAME)
+    atlas = find_atlas(workspace)
+    if atlas is None:
+        raise SystemExit(missing_atlas_message(workspace))
+
+    config = read_json(atlas)
     return workspace, config
 
 
@@ -203,7 +251,15 @@ def source_groups(config: dict) -> dict:
 
 
 def validate_workspace(args: argparse.Namespace) -> int:
-    workspace, config = load_workspace(args.workspace)
+    workspace = pathlib.Path(args.workspace).resolve()
+    atlas = find_atlas(workspace)
+    if atlas is None:
+        print(f"{workspace}: invalid")
+        print(f"- Missing source atlas: {ATLAS_NAME}")
+        print(f"- First create {ATLAS_NAME} with AI assistance from this workspace.")
+        return 1
+
+    config = read_json(atlas)
     errors: list[str] = []
     sources = source_groups(config)
 
@@ -227,6 +283,7 @@ def validate_workspace(args: argparse.Namespace) -> int:
         return 1
 
     print(f"{workspace}: valid")
+    print(f"Atlas: {atlas.name}")
     print_counts(sources)
     return 0
 
@@ -242,10 +299,26 @@ def print_counts(sources: dict) -> None:
 
 
 def status_workspace(args: argparse.Namespace) -> int:
-    workspace, config = load_workspace(args.workspace)
+    workspace = pathlib.Path(args.workspace).resolve()
+    atlas = find_atlas(workspace)
+    if atlas is None:
+        print(f"Workspace: {workspace.name}")
+        print(f"Path: {workspace}")
+        print(f"Atlas: missing {ATLAS_NAME}")
+        print(f"Next: start an AI session here to create {ATLAS_NAME}.")
+        lock_path = workspace / LOCK_NAME
+        if lock_path.exists():
+            lock = read_json(lock_path)
+            print(f"Lock updated: {lock.get('updated_at', 'unknown')}")
+        else:
+            print(f"Lock: missing {LOCK_NAME}")
+        return 0
+
+    config = read_json(atlas)
     sources = source_groups(config)
     print(f"Workspace: {config.get('name', workspace.name)}")
     print(f"Path: {workspace}")
+    print(f"Atlas: {atlas.name}")
     print_counts(sources)
 
     lock_path = workspace / LOCK_NAME
@@ -273,7 +346,7 @@ def fetch_workspace(args: argparse.Namespace) -> int:
     workspace, config = load_workspace(args.workspace)
     sources = source_groups(config)
     repos = sources.get("repos", [])
-    lock = read_json(workspace / LOCK_NAME) if (workspace / LOCK_NAME).exists() else initial_lock(config["name"])
+    lock = read_json(workspace / LOCK_NAME) if (workspace / LOCK_NAME).exists() else initial_lock(config.get("name", workspace.name))
     locked_repos = []
 
     for repo in repos:
@@ -363,6 +436,7 @@ def summarize_workspace(args: argparse.Namespace) -> int:
 
 def build_reference_block(workspace: pathlib.Path, config: dict) -> str:
     name = config.get("name", workspace.name)
+    atlas = find_atlas(workspace) or (workspace / ATLAS_NAME)
     return "\n".join(
         [
             BEGIN_MARKER,
@@ -371,6 +445,7 @@ def build_reference_block(workspace: pathlib.Path, config: dict) -> str:
             f"This project can use the `{name}` Zentaizo workspace for broader system context:",
             "",
             f"- Workspace: `{workspace}`",
+            f"- Atlas: `{atlas}`",
             f"- Summaries: `{workspace / 'summaries'}`",
             f"- Repositories: `{workspace / 'repos'}`",
             f"- Lockfile: `{workspace / LOCK_NAME}`",
@@ -421,7 +496,7 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument("--name", help="display name for the workspace")
     create.set_defaults(func=create_workspace)
 
-    validate = sub.add_parser("validate", help="validate a workspace config")
+    validate = sub.add_parser("validate", help="validate a workspace atlas")
     validate.add_argument("workspace", nargs="?", default=".", help="workspace directory")
     validate.set_defaults(func=validate_workspace)
 

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Zentaizo"
+  short_description: "Build curated multi-source context atlases"
+  default_prompt: "Use $zentaizo to help define the repos, docs, papers, and notes that belong in this system atlas."

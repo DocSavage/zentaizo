@@ -4,10 +4,10 @@ A Zentaizo workspace is a local context atlas for one broader system.
 
 ```text
 my-system-atlas/
-  zentaizo.config.json
-  zentaizo.lock.json
   AGENTS.md
   README.md
+  zentaizo.atlas.json       # created after source discovery
+  zentaizo.lock.json        # written by fetch
 
   repos/
   docs/
@@ -17,9 +17,11 @@ my-system-atlas/
   sessions/
 ```
 
-## `zentaizo.config.json`
+New workspaces intentionally start without `zentaizo.atlas.json`. Its absence is a setup prompt: start an AI session in the workspace, use the generated `AGENTS.md` instructions, and create the atlas after identifying the relevant source material.
 
-This file is human-authored. It says which sources belong to the system.
+## `zentaizo.atlas.json`
+
+This file is human-authored. It says which sources belong to the system and why they matter.
 
 ```json
 {
@@ -52,7 +54,7 @@ Use branches or tags while exploring. Use commits when you need a fully reproduc
 
 ## `zentaizo.lock.json`
 
-This file is machine-authored. It records what was actually fetched.
+This file is machine-authored. It records what was actually fetched. It is written after a source atlas exists and `zentaizo fetch` resolves source versions.
 
 For repositories, the lock file should include:
 

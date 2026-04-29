@@ -19,11 +19,10 @@ An assistant can answer better questions and make better changes when it has a s
 
 ## Core Ideas
 
-- Big picture: capture the whole landscape of a system.
-- Level of detail: keep maps at different scales, from system overview to source files.
-- Navigation: start with summaries, then drill into specific repos, modules, or documents.
+- Big picture: facilitate human-guided documentation of the whole landscape of a system. 
+- Level of detail: keep summaries at different scales, from system overview to source files, drilling into specifics only when necessary.
 - Heterogeneous sources: include repos, docs, papers, notes, issue reports, and generated analysis.
-- Assistant use: give the model a map before it starts reading files.
+- Pinning associated repos: the LLM sandbox is not just one repos but associated repos, similar to a monorepo's utility for coherent, cross-system development.
 
 ## A Small Example
 
@@ -46,11 +45,15 @@ Zentaizo is meant to prepare the assistant to answer that first, then help make 
 The intended day-to-day interface is a normal command named `zentaizo`:
 
 ```bash
-zentaizo create link-shortener-atlas
-cd link-shortener-atlas
+zentaizo create zen-link-shortener
+cd zen-link-shortener
 
-# Edit the source list: repos, docs, papers, notes.
-$EDITOR zentaizo.config.json
+# Collaborate with your chosen LLM to identify the source material.
+# The generated AGENTS.md explains that the first task is to create zentaizo.atlas.json.
+# Ask: "Use the Zentaizo instructions here to interview me and draft zentaizo.atlas.json."
+
+# Check the atlas shape.
+zentaizo validate
 
 # Fetch pinned source snapshots and write zentaizo.lock.json.
 zentaizo fetch
@@ -82,7 +85,7 @@ pipx install -e .
 zentaizo --help
 ```
 
-Pixi can still be useful for development, but it does not need to be part of the user-facing workflow:
+If you prefer `pixi`:
 
 ```bash
 pixi install
@@ -90,14 +93,14 @@ pixi run install-cli
 zentaizo --help
 ```
 
-The important design choice is that `zentaizo ...` is the stable interface. `pixi run ...` is just one way to bootstrap it while developing the tool.
-
 ## What A Workspace Contains
 
+After source discovery and fetch, a workspace looks like:
+
 ```text
-link-shortener-atlas/
-  zentaizo.config.json      # human-authored source list
-  zentaizo.lock.json        # resolved commits, hashes, and snapshot metadata
+zen-link-shortener/
+  zentaizo.atlas.json       # human-authored context atlas, created after source discovery
+  zentaizo.lock.json        # resolved commits, hashes, and snapshot metadata, written by fetch
   AGENTS.md                 # assistant instructions for this context
 
   repos/                    # fetched source repositories
@@ -105,7 +108,7 @@ link-shortener-atlas/
   papers/                   # PDFs and specs
   notes/                    # issue reports, traces, design notes
   summaries/                # generated hierarchical summaries
-  sessions/                 # Q&A, debugging, and change-planning scratchpads
+  sessions/                 # Q&A, debugging, and planning
 ```
 
 ## Use Cases
@@ -113,7 +116,7 @@ link-shortener-atlas/
 - Q&A across a system: answer how multiple repos and docs fit together.
 - Debugging: trace an error through the service, client, deployment, and docs.
 - Integrated design: plan a change that affects several repos before editing one.
-- Implementation support: help an assistant modify the repo you are in while checking related repos for contracts and expectations.
+- Implementation support: help an assistant modify the repo you are in while checking related repos for contracts and expectations, or handle a coherent multi-repo modification.
 - Reproducible context: pin the exact commits and document snapshots used for an answer.
 
 ## Status
@@ -121,7 +124,7 @@ link-shortener-atlas/
 This is a starter repository. The first useful milestone is a simple local workflow:
 
 1. Create a workspace.
-2. Declare sources in `zentaizo.config.json`.
+2. Use the workspace `AGENTS.md` and Zentaizo skill to identify sources and create `zentaizo.atlas.json`.
 3. Fetch repositories and write `zentaizo.lock.json`.
 4. Generate or prepare hierarchical summaries.
 5. Inject context instructions into a target repo.

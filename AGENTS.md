@@ -11,8 +11,9 @@ Keep the top-level experience simple: a developer should understand the problem,
 ```bash
 python -m zentaizo --help
 python -m zentaizo create /tmp/example-atlas
-python -m zentaizo validate /tmp/example-atlas
 python -m zentaizo status /tmp/example-atlas
+# After creating /tmp/example-atlas/zentaizo.atlas.json:
+python -m zentaizo validate /tmp/example-atlas
 ```
 
 After editable installation:
@@ -25,7 +26,7 @@ zentaizo --help
 
 - Keep README-level explanations short and example-driven.
 - Put detailed design material in `docs/`.
-- Treat `zentaizo.config.json` as human-authored intent.
+- Treat `zentaizo.atlas.json` as human-authored intent.
 - Treat `zentaizo.lock.json` as machine-authored resolved state.
 - Prefer explicit, boring JSON over clever configuration syntax.
 - Do not require Pixi for normal end-user command examples.

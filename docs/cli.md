@@ -52,25 +52,25 @@ The design rule is that `zentaizo` is the product interface. `python -m zentaizo
 zentaizo create PATH
 ```
 
-Creates a workspace with a config file, lock file, source directories, summaries directory, and assistant instructions.
+Creates a workspace shell with source directories, summaries directory, and assistant instructions. It does not create `zentaizo.atlas.json`; the first AI-assisted setup step is to identify the source material and create that human-authored atlas.
 
 ```bash
 zentaizo validate [PATH]
 ```
 
-Checks that the workspace config has the required shape.
+Checks that `zentaizo.atlas.json` exists and has the required shape. Legacy `zentaizo.config.json` workspaces are still readable.
 
 ```bash
 zentaizo status [PATH]
 ```
 
-Shows source counts and lock status.
+Shows source counts and lock status. If the atlas is missing, shows the setup prompt instead of failing.
 
 ```bash
 zentaizo fetch [PATH]
 ```
 
-Fetches repositories listed in `zentaizo.config.json` and records exact commits in `zentaizo.lock.json`.
+Fetches repositories listed in `zentaizo.atlas.json` and records exact commits in `zentaizo.lock.json`.
 
 ```bash
 zentaizo summarize [PATH]
