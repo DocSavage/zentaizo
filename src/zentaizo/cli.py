@@ -168,6 +168,16 @@ Use this order unless the user asks for something more specific:
 5. Use `notes/` for traces, issue reports, and local decisions.
 
 Prefer claims grounded in `zentaizo.lock.json` and source paths.
+
+## Recording Work in `sessions/`
+
+`sessions/` is the durable trail of how this workspace has been used. Prefer writing to it over leaving substantive work only in chat history. Three subdirectories already exist:
+
+- `sessions/questions/` — Q&A logs. When the user asks a substantive cross-repo question and you produce a researched answer, save the question, the answer, and source citations as `sessions/questions/YYYY-MM-DD-<slug>.md`.
+- `sessions/debugging/` — traces, hypotheses, and resolutions. When investigating a bug across the atlas, save the trace and final root cause as `sessions/debugging/YYYY-MM-DD-<slug>.md`.
+- `sessions/changes/` — implementation plans for multi-repo changes. Before editing in earnest, save the plan (problem, files involved, step-by-step approach, verification) as `sessions/changes/YYYY-MM-DD-<slug>.md` so future sessions can resume from the same plan.
+
+Filenames should sort chronologically. The slug should be 2–5 hyphenated words describing the topic (`shortener-link-expiration-contract`, not `plan1`).
 """
 
 

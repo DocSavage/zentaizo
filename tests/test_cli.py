@@ -31,6 +31,9 @@ class CliTests(unittest.TestCase):
             self.assertIn("If `zentaizo.atlas.json` is missing", agents)
             self.assertIn("Do not write to Claude Memory", agents)
             self.assertIn("skills/curate-atlas.md", agents)
+            self.assertIn("sessions/questions/", agents)
+            self.assertIn("sessions/debugging/", agents)
+            self.assertIn("sessions/changes/", agents)
 
             text = output.getvalue()
             self.assertIn("Created Zentaizo workspace", text)
