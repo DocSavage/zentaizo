@@ -15,6 +15,8 @@ my-system-atlas/
   notes/
   summaries/
   sessions/
+  skills/
+    curate-atlas.md         # model-agnostic interview procedure
 ```
 
 New workspaces intentionally start without `zentaizo.atlas.json`. Its absence is a setup prompt: start an AI session in the workspace, use the generated `AGENTS.md` instructions, and create the atlas after identifying the relevant source material.
@@ -103,3 +105,9 @@ sessions/
 ```
 
 These are useful for preserving the reasoning behind an answer or implementation plan.
+
+## Skills
+
+`skills/` holds plain-markdown procedures for any LLM-driven coding tool (Claude Code, Codex CLI, Gemini CLI, Aider, etc.). Each file describes one task. There is no YAML frontmatter and no tool-specific directory layout — discovery happens through `AGENTS.md`, which is the entrypoint every model-agnostic coding assistant reads first.
+
+The bundled `skills/curate-atlas.md` walks the assistant through interviewing the user and populating `zentaizo.atlas.json`. It explicitly does not write to host-tool memory (CLAUDE.md, GEMINI.md, `.codex/`, `.aider.conf.yml`, etc.); the atlas describes the *system*, while those files describe the *user*.

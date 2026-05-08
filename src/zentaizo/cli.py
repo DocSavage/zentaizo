@@ -3,9 +3,11 @@ from __future__ import annotations
 import argparse
 import json
 import pathlib
+import shutil
 import subprocess
 import sys
 from datetime import datetime, timezone
+from importlib import resources
 
 ATLAS_NAME = "zentaizo.atlas.json"
 LEGACY_CONFIG_NAME = "zentaizo.config.json"
@@ -101,7 +103,7 @@ This workspace intentionally starts without `{ATLAS_NAME}`. The first useful int
 
 Example prompt:
 
-> Use the Zentaizo instructions in `AGENTS.md` to interview me and draft `{ATLAS_NAME}` for this project. Do not write to assistant memory or global rule files.
+> Use the Zentaizo instructions in `AGENTS.md` and the procedure in `skills/curate-atlas.md` to interview me and draft `{ATLAS_NAME}` for this project. Do not write to assistant memory or global rule files.
 
 ## Workflow
 
@@ -145,7 +147,7 @@ This directory is a Zentaizo workspace for `{name}`.
 
 If `{ATLAS_NAME}` is missing, make creating it the first task. Interview the user to identify the source material that defines this system, then draft `{ATLAS_NAME}` as the human-authored context atlas.
 
-Use the `zentaizo` skill if it is available. If it is not available, follow this workflow directly:
+Read `skills/curate-atlas.md` for the full interview procedure and follow it. (If your host tool also exposes a `zentaizo` or `curate-atlas` skill, that skill loads the same file.) If `skills/curate-atlas.md` is missing, follow this workflow directly:
 
 1. Identify the system boundary: the product, service, research area, or ecosystem this workspace should explain.
 2. List core repositories, including services, frontends, clients, SDKs, shared libraries, schemas, deployment, tests, and examples.
@@ -167,6 +169,25 @@ Use this order unless the user asks for something more specific:
 
 Prefer claims grounded in `zentaizo.lock.json` and source paths.
 """
+
+
+def install_skills_into_workspace(target: pathlib.Path) -> list[str]:
+    """Copy the bundled model-agnostic skill files into <target>/skills/.
+
+    Returns the list of skill filenames installed.
+    """
+    src = resources.files("zentaizo").joinpath("templates/skills")
+    dst = target / "skills"
+    dst.mkdir(parents=True, exist_ok=True)
+
+    installed: list[str] = []
+    for entry in src.iterdir():
+        if not entry.is_file() or not entry.name.endswith(".md"):
+            continue
+        with resources.as_file(entry) as src_path:
+            shutil.copy2(src_path, dst / entry.name)
+        installed.append(entry.name)
+    return installed
 
 
 def create_workspace(args: argparse.Namespace) -> int:
@@ -202,6 +223,11 @@ def create_workspace(args: argparse.Namespace) -> int:
             ]
         )
     )
+
+    if not getattr(args, "no_skills", False):
+        installed = install_skills_into_workspace(target)
+        if installed:
+            print(f"Installed skills: {', '.join(sorted(installed))}")
 
     print(f"Created Zentaizo workspace: {target}")
     print(f"Next: start an AI session in {target} to create {ATLAS_NAME}")
@@ -494,6 +520,11 @@ def build_parser() -> argparse.ArgumentParser:
     create = sub.add_parser("create", help="create a new Zentaizo workspace")
     create.add_argument("path", help="workspace directory to create")
     create.add_argument("--name", help="display name for the workspace")
+    create.add_argument(
+        "--no-skills",
+        action="store_true",
+        help="skip copying bundled skills/ markdown into the workspace",
+    )
     create.set_defaults(func=create_workspace)
 
     validate = sub.add_parser("validate", help="validate a workspace atlas")

@@ -30,11 +30,34 @@ class CliTests(unittest.TestCase):
             agents = (workspace / "AGENTS.md").read_text()
             self.assertIn("If `zentaizo.atlas.json` is missing", agents)
             self.assertIn("Do not write to Claude Memory", agents)
+            self.assertIn("skills/curate-atlas.md", agents)
 
             text = output.getvalue()
             self.assertIn("Created Zentaizo workspace", text)
             self.assertIn("Missing source atlas", text)
             self.assertIn("Atlas: missing zentaizo.atlas.json", text)
+
+    def test_create_installs_curate_atlas_skill(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "skill-atlas"
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(main(["create", str(workspace)]), 0)
+
+            skill = workspace / "skills" / "curate-atlas.md"
+            self.assertTrue(skill.exists())
+            body = skill.read_text()
+            self.assertIn("Curate the Zentaizo Atlas", body)
+            self.assertNotIn("---\nname:", body[:200])
+
+    def test_create_no_skills_flag(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "bare-atlas"
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(main(["create", str(workspace), "--no-skills"]), 0)
+
+            self.assertFalse((workspace / "skills" / "curate-atlas.md").exists())
 
     def test_validate_status_and_summarize_with_atlas(self):
         with tempfile.TemporaryDirectory() as tmp:
