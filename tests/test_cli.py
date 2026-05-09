@@ -115,6 +115,87 @@ class CliTests(unittest.TestCase):
             self.assertIn("missing url", text)
             self.assertIn("missing ref", text)
 
+    def test_validate_accepts_role_field(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "role-atlas"
+            workspace.mkdir()
+            (workspace / "zentaizo.atlas.json").write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "name": "role-atlas",
+                        "sources": {
+                            "repos": [
+                                {
+                                    "name": "core",
+                                    "url": "https://example.com/core.git",
+                                    "ref": "main",
+                                    "role": "edit",
+                                },
+                                {
+                                    "name": "ref-only",
+                                    "url": "https://example.com/ref.git",
+                                    "ref": "main",
+                                    "role": "reference",
+                                },
+                                {
+                                    "name": "implicit",
+                                    "url": "https://example.com/impl.git",
+                                    "ref": "main",
+                                },
+                            ],
+                            "docs": [],
+                            "papers": [],
+                            "notes": [],
+                        },
+                    }
+                )
+            )
+
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                self.assertEqual(main(["validate", str(workspace)]), 0)
+
+            text = output.getvalue()
+            self.assertIn("valid", text)
+            self.assertIn("3 repos (1 edit, 2 reference)", text)
+
+    def test_validate_rejects_unknown_role(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "bad-role-atlas"
+            workspace.mkdir()
+            (workspace / "zentaizo.atlas.json").write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "name": "bad-role",
+                        "sources": {
+                            "repos": [
+                                {
+                                    "name": "core",
+                                    "url": "https://example.com/core.git",
+                                    "ref": "main",
+                                    "role": "writable",
+                                }
+                            ],
+                            "docs": [],
+                            "papers": [],
+                            "notes": [],
+                        },
+                    }
+                )
+            )
+
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                self.assertEqual(main(["validate", str(workspace)]), 1)
+
+            text = output.getvalue()
+            self.assertIn("invalid role", text)
+            self.assertIn("'writable'", text)
+            self.assertIn("'edit'", text)
+            self.assertIn("'reference'", text)
+
     def test_legacy_config_file_still_validates(self):
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp) / "legacy-atlas"

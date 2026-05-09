@@ -22,7 +22,8 @@ An assistant can answer better questions and make better changes when it has a s
 - Big picture: facilitate human-guided documentation of the whole landscape of a system. 
 - Level of detail: keep summaries at different scales, from system overview to source files, drilling into specifics only when necessary.
 - Heterogeneous sources: include repos, docs, papers, notes, issue reports, and generated analysis.
-- Pinning associated repos: the LLM sandbox is not just one repos but associated repos, similar to a monorepo's utility for coherent, cross-system development.
+- Pinning associated repos: the LLM sandbox is not just one repo but associated repos, similar to a monorepo's utility for coherent, cross-system development.
+- Edit vs reference: each repo declares whether it is editable in this workspace (`role: "edit"`) or read-only context (`role: "reference"`). `zentaizo fetch` honors the split — edit repos keep their working tree across fetches, reference repos re-resolve their pins. The split also drives sandbox isolation: editable repos can be mounted read-write into an AI-friendly container, reference repos read-only.
 
 ## A Small Example
 

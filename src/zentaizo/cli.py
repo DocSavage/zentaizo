@@ -15,6 +15,9 @@ LOCK_NAME = "zentaizo.lock.json"
 BEGIN_MARKER = "<!-- BEGIN zentaizo -->"
 END_MARKER = "<!-- END zentaizo -->"
 
+VALID_ROLES = ("edit", "reference")
+DEFAULT_ROLE = "reference"
+
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
@@ -44,18 +47,21 @@ def default_atlas(name: str) -> dict:
                     "name": "shortener-api",
                     "url": "https://github.com/example/shortener-api.git",
                     "ref": "main",
+                    "role": "edit",
                     "description": "REST API for creating and resolving short links",
                 },
                 {
                     "name": "shortener-web",
                     "url": "https://github.com/example/shortener-web.git",
                     "ref": "main",
+                    "role": "reference",
                     "description": "Web UI for managing short links",
                 },
                 {
                     "name": "shortener-client",
                     "url": "https://github.com/example/shortener-client.git",
                     "ref": "main",
+                    "role": "reference",
                     "description": "Client library used by scripts and integrations",
                 },
             ],
@@ -286,6 +292,20 @@ def source_groups(config: dict) -> dict:
     }
 
 
+def repo_role(repo: dict) -> str:
+    """Return the role for a repo entry, normalized to a known value."""
+    role = repo.get("role")
+    if role in VALID_ROLES:
+        return role
+    return DEFAULT_ROLE
+
+
+def count_roles(repos: list[dict]) -> tuple[int, int]:
+    """Return (edit_count, reference_count) across the given repo list."""
+    edit_count = sum(1 for repo in repos if repo_role(repo) == "edit")
+    return edit_count, len(repos) - edit_count
+
+
 def validate_workspace(args: argparse.Namespace) -> int:
     workspace = pathlib.Path(args.workspace).resolve()
     atlas = find_atlas(workspace)
@@ -306,6 +326,11 @@ def validate_workspace(args: argparse.Namespace) -> int:
         for field in ["name", "url", "ref"]:
             if not repo.get(field):
                 errors.append(f"repos[{index}] is missing {field}")
+        if "role" in repo and repo["role"] not in VALID_ROLES:
+            allowed = ", ".join(repr(r) for r in VALID_ROLES)
+            errors.append(
+                f"repos[{index}] has invalid role {repo['role']!r}; expected one of {allowed}"
+            )
 
     for group in ["docs", "papers", "notes"]:
         for index, item in enumerate(sources.get(group, []), start=1):
@@ -325,13 +350,75 @@ def validate_workspace(args: argparse.Namespace) -> int:
 
 
 def print_counts(sources: dict) -> None:
+    repos = sources.get("repos", [])
+    edit_count, ref_count = count_roles(repos)
+    repo_part = f"{len(repos)} repos"
+    if repos:
+        repo_part += f" ({edit_count} edit, {ref_count} reference)"
     print(
         "Sources: "
-        f"{len(sources.get('repos', []))} repos, "
+        f"{repo_part}, "
         f"{len(sources.get('docs', []))} docs, "
         f"{len(sources.get('papers', []))} papers, "
         f"{len(sources.get('notes', []))} notes"
     )
+
+
+def _locked_repo_index(lock: dict) -> dict[str, dict]:
+    return {entry.get("name"): entry for entry in lock.get("sources", {}).get("repos", [])}
+
+
+def _print_repo_status(workspace: pathlib.Path, repo: dict, locked: dict | None) -> None:
+    name = repo["name"]
+    role = repo_role(repo)
+    dst = workspace / "repos" / name
+    role_tag = f"{name} ({role})"
+
+    if not dst.exists():
+        print(f"  {role_tag}: not fetched yet")
+        return
+
+    head_sha = try_run_git(["rev-parse", "HEAD"], cwd=dst)
+    if head_sha is None:
+        print(f"  {role_tag}: not a git repo at {dst}")
+        return
+
+    branch = try_run_git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=dst) or "?"
+    is_dirty = working_tree_dirty(dst)
+    locked_sha = (locked or {}).get("commit")
+
+    if role == "edit":
+        details = [f"branch: {branch}"]
+        if locked_sha and head_sha == locked_sha:
+            details.append("at lock SHA (unchanged)")
+        elif locked_sha:
+            details.append(f"HEAD={head_sha[:12]} lock={locked_sha[:12]}")
+        if is_dirty:
+            details.append("dirty")
+        print(f"  {role_tag}: " + ", ".join(details))
+
+        if not is_dirty:
+            upstream_sha = try_run_git(
+                ["rev-parse", "--verify", "--quiet", f"origin/{repo['ref']}"], cwd=dst
+            ) or try_run_git(["rev-parse", "--verify", repo["ref"]], cwd=dst)
+            if (
+                upstream_sha
+                and upstream_sha != head_sha
+                and is_ancestor(dst, head_sha, upstream_sha)
+            ):
+                ahead = commits_between(dst, head_sha, upstream_sha)
+                print(f"      upstream {repo['ref']} is {ahead} commit(s) ahead")
+                print(f"      -> git -C {dst} rebase {upstream_sha}")
+        return
+
+    details = [f"pin: {repo['ref']}"]
+    if locked_sha and head_sha != locked_sha:
+        details.append(f"DRIFT: HEAD={head_sha[:12]} lock={locked_sha[:12]}")
+    elif is_dirty:
+        details.append("DIRTY working tree")
+    else:
+        details.append("clean")
+    print(f"  {role_tag}: " + ", ".join(details))
 
 
 def status_workspace(args: argparse.Namespace) -> int:
@@ -358,10 +445,24 @@ def status_workspace(args: argparse.Namespace) -> int:
     print_counts(sources)
 
     lock_path = workspace / LOCK_NAME
-    if lock_path.exists():
-        lock = read_json(lock_path)
+    lock = read_json(lock_path) if lock_path.exists() else None
+    locked_index = _locked_repo_index(lock) if lock else {}
+
+    repos = sources.get("repos", [])
+    edit_repos = [r for r in repos if repo_role(r) == "edit"]
+    ref_repos = [r for r in repos if repo_role(r) == "reference"]
+
+    if edit_repos:
+        print("Edit repos:")
+        for repo in edit_repos:
+            _print_repo_status(workspace, repo, locked_index.get(repo["name"]))
+    if ref_repos:
+        print("Reference repos:")
+        for repo in ref_repos:
+            _print_repo_status(workspace, repo, locked_index.get(repo["name"]))
+
+    if lock:
         print(f"Lock updated: {lock.get('updated_at', 'unknown')}")
-        print(f"Locked repos: {len(lock.get('sources', {}).get('repos', []))}")
     else:
         print(f"Lock: missing {LOCK_NAME}")
     return 0
@@ -378,38 +479,175 @@ def run_git(args: list[str], cwd: pathlib.Path | None = None) -> str:
     return result.stdout.strip()
 
 
+def try_run_git(args: list[str], cwd: pathlib.Path | None = None) -> str | None:
+    """Run git, returning stdout on success or None on failure (silent)."""
+    result = subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip()
+
+
+def working_tree_dirty(dst: pathlib.Path) -> bool:
+    return bool(run_git(["status", "--porcelain"], cwd=dst))
+
+
+def resolve_upstream_sha(dst: pathlib.Path, ref: str) -> str:
+    """Resolve the upstream version of ``ref`` after a ``git fetch``.
+
+    Tries ``origin/<ref>`` first (handles branches), then ``<ref>`` (handles tags
+    and explicit SHAs). Raises if neither resolves.
+    """
+    sha = try_run_git(["rev-parse", "--verify", "--quiet", f"origin/{ref}"], cwd=dst)
+    if sha:
+        return sha
+    return run_git(["rev-parse", "--verify", ref], cwd=dst)
+
+
+def is_ancestor(dst: pathlib.Path, ancestor_sha: str, descendant_sha: str) -> bool:
+    """True if ``ancestor_sha`` is reachable from ``descendant_sha``."""
+    if ancestor_sha == descendant_sha:
+        return True
+    result = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", ancestor_sha, descendant_sha],
+        cwd=dst,
+        capture_output=True,
+    )
+    return result.returncode == 0
+
+
+def commits_between(dst: pathlib.Path, ancestor_sha: str, descendant_sha: str) -> int:
+    """Count commits in ``ancestor_sha..descendant_sha`` (0 if not ancestor)."""
+    if ancestor_sha == descendant_sha:
+        return 0
+    output = try_run_git(
+        ["rev-list", "--count", f"{ancestor_sha}..{descendant_sha}"],
+        cwd=dst,
+    )
+    if output is None:
+        return 0
+    try:
+        return int(output)
+    except ValueError:
+        return 0
+
+
+def fetch_reference_repo(workspace: pathlib.Path, repo: dict) -> dict:
+    name = repo["name"]
+    dst = workspace / "repos" / name
+
+    if dst.exists():
+        if working_tree_dirty(dst):
+            raise SystemExit(
+                f"{name} (reference) has local changes; refusing to overwrite. "
+                f"Discard them with `git -C {dst} checkout .` or change the role to 'edit'."
+            )
+        print(f"Fetching {name} (reference)...")
+        run_git(["fetch", "--tags", "--prune"], cwd=dst)
+        run_git(["checkout", repo["ref"]], cwd=dst)
+    else:
+        print(f"Cloning {name} (reference)...")
+        run_git(["clone", repo["url"], str(dst)])
+        run_git(["checkout", repo["ref"]], cwd=dst)
+
+    commit = run_git(["rev-parse", "HEAD"], cwd=dst)
+    print(f"Locked {name} @ {commit[:12]}")
+    return {
+        "name": name,
+        "url": repo["url"],
+        "ref": repo["ref"],
+        "role": "reference",
+        "commit": commit,
+        "path": str(dst.relative_to(workspace)),
+        "dirty": False,
+        "fetched_at": utc_now(),
+    }
+
+
+def fetch_edit_repo(workspace: pathlib.Path, repo: dict, do_rebase: bool) -> dict:
+    name = repo["name"]
+    dst = workspace / "repos" / name
+
+    if not dst.exists():
+        print(f"Cloning {name} (edit)...")
+        run_git(["clone", repo["url"], str(dst)])
+        run_git(["checkout", repo["ref"]], cwd=dst)
+        commit = run_git(["rev-parse", "HEAD"], cwd=dst)
+        print(f"Locked {name} @ {commit[:12]} — create a branch before committing")
+        return {
+            "name": name,
+            "url": repo["url"],
+            "ref": repo["ref"],
+            "role": "edit",
+            "commit": commit,
+            "path": str(dst.relative_to(workspace)),
+            "dirty": False,
+            "fetched_at": utc_now(),
+        }
+
+    print(f"Fetching {name} (edit)...")
+    run_git(["fetch", "--tags", "--prune"], cwd=dst)
+    upstream_sha = resolve_upstream_sha(dst, repo["ref"])
+    head_sha = run_git(["rev-parse", "HEAD"], cwd=dst)
+    is_dirty = working_tree_dirty(dst)
+    behind = (
+        head_sha != upstream_sha and is_ancestor(dst, head_sha, upstream_sha)
+    )
+    behind_count = commits_between(dst, head_sha, upstream_sha) if behind else 0
+
+    if behind and not is_dirty and do_rebase:
+        run_git(["rebase", upstream_sha], cwd=dst)
+        head_sha = run_git(["rev-parse", "HEAD"], cwd=dst)
+        is_dirty = working_tree_dirty(dst)
+        print(f"  rebased onto {repo['ref']} @ {upstream_sha[:12]}")
+    elif behind and not is_dirty:
+        print(
+            f"  HEAD={head_sha[:12]} is behind {repo['ref']}={upstream_sha[:12]} "
+            f"by {behind_count} commit(s); working tree clean"
+        )
+        print(f"  to advance:  git -C {dst} rebase {upstream_sha}")
+        print(f"  or run:      zentaizo fetch --rebase")
+    else:
+        dirty_label = "dirty" if is_dirty else "clean"
+        print(
+            f"  HEAD={head_sha[:12]} ({dirty_label}); upstream {repo['ref']}={upstream_sha[:12]}"
+        )
+
+    print(f"Locked {name} @ upstream {upstream_sha[:12]}")
+    return {
+        "name": name,
+        "url": repo["url"],
+        "ref": repo["ref"],
+        "role": "edit",
+        "commit": upstream_sha,
+        "head": head_sha,
+        "path": str(dst.relative_to(workspace)),
+        "dirty": is_dirty,
+        "fetched_at": utc_now(),
+    }
+
+
 def fetch_workspace(args: argparse.Namespace) -> int:
     workspace, config = load_workspace(args.workspace)
     sources = source_groups(config)
     repos = sources.get("repos", [])
-    lock = read_json(workspace / LOCK_NAME) if (workspace / LOCK_NAME).exists() else initial_lock(config.get("name", workspace.name))
-    locked_repos = []
+    lock = (
+        read_json(workspace / LOCK_NAME)
+        if (workspace / LOCK_NAME).exists()
+        else initial_lock(config.get("name", workspace.name))
+    )
+    do_rebase = bool(getattr(args, "rebase", False))
+    locked_repos: list[dict] = []
 
     for repo in repos:
-        name = repo["name"]
-        dst = workspace / "repos" / name
-        if not dst.exists():
-            print(f"Cloning {name}...")
-            run_git(["clone", repo["url"], str(dst)])
+        if repo_role(repo) == "edit":
+            locked_repos.append(fetch_edit_repo(workspace, repo, do_rebase))
         else:
-            print(f"Fetching {name}...")
-
-        run_git(["fetch", "--tags", "--prune"], cwd=dst)
-        run_git(["checkout", repo["ref"]], cwd=dst)
-        commit = run_git(["rev-parse", "HEAD"], cwd=dst)
-        dirty = bool(run_git(["status", "--porcelain"], cwd=dst))
-        locked_repos.append(
-            {
-                "name": name,
-                "url": repo["url"],
-                "ref": repo["ref"],
-                "commit": commit,
-                "path": str(dst.relative_to(workspace)),
-                "dirty": dirty,
-                "fetched_at": utc_now(),
-            }
-        )
-        print(f"Locked {name} @ {commit[:12]}")
+            locked_repos.append(fetch_reference_repo(workspace, repo))
 
     lock["updated_at"] = utc_now()
     lock.setdefault("sources", {})["repos"] = locked_repos
@@ -547,6 +785,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     fetch = sub.add_parser("fetch", help="fetch repo snapshots and update the lock file")
     fetch.add_argument("workspace", nargs="?", default=".", help="workspace directory")
+    fetch.add_argument(
+        "--rebase",
+        action="store_true",
+        help="rebase clean edit repos that are behind their upstream ref",
+    )
     fetch.set_defaults(func=fetch_workspace)
 
     summarize = sub.add_parser("summarize", help="write a prompt for hierarchical summaries")

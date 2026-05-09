@@ -48,9 +48,18 @@ Ask one question at a time. Wait for an answer. Do not pre-fill answers the user
 
 Ask: "What is the primary code that makes this system run, or are we starting a greenfield project?"
 
-- For each repo, collect: `name`, `url` (https or ssh), `ref` (see Step 7), and a 1-line `description`.
+- For each repo, collect: `name`, `url` (https or ssh), `ref` (see Step 7), `role` (see Step 2.5), and a 1-line `description`.
 - "Central" means: editing it changes the system's behavior. Other code calls it, depends on it, or wraps it.
 - Greenfield case: the user may not have a repo yet. That's fine — note the intent in the atlas description and revisit later.
+
+### Step 2.5 — Edit or reference?
+
+For each repo, ask: "Will the user edit this repo in this workspace, or read it for context?"
+
+- **`role: "edit"`** — code that will be modified during this work. The atlas pins a starting `ref` (usually `main`); after the first fetch, the working tree is left alone so the user can branch and commit without `zentaizo fetch` clobbering progress.
+- **`role: "reference"`** — code consulted but not changed. The atlas pins a `ref` (branch, tag, or commit); `zentaizo fetch` re-resolves the pin and refuses to overwrite a dirty working tree.
+
+Default to `reference` when in doubt — the user can change it later. A typical multi-repo system has 1–3 edit repos and a longer tail of reference repos (clients, deployment, libraries you depend on). Repos without an explicit `role` are treated as `reference`.
 
 ### Step 3 — Supporting repos
 
@@ -87,11 +96,13 @@ Ask: "Any postmortems, oncall traces, issue threads, or scratch findings the ass
 
 ### Step 7 — Picking ref values
 
-Help the user pick a `ref` for each repo using this decision tree:
+Help the user pick a `ref` for each repo using this decision tree, considering its `role`:
 
-- **Day-to-day exploration**: use `main` (or the repo's default branch). Cheapest, always current.
-- **Reproducible context for a specific question or bug**: pin to a commit SHA. The atlas + lock then capture the exact state the assistant saw.
-- **Stable contract while a system evolves**: pin to a tag (`v1.2.0`). Useful when the central repo changes fast but you want consumers to track a release.
+- **For `role: "edit"` repos**: `ref` is the *starting point*. `main` is usually right; pin to a tag if you need a known-good base. After the first `zentaizo fetch`, your work diverges from the locked SHA by design — that's the whole point of an edit repo. `zentaizo fetch --rebase` can fast-forward a clean edit repo onto its current upstream.
+- **For `role: "reference"` repos**: pick the strictness you want.
+  - `main` (or the repo's default branch) for "always current"; the lock advances each `zentaizo fetch`.
+  - A tag (`v1.2.0`) for "stable contract while a system evolves".
+  - A commit SHA for "exact reproducibility".
 
 When in doubt, default to `main`. The user can pin later.
 

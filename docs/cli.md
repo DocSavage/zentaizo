@@ -64,13 +64,16 @@ Checks that `zentaizo.atlas.json` exists and has the required shape. Legacy `zen
 zentaizo status [PATH]
 ```
 
-Shows source counts and lock status. If the atlas is missing, shows the setup prompt instead of failing.
+Shows source counts (split by role: edit vs reference) and the lock status. For each repo it inspects the working tree: edit repos report the current branch and whether they are at the locked SHA or have diverged; reference repos flag drift between HEAD and the locked SHA. When an edit repo is clean and behind its upstream, `status` prints the rebase command. If the atlas is missing, shows the setup prompt instead of failing.
 
 ```bash
-zentaizo fetch [PATH]
+zentaizo fetch [PATH] [--rebase]
 ```
 
-Fetches repositories listed in `zentaizo.atlas.json` and records exact commits in `zentaizo.lock.json`.
+Fetches repositories listed in `zentaizo.atlas.json` and records resolved commits in `zentaizo.lock.json`. Behavior depends on each repo's `role`:
+
+- `role: "reference"` — re-resolves the pin (`ref`), checks it out, refuses to overwrite a dirty working tree.
+- `role: "edit"` — clones and checks out `ref` on first fetch only; on subsequent fetches refreshes remotes (`git fetch --tags --prune`) but leaves HEAD and the working tree alone. If the tree is clean and HEAD is behind the freshly-resolved upstream, `fetch` prints the exact rebase command. `--rebase` runs the rebase for every clean+behind edit repo.
 
 ```bash
 zentaizo summarize [PATH]

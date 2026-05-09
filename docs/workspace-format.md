@@ -23,7 +23,7 @@ New workspaces intentionally start without `zentaizo.atlas.json`. Its absence is
 
 ## `zentaizo.atlas.json`
 
-This file is human-authored. It says which sources belong to the system and why they matter.
+This file is human-authored. It says which sources belong to the system, why they matter, and whether each repo will be edited or only consulted.
 
 ```json
 {
@@ -36,7 +36,15 @@ This file is human-authored. It says which sources belong to the system and why 
         "name": "shortener-api",
         "url": "https://github.com/example/shortener-api.git",
         "ref": "main",
+        "role": "edit",
         "description": "REST API for creating and resolving short links"
+      },
+      {
+        "name": "deployment",
+        "url": "https://github.com/example/shortener-deployment.git",
+        "ref": "v1.4.2",
+        "role": "reference",
+        "description": "Deployment configuration pinned to a release tag"
       }
     ],
     "docs": [
@@ -51,6 +59,15 @@ This file is human-authored. It says which sources belong to the system and why 
   }
 }
 ```
+
+### Repo `role`
+
+Each repo entry carries an optional `role` field. Two values are supported, with `reference` as the default when the field is omitted:
+
+- `role: "edit"` — code the user will modify in this workspace. The `ref` is a starting point. `zentaizo fetch` clones and checks out `ref` only on the first fetch; after that it refreshes remotes and leaves the working tree alone, so branches and commits-in-progress survive future fetches. If the working tree is clean and HEAD is behind the upstream `ref`, `fetch` prints the rebase command; `zentaizo fetch --rebase` runs it.
+- `role: "reference"` — code consulted but not changed. The `ref` is a pin. `zentaizo fetch` re-resolves it on every run (so `ref: main` tracks main; pin to a SHA or tag if you want stability) and refuses to overwrite a dirty working tree.
+
+The split lets one workspace act like a coordinated mini-monorepo for related repos: editable ones mounted read-write into a sandbox, reference ones mounted read-only.
 
 Use branches or tags while exploring. Use commits when you need a fully reproducible snapshot.
 
