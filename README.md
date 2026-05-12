@@ -109,7 +109,11 @@ zen-link-shortener/
   papers/                   # PDFs and specs
   notes/                    # issue reports, traces, design notes
   summaries/                # generated hierarchical summaries
-  sessions/                 # Q&A, debugging, and planning
+  sessions/
+    brainstorming/          # results of AI discussions that can help authoring context atlas
+    changes/                # dated implementation plans, amended with results of changes
+    questions/              # dated Q&A logs with researched answers and citations
+    debugging/              # dated bug investigations: traces, hypotheses, root cause
 ```
 
 ## Use Cases
