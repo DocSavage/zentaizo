@@ -14,6 +14,8 @@ python -m zentaizo create /tmp/example-atlas
 python -m zentaizo status /tmp/example-atlas
 # After creating /tmp/example-atlas/zentaizo.atlas.json:
 python -m zentaizo validate /tmp/example-atlas
+# Refresh generic files (AGENTS.md, README.md, skills/) in an existing workspace:
+python -m zentaizo update /tmp/example-atlas
 ```
 
 After editable installation:

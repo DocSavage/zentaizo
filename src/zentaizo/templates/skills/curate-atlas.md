@@ -33,7 +33,8 @@ Before asking any questions:
 1. Confirm `zentaizo.atlas.json` exists at the workspace root. If not, ask the user to run `zentaizo create` first, or to `cd` into an existing workspace.
 2. Read the current atlas in full. The user may already have entries; the goal is to extend or refine, not re-interview from scratch.
 3. Read `AGENTS.md` for any system-specific guidance the user already wrote.
-4. If the atlas already has entries, summarize what's there in one sentence ("Your atlas already lists 3 repos, 1 doc, 0 papers, 0 notes") before asking what they want to change.
+4. Skim `sessions/brainstorming/` if it has any files. The user may have already dumped AI chats, source inventories, or design discussions there — those usually answer most of Steps 1–6 below without an interview. Draft the atlas from those first, then ask only what's still missing or ambiguous.
+5. If the atlas already has entries, summarize what's there in one sentence ("Your atlas already lists 3 repos, 1 doc, 0 papers, 0 notes") before asking what they want to change.
 
 ## The interview
 

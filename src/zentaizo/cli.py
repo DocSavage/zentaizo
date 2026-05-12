@@ -109,38 +109,72 @@ This workspace intentionally starts without `{ATLAS_NAME}`. The first useful int
 
 Example prompt:
 
-> Use the Zentaizo instructions in `AGENTS.md` and the procedure in `skills/curate-atlas.md` to interview me and draft `{ATLAS_NAME}` for this project. Do not write to assistant memory or global rule files.
+> Read [`AGENTS.md`](AGENTS.md) and follow the procedure in [`skills/curate-atlas.md`](skills/curate-atlas.md) to interview me and draft `{ATLAS_NAME}` for this project.
+
+Do not assume your AI harness auto-discovers `AGENTS.md` or the `skills/` directory. Some do, some don't, and some discover them inconsistently. When in doubt, paste the exact paths into your prompt and ask the AI to read them first — the skill files carry the detailed procedure so prompts can stay short.
 
 ## Workflow
 
+### 1. Curate the source atlas with AI assistance
+
+Ask the AI to follow [`skills/curate-atlas.md`](skills/curate-atlas.md) and the instructions in [`AGENTS.md`](AGENTS.md) to interview you and draft `{ATLAS_NAME}`. If you've already had relevant design conversations with one or more AIs, drop the transcripts into `sessions/brainstorming/` first — the skill reads those before interviewing, so you don't repeat yourself.
+
 ```bash
-# 1. Create the human-authored source atlas with AI assistance.
 $EDITOR {ATLAS_NAME}
+```
 
-# 2. Check the source atlas shape.
+### 2. Validate the atlas shape
+
+```bash
 zentaizo validate
+```
 
-# 3. Fetch source snapshots and update {LOCK_NAME}.
+### 3. Fetch source snapshots
+
+```bash
 zentaizo fetch
+```
 
-# 4. Prepare hierarchical summaries.
+Repos marked `role: "edit"` are cloned once and then left alone on subsequent fetches so you can branch and commit freely. Repos marked `role: "reference"` are kept on their pinned ref; the AI is instructed (via [`AGENTS.md`](AGENTS.md)) not to modify them.
+
+### 4. Prepare hierarchical summaries
+
+```bash
 zentaizo summarize
+```
 
-# 5. Give another repository access to this context.
+This writes a prompt under `summaries/`. Hand the prompt back to your AI to populate `summaries/overview.md`, `summaries/sources/`, and `summaries/relationships.md`.
+
+### 5. Plan and implement changes
+
+For each multi-repo change, ask the AI to follow [`skills/plan-and-implement.md`](skills/plan-and-implement.md). Example prompt:
+
+> Follow [`skills/plan-and-implement.md`](skills/plan-and-implement.md) to draft and execute a plan for <describe change>.
+
+The skill handles the full lifecycle: read the atlas to find editable repos, draft the plan in `sessions/changes/YYYY-MM-DD-<slug>.md` using [`skills/plan-template.md`](skills/plan-template.md) as scaffold, run with `status: planned` → `in-progress` → `done`, and append a `## Outcome` section on completion.
+
+### 6. Capture Q&A and debugging as they happen
+
+Substantive cross-repo answers go in `sessions/questions/YYYY-MM-DD-<slug>.md`; bug investigations go in `sessions/debugging/YYYY-MM-DD-<slug>.md`. Ask the AI to write these as you work — future sessions will read them instead of re-deriving the same context. The conventions are in [`AGENTS.md`](AGENTS.md).
+
+### 7. (Optional) Share this context with another repo
+
+```bash
 zentaizo provide-info /path/to/repo-you-are-editing
 ```
 
-## Consultation Order
+Injects a bounded reference block into that repo's `AGENTS.md` so an AI working in that repo can find this workspace.
 
-When answering questions or making changes, start broad and drill down:
+## Refreshing the boilerplate
 
-1. `summaries/`
-2. `repos/`
-3. `docs/`
-4. `papers/`
-5. `notes/`
+The generic files in this workspace (`AGENTS.md`, `README.md`, `skills/curate-atlas.md`, `skills/plan-template.md`) are owned by Zentaizo. When the CLI ships an update, refresh them in place:
 
-Use `{LOCK_NAME}` to cite the exact source versions used for an answer.
+```bash
+zentaizo update --dry-run   # preview
+zentaizo update              # apply
+```
+
+Your atlas, lock file, summaries, repos, and `sessions/` contents are not touched. Review with `git diff` before committing in case you had hand-edited any of the generic files.
 """
 
 
@@ -153,10 +187,12 @@ This directory is a Zentaizo workspace for `{name}`.
 
 If `{ATLAS_NAME}` is missing, make creating it the first task. Interview the user to identify the source material that defines this system, then draft `{ATLAS_NAME}` as the human-authored context atlas.
 
+Before interviewing from scratch, check `sessions/brainstorming/` — if the user has already dropped AI chat transcripts, source inventories, or design conversations there, read them first and use them to draft the atlas. The interview then fills gaps rather than starting cold.
+
 Read `skills/curate-atlas.md` for the full interview procedure and follow it. (If your host tool also exposes a `zentaizo` or `curate-atlas` skill, that skill loads the same file.) If `skills/curate-atlas.md` is missing, follow this workflow directly:
 
 1. Identify the system boundary: the product, service, research area, or ecosystem this workspace should explain.
-2. List core repositories, including services, frontends, clients, SDKs, shared libraries, schemas, deployment, tests, and examples.
+2. List core repositories, including services, frontends, clients, SDKs, shared libraries, schemas, deployment, tests, and examples. For each repo decide `role: "edit"` (user will modify) or `role: "reference"` (read-only context).
 3. List durable docs, papers, specs, design notes, issue reports, traces, and local notes that future assistants should consult.
 4. Separate core sources from useful background. Put unresolved relevance or version questions in `summaries/open-questions.md`.
 5. Write `{ATLAS_NAME}` with explicit JSON: `version`, `name`, `description`, grouped `sources`, and summarization settings.
@@ -173,17 +209,57 @@ Use this order unless the user asks for something more specific:
 4. Use `papers/` for design rationale.
 5. Use `notes/` for traces, issue reports, and local decisions.
 
-Prefer claims grounded in `zentaizo.lock.json` and source paths.
+Prefer claims grounded in `{LOCK_NAME}` and source paths.
+
+## Editable vs Reference Repos
+
+Every repo entry in `{ATLAS_NAME}` carries a `role` field:
+
+- `role: "edit"` — code the user is modifying in this workspace. Branch, commit, and run tests against it.
+- `role: "reference"` — code consulted for context only. Treat the working tree as read-only: do not edit files, do not run formatters or linters that would rewrite them, and do not commit. Reading the code, summarizing ideas from it, and citing specific paths is expected and encouraged.
+
+Repos without an explicit `role` are treated as `reference`. If a task seems to require editing a `reference` repo, stop and ask the user — usually the correct move is to change its role to `edit` in `{ATLAS_NAME}`, not to edit it ad hoc.
+
+When proposing a plan or summarizing changes, name the editable repo(s) explicitly so the user can confirm scope. Do not restate the full edit/reference list as boilerplate in every plan; read it from `{ATLAS_NAME}` at the start of each session.
 
 ## Recording Work in `sessions/`
 
-`sessions/` is the durable trail of how this workspace has been used. Prefer writing to it over leaving substantive work only in chat history. Three subdirectories already exist:
+`sessions/` is the durable trail of how this workspace has been used. Prefer writing to it over leaving substantive work only in chat history. Four subdirectories exist:
 
+- `sessions/brainstorming/` — freeform input. Drop AI chat transcripts, sketches, source inventories, and exploratory design conversations here. No required schema, no required filename pattern. This is the *pre-atlas* dumping ground used to inform `{ATLAS_NAME}` during curation; later it also holds open-ended design discussions that aren't yet executable plans.
+- `sessions/changes/` — implementation plans for multi-repo changes. Before editing in earnest, save a plan as `sessions/changes/YYYY-MM-DD-<slug>.md` covering problem, files involved, step-by-step approach, and verification. Use the status frontmatter convention below so a single file tracks the work from planning through delivery. The full procedure (drafting → executing → closing out) is in `skills/plan-and-implement.md`; `skills/plan-template.md` is the scaffold it copies.
 - `sessions/questions/` — Q&A logs. When the user asks a substantive cross-repo question and you produce a researched answer, save the question, the answer, and source citations as `sessions/questions/YYYY-MM-DD-<slug>.md`.
 - `sessions/debugging/` — traces, hypotheses, and resolutions. When investigating a bug across the atlas, save the trace and final root cause as `sessions/debugging/YYYY-MM-DD-<slug>.md`.
-- `sessions/changes/` — implementation plans for multi-repo changes. Before editing in earnest, save the plan (problem, files involved, step-by-step approach, verification) as `sessions/changes/YYYY-MM-DD-<slug>.md` so future sessions can resume from the same plan.
 
-Filenames should sort chronologically. The slug should be 2–5 hyphenated words describing the topic (`shortener-link-expiration-contract`, not `plan1`).
+Filenames in `changes/`, `questions/`, and `debugging/` should sort chronologically. The slug should be 2–5 hyphenated words describing the topic (`shortener-link-expiration-contract`, not `plan1`).
+
+### Status frontmatter for `sessions/changes/`
+
+Each plan file begins with YAML frontmatter:
+
+```yaml
+---
+status: planned          # planned | in-progress | done | abandoned
+created: YYYY-MM-DD
+updated: YYYY-MM-DD
+editable_repos: [name, ...]   # repos this plan will modify; must have role: edit in the atlas
+---
+```
+
+The body uses two top-level sections:
+
+- `## Plan` — written before work starts: problem statement, scope, files involved, step-by-step approach, acceptance criteria, and verification. Treat this section as frozen once status moves to `in-progress`; edit it only to correct factual errors.
+- `## Outcome` — appended when status moves to `done` (or `abandoned`): what was actually built, deviations from the plan and why, surprises, follow-up work, and links to commits or PRs.
+
+Update `status:` and `updated:` whenever the state changes. Do not move or rename the file when work completes — the same path holds intent and result so future sessions can read both.
+
+## From Brainstorming to Plan
+
+When the user shares a design conversation, source inventory, or freeform implementation sketch:
+
+1. Save the raw material under `sessions/brainstorming/` with a meaningful filename.
+2. Separate workspace-generic facts from project-specific constraints. Generic facts (which repos exist, which are editable, what the system is) belong in `{ATLAS_NAME}`. Project-specific constraints (hardware targets, phase exclusions, acceptance criteria, reporting format) belong in the eventual `sessions/changes/` plan.
+3. Run `skills/plan-and-implement.md` to distill the actionable parts into a `sessions/changes/YYYY-MM-DD-<slug>.md` plan. Link back to the brainstorming source(s) so the lineage is preserved.
 """
 
 
@@ -220,9 +296,10 @@ def create_workspace(args: argparse.Namespace) -> int:
         "papers",
         "notes",
         "summaries",
+        "sessions/brainstorming",
+        "sessions/changes",
         "sessions/questions",
         "sessions/debugging",
-        "sessions/changes",
     ]:
         (target / subdir).mkdir(parents=True, exist_ok=True)
 
@@ -247,6 +324,79 @@ def create_workspace(args: argparse.Namespace) -> int:
 
     print(f"Created Zentaizo workspace: {target}")
     print(f"Next: start an AI session in {target} to create {ATLAS_NAME}")
+    return 0
+
+
+def update_workspace(args: argparse.Namespace) -> int:
+    workspace = pathlib.Path(args.workspace).resolve()
+    if not workspace.is_dir():
+        raise SystemExit(f"Not a directory: {workspace}")
+
+    atlas = find_atlas(workspace)
+    if atlas is not None:
+        config = read_json(atlas)
+        name = args.name or config.get("name") or workspace.name
+    else:
+        name = args.name or workspace.name
+
+    dry_run = bool(getattr(args, "dry_run", False))
+    skip_skills = bool(getattr(args, "no_skills", False))
+
+    changes: list[tuple[str, str]] = []
+
+    def apply_text(rel: str, target: pathlib.Path, new_text: str) -> None:
+        if not target.exists():
+            changes.append((rel, "create"))
+            if not dry_run:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(new_text)
+            return
+        if target.read_text() != new_text:
+            changes.append((rel, "update"))
+            if not dry_run:
+                target.write_text(new_text)
+        else:
+            changes.append((rel, "unchanged"))
+
+    apply_text("AGENTS.md", workspace / "AGENTS.md", workspace_agents(name))
+    apply_text("README.md", workspace / "README.md", workspace_readme(name))
+
+    for subdir in ["brainstorming", "changes", "questions", "debugging"]:
+        path = workspace / "sessions" / subdir
+        if not path.exists():
+            changes.append((f"sessions/{subdir}/", "create"))
+            if not dry_run:
+                path.mkdir(parents=True, exist_ok=True)
+
+    if not skip_skills:
+        skills_src = resources.files("zentaizo").joinpath("templates/skills")
+        skills_dst = workspace / "skills"
+        if not skills_dst.exists() and not dry_run:
+            skills_dst.mkdir(parents=True, exist_ok=True)
+        for entry in skills_src.iterdir():
+            if not entry.is_file() or not entry.name.endswith(".md"):
+                continue
+            with resources.as_file(entry) as src_path:
+                new_text = src_path.read_text()
+            apply_text(f"skills/{entry.name}", skills_dst / entry.name, new_text)
+
+    counts = {"create": 0, "update": 0, "unchanged": 0}
+    for _, status in changes:
+        counts[status] += 1
+
+    label = "[dry-run] " if dry_run else ""
+    print(
+        f"{label}Update summary for {workspace}: "
+        f"{counts['create']} created, {counts['update']} updated, {counts['unchanged']} unchanged"
+    )
+    for rel, status in changes:
+        if status == "unchanged":
+            continue
+        prefix = "+ " if status == "create" else "~ "
+        print(f"  {prefix}{rel}")
+
+    if (counts["create"] or counts["update"]) and not dry_run:
+        print("Review changes with `git diff`; restore any project-specific edits you had made.")
     return 0
 
 
@@ -800,6 +950,27 @@ def build_parser() -> argparse.ArgumentParser:
     provide.add_argument("target", help="target repository directory")
     provide.add_argument("workspace", nargs="?", default=".", help="workspace directory")
     provide.set_defaults(func=provide_info)
+
+    update = sub.add_parser(
+        "update",
+        help="refresh generic Zentaizo files (AGENTS.md, README.md, skills, sessions/ subdirs) in an existing workspace",
+    )
+    update.add_argument("workspace", nargs="?", default=".", help="workspace directory")
+    update.add_argument(
+        "--name",
+        help="override workspace name in templates (defaults to atlas name, then directory name)",
+    )
+    update.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="report changes without writing files",
+    )
+    update.add_argument(
+        "--no-skills",
+        action="store_true",
+        help="skip updating skill files",
+    )
+    update.set_defaults(func=update_workspace)
 
     return parser
 

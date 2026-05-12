@@ -31,9 +31,30 @@ class CliTests(unittest.TestCase):
             self.assertIn("If `zentaizo.atlas.json` is missing", agents)
             self.assertIn("Do not write to Claude Memory", agents)
             self.assertIn("skills/curate-atlas.md", agents)
+            self.assertIn("sessions/brainstorming/", agents)
+            self.assertIn("sessions/changes/", agents)
             self.assertIn("sessions/questions/", agents)
             self.assertIn("sessions/debugging/", agents)
-            self.assertIn("sessions/changes/", agents)
+            self.assertIn("Editable vs Reference Repos", agents)
+            self.assertIn("status: planned", agents)
+            self.assertIn("skills/plan-template.md", agents)
+            self.assertIn("skills/plan-and-implement.md", agents)
+
+            for subdir in ["brainstorming", "changes", "questions", "debugging"]:
+                self.assertTrue((workspace / "sessions" / subdir).is_dir())
+
+            readme = (workspace / "README.md").read_text()
+            self.assertIn("[`skills/curate-atlas.md`](skills/curate-atlas.md)", readme)
+            self.assertIn("[`skills/plan-template.md`](skills/plan-template.md)", readme)
+            self.assertIn(
+                "[`skills/plan-and-implement.md`](skills/plan-and-implement.md)",
+                readme,
+            )
+            self.assertIn("sessions/brainstorming/", readme)
+            self.assertIn("sessions/changes/", readme)
+            self.assertIn("Plan and implement changes", readme)
+            self.assertIn("auto-discovers", readme)
+            self.assertNotIn("Do not write to assistant memory", readme)
 
             text = output.getvalue()
             self.assertIn("Created Zentaizo workspace", text)
@@ -53,6 +74,20 @@ class CliTests(unittest.TestCase):
             self.assertIn("Curate the Zentaizo Atlas", body)
             self.assertNotIn("---\nname:", body[:200])
 
+            plan = workspace / "skills" / "plan-template.md"
+            self.assertTrue(plan.exists())
+            plan_body = plan.read_text()
+            self.assertIn("status: planned", plan_body)
+            self.assertIn("## Plan", plan_body)
+            self.assertIn("## Outcome", plan_body)
+
+            procedure = workspace / "skills" / "plan-and-implement.md"
+            self.assertTrue(procedure.exists())
+            procedure_body = procedure.read_text()
+            self.assertIn("Plan and Implement a Change", procedure_body)
+            self.assertIn("status: planned", procedure_body)
+            self.assertIn("role: \"edit\"", procedure_body)
+
     def test_create_no_skills_flag(self):
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp) / "bare-atlas"
@@ -61,6 +96,74 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(main(["create", str(workspace), "--no-skills"]), 0)
 
             self.assertFalse((workspace / "skills" / "curate-atlas.md").exists())
+
+    def test_update_refreshes_stale_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "stale-atlas"
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(main(["create", str(workspace)]), 0)
+
+            write_example_atlas(workspace, name="stale-atlas")
+
+            agents_path = workspace / "AGENTS.md"
+            agents_path.write_text("# stale content\n")
+            (workspace / "skills" / "plan-template.md").unlink()
+
+            brainstorming = workspace / "sessions" / "brainstorming"
+            user_file = brainstorming / "design-chat.md"
+            user_file.write_text("user content")
+
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                self.assertEqual(main(["update", str(workspace)]), 0)
+
+            refreshed = agents_path.read_text()
+            self.assertIn("Editable vs Reference Repos", refreshed)
+            self.assertTrue((workspace / "skills" / "plan-template.md").exists())
+            self.assertTrue(user_file.exists())
+            self.assertEqual(user_file.read_text(), "user content")
+            self.assertEqual(
+                json.loads((workspace / "zentaizo.atlas.json").read_text())["name"],
+                "stale-atlas",
+            )
+
+            text = output.getvalue()
+            self.assertIn("~ AGENTS.md", text)
+            self.assertIn("+ skills/plan-template.md", text)
+
+    def test_update_dry_run_writes_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "dry-atlas"
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(main(["create", str(workspace)]), 0)
+
+            agents_path = workspace / "AGENTS.md"
+            agents_path.write_text("# stale content\n")
+
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                self.assertEqual(main(["update", str(workspace), "--dry-run"]), 0)
+
+            self.assertEqual(agents_path.read_text(), "# stale content\n")
+            self.assertIn("[dry-run]", output.getvalue())
+            self.assertIn("~ AGENTS.md", output.getvalue())
+
+    def test_update_creates_missing_sessions_subdir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "legacy-atlas"
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(main(["create", str(workspace)]), 0)
+
+            import shutil as _shutil
+            _shutil.rmtree(workspace / "sessions" / "brainstorming")
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(main(["update", str(workspace)]), 0)
+
+            self.assertTrue((workspace / "sessions" / "brainstorming").is_dir())
 
     def test_validate_status_and_summarize_with_atlas(self):
         with tempfile.TemporaryDirectory() as tmp:
