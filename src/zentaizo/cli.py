@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import pathlib
 import shutil
 import subprocess
@@ -13,6 +14,8 @@ LEGACY_CONFIG_NAME = "zentaizo.config.json"
 LOCK_NAME = "zentaizo.lock.json"
 BEGIN_MARKER = "<!-- BEGIN zentaizo -->"
 END_MARKER = "<!-- END zentaizo -->"
+GLOBAL_SKILL_NAME = "zentaizo"
+GLOBAL_SKILL_TARGETS = ("claude", "codex", "gemini")
 
 VALID_ROLES = ("edit", "reference")
 DEFAULT_ROLE = "reference"
@@ -914,6 +917,185 @@ def provide_info(args: argparse.Namespace) -> int:
     return 0
 
 
+def _global_skill_source() -> pathlib.Path:
+    """Path to the canonical zentaizo meta-skill bundled in the package."""
+    traversable = resources.files("zentaizo").joinpath(
+        f"templates/global-skills/{GLOBAL_SKILL_NAME}"
+    )
+    return pathlib.Path(str(traversable))
+
+
+def _claude_skills_root() -> pathlib.Path:
+    base = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude")
+    return pathlib.Path(base) / "skills"
+
+
+def _codex_skills_root() -> pathlib.Path:
+    base = os.environ.get("CODEX_HOME") or os.path.expanduser("~/.codex")
+    return pathlib.Path(base) / "skills"
+
+
+def _gemini_memory_file() -> pathlib.Path:
+    base = os.environ.get("GEMINI_DIR") or os.path.expanduser("~/.gemini")
+    return pathlib.Path(base) / "GEMINI.md"
+
+
+def _expand_skill_targets(target: str) -> list[str]:
+    if target == "all":
+        return list(GLOBAL_SKILL_TARGETS)
+    return [target]
+
+
+def _install_folder_skill(source: pathlib.Path, dest_root: pathlib.Path, copy: bool) -> str:
+    dest = dest_root / GLOBAL_SKILL_NAME
+    dest_root.mkdir(parents=True, exist_ok=True)
+
+    if dest.is_symlink():
+        current_target = pathlib.Path(os.readlink(dest))
+        if current_target == source:
+            return f"already linked: {dest} -> {source}"
+        return f"refusing to overwrite existing symlink {dest} -> {current_target}; uninstall first"
+    if dest.exists():
+        return f"refusing to overwrite existing {dest}; uninstall first"
+
+    if not copy:
+        try:
+            dest.symlink_to(source, target_is_directory=True)
+            return f"linked {dest} -> {source}"
+        except OSError as exc:
+            print(f"  symlink unavailable ({exc}); falling back to copy")
+
+    shutil.copytree(source, dest)
+    return f"copied {source} -> {dest}"
+
+
+def _uninstall_folder_skill(dest_root: pathlib.Path) -> str:
+    dest = dest_root / GLOBAL_SKILL_NAME
+    if dest.is_symlink():
+        dest.unlink()
+        return f"removed symlink: {dest}"
+    if dest.is_dir():
+        shutil.rmtree(dest)
+        return f"removed directory: {dest}"
+    return f"nothing to remove at {dest}"
+
+
+def _gemini_skill_block(source: pathlib.Path) -> str:
+    skill_path = source / "SKILL.md"
+    return "\n".join(
+        [
+            BEGIN_MARKER,
+            "## Zentaizo Global Skill",
+            "",
+            "The `zentaizo` workflow builds curated multi-source AI context workspaces.",
+            f"Read the full skill definition at `{skill_path}` when the user mentions zentaizo,",
+            "context atlases, or multi-repo AI workspaces.",
+            END_MARKER,
+            "",
+        ]
+    )
+
+
+def _install_gemini_block(source: pathlib.Path) -> str:
+    path = _gemini_memory_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    block = _gemini_skill_block(source)
+
+    if path.exists():
+        existing = path.read_text()
+        begin = existing.find(BEGIN_MARKER)
+        end = existing.find(END_MARKER)
+        if begin != -1 and end != -1:
+            new_text = (
+                existing[:begin].rstrip()
+                + ("\n\n" if existing[:begin].strip() else "")
+                + block.rstrip()
+                + "\n\n"
+                + existing[end + len(END_MARKER) :].lstrip()
+            )
+        else:
+            new_text = existing.rstrip() + "\n\n" + block
+    else:
+        new_text = block
+
+    path.write_text(new_text.rstrip() + "\n")
+    return f"injected block into {path}"
+
+
+def _uninstall_gemini_block() -> str:
+    path = _gemini_memory_file()
+    if not path.exists():
+        return f"nothing to remove at {path}"
+    text = path.read_text()
+    begin = text.find(BEGIN_MARKER)
+    end = text.find(END_MARKER)
+    if begin == -1 or end == -1:
+        return f"no zentaizo block found in {path}"
+    new_text = (text[:begin].rstrip() + "\n" + text[end + len(END_MARKER) :].lstrip()).strip()
+    if new_text:
+        path.write_text(new_text + "\n")
+    else:
+        path.unlink()
+    return f"removed zentaizo block from {path}"
+
+
+def _folder_skill_status(source: pathlib.Path, dest_root: pathlib.Path) -> str:
+    dest = dest_root / GLOBAL_SKILL_NAME
+    if dest.is_symlink():
+        target = pathlib.Path(os.readlink(dest))
+        if target == source:
+            return f"{dest}: linked to package"
+        return f"{dest}: symlink to {target}"
+    if dest.is_dir():
+        return f"{dest}: directory (copy)"
+    if dest.exists():
+        return f"{dest}: unexpected non-directory entry"
+    return f"{dest}: not installed"
+
+
+def _gemini_status() -> str:
+    path = _gemini_memory_file()
+    if not path.exists():
+        return f"{path}: not installed (file missing)"
+    if BEGIN_MARKER in path.read_text():
+        return f"{path}: block injected"
+    return f"{path}: file exists, no zentaizo block"
+
+
+def skills_list(args: argparse.Namespace) -> int:
+    source = _global_skill_source()
+    print(f"Source: {source}")
+    print(f"  claude  → {_folder_skill_status(source, _claude_skills_root())}")
+    print(f"  codex   → {_folder_skill_status(source, _codex_skills_root())}")
+    print(f"  gemini  → {_gemini_status()}")
+    return 0
+
+
+def skills_install(args: argparse.Namespace) -> int:
+    source = _global_skill_source()
+    if not source.exists():
+        raise SystemExit(f"Cannot find packaged skill at {source}")
+    for target in _expand_skill_targets(args.target):
+        if target == "claude":
+            print(f"claude:  {_install_folder_skill(source, _claude_skills_root(), args.copy)}")
+        elif target == "codex":
+            print(f"codex:   {_install_folder_skill(source, _codex_skills_root(), args.copy)}")
+        elif target == "gemini":
+            print(f"gemini:  {_install_gemini_block(source)}")
+    return 0
+
+
+def skills_uninstall(args: argparse.Namespace) -> int:
+    for target in _expand_skill_targets(args.target):
+        if target == "claude":
+            print(f"claude:  {_uninstall_folder_skill(_claude_skills_root())}")
+        elif target == "codex":
+            print(f"codex:   {_uninstall_folder_skill(_codex_skills_root())}")
+        elif target == "gemini":
+            print(f"gemini:  {_uninstall_gemini_block()}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="zentaizo",
@@ -980,6 +1162,37 @@ def build_parser() -> argparse.ArgumentParser:
         help="skip updating skill files",
     )
     update.set_defaults(func=update_workspace)
+
+    skills = sub.add_parser(
+        "skills",
+        help="register the global zentaizo meta-skill into Claude, Codex, or Gemini",
+    )
+    skills_sub = skills.add_subparsers(dest="skills_command", required=True)
+
+    skills_list_p = skills_sub.add_parser(
+        "list", help="show install state of the global skill across AI tools"
+    )
+    skills_list_p.set_defaults(func=skills_list)
+
+    target_choices = [*GLOBAL_SKILL_TARGETS, "all"]
+
+    skills_install_p = skills_sub.add_parser(
+        "install",
+        help="register the meta-skill globally so AI tools see zentaizo from any directory",
+    )
+    skills_install_p.add_argument("--target", choices=target_choices, default="all")
+    skills_install_p.add_argument(
+        "--copy",
+        action="store_true",
+        help="copy files instead of symlinking (claude/codex only)",
+    )
+    skills_install_p.set_defaults(func=skills_install)
+
+    skills_uninstall_p = skills_sub.add_parser(
+        "uninstall", help="remove the global meta-skill registration"
+    )
+    skills_uninstall_p.add_argument("--target", choices=target_choices, default="all")
+    skills_uninstall_p.set_defaults(func=skills_uninstall)
 
     return parser
 

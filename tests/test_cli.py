@@ -1,6 +1,7 @@
 import contextlib
 import io
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -351,6 +352,140 @@ class CliTests(unittest.TestCase):
             self.assertIn("BEGIN zentaizo", content)
             self.assertIn("Zentaizo Context", content)
             self.assertIn(str(workspace), content)
+
+
+class SkillsCommandTests(unittest.TestCase):
+    SKILL_ENV_KEYS = ("CLAUDE_CONFIG_DIR", "CODEX_HOME", "GEMINI_DIR")
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.tmp = Path(self._tmp.name)
+        self._saved_env = {k: os.environ.get(k) for k in self.SKILL_ENV_KEYS}
+        os.environ["CLAUDE_CONFIG_DIR"] = str(self.tmp / "claude")
+        os.environ["CODEX_HOME"] = str(self.tmp / "codex")
+        os.environ["GEMINI_DIR"] = str(self.tmp / "gemini")
+        self.addCleanup(self._restore_env)
+
+    def _restore_env(self):
+        for key, value in self._saved_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+    def _claude_dest(self) -> Path:
+        return self.tmp / "claude" / "skills" / "zentaizo"
+
+    def _codex_dest(self) -> Path:
+        return self.tmp / "codex" / "skills" / "zentaizo"
+
+    def _gemini_path(self) -> Path:
+        return self.tmp / "gemini" / "GEMINI.md"
+
+    def test_list_reports_not_installed_initially(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.assertEqual(main(["skills", "list"]), 0)
+        text = output.getvalue()
+        self.assertIn("claude", text)
+        self.assertIn("codex", text)
+        self.assertIn("gemini", text)
+        self.assertIn("not installed", text)
+
+    def test_install_default_symlinks_all_targets(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(main(["skills", "install"]), 0)
+
+        self.assertTrue(self._claude_dest().is_symlink())
+        self.assertTrue(self._codex_dest().is_symlink())
+        self.assertTrue((self._claude_dest() / "SKILL.md").exists())
+        self.assertTrue((self._codex_dest() / "SKILL.md").exists())
+
+        gemini = self._gemini_path()
+        self.assertTrue(gemini.exists())
+        body = gemini.read_text()
+        self.assertIn("BEGIN zentaizo", body)
+        self.assertIn("Zentaizo Global Skill", body)
+        self.assertIn("END zentaizo", body)
+
+    def test_install_single_target(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(main(["skills", "install", "--target", "claude"]), 0)
+        self.assertTrue(self._claude_dest().is_symlink())
+        self.assertFalse(self._codex_dest().exists())
+        self.assertFalse(self._gemini_path().exists())
+
+    def test_install_copy_mode_creates_directory(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(
+                main(["skills", "install", "--target", "claude", "--copy"]),
+                0,
+            )
+        dest = self._claude_dest()
+        self.assertTrue(dest.is_dir())
+        self.assertFalse(dest.is_symlink())
+        self.assertTrue((dest / "SKILL.md").exists())
+
+    def test_install_is_idempotent_for_symlinks(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(main(["skills", "install", "--target", "claude"]), 0)
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.assertEqual(main(["skills", "install", "--target", "claude"]), 0)
+
+        self.assertIn("already linked", output.getvalue())
+        self.assertTrue(self._claude_dest().is_symlink())
+
+    def test_install_refuses_to_clobber_user_content(self):
+        existing = self._claude_dest()
+        existing.mkdir(parents=True)
+        (existing / "user-content.md").write_text("hand-written")
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.assertEqual(main(["skills", "install", "--target", "claude"]), 0)
+
+        self.assertIn("refusing to overwrite", output.getvalue())
+        self.assertTrue((existing / "user-content.md").exists())
+        self.assertFalse((existing / "SKILL.md").exists())
+
+    def test_install_gemini_preserves_existing_content(self):
+        gem = self._gemini_path()
+        gem.parent.mkdir(parents=True)
+        gem.write_text("# My Custom Gemini Context\n\nNotes.\n")
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(main(["skills", "install", "--target", "gemini"]), 0)
+
+        content = gem.read_text()
+        self.assertIn("My Custom Gemini Context", content)
+        self.assertIn("BEGIN zentaizo", content)
+
+    def test_uninstall_removes_all_targets(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(main(["skills", "install"]), 0)
+            self.assertEqual(main(["skills", "uninstall"]), 0)
+
+        self.assertFalse(self._claude_dest().exists())
+        self.assertFalse(self._codex_dest().exists())
+        gem = self._gemini_path()
+        if gem.exists():
+            self.assertNotIn("BEGIN zentaizo", gem.read_text())
+
+    def test_uninstall_gemini_preserves_other_content(self):
+        gem = self._gemini_path()
+        gem.parent.mkdir(parents=True)
+        gem.write_text("# Header\n\nUser notes above.\n")
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(main(["skills", "install", "--target", "gemini"]), 0)
+            self.assertEqual(main(["skills", "uninstall", "--target", "gemini"]), 0)
+
+        content = gem.read_text()
+        self.assertIn("User notes above", content)
+        self.assertNotIn("BEGIN zentaizo", content)
 
 
 if __name__ == "__main__":
