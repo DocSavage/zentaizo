@@ -86,7 +86,7 @@ class CliTests(unittest.TestCase):
             procedure_body = procedure.read_text()
             self.assertIn("Plan and Implement a Change", procedure_body)
             self.assertIn("status: planned", procedure_body)
-            self.assertIn("role: \"edit\"", procedure_body)
+            self.assertIn('role: "edit"', procedure_body)
 
     def test_create_no_skills_flag(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -158,6 +158,7 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(main(["create", str(workspace)]), 0)
 
             import shutil as _shutil
+
             _shutil.rmtree(workspace / "sessions" / "brainstorming")
 
             with contextlib.redirect_stdout(io.StringIO()):
@@ -303,7 +304,9 @@ class CliTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp) / "legacy-atlas"
             workspace.mkdir()
-            (workspace / "zentaizo.config.json").write_text(json.dumps(default_atlas("legacy-atlas")))
+            (workspace / "zentaizo.config.json").write_text(
+                json.dumps(default_atlas("legacy-atlas"))
+            )
 
             output = io.StringIO()
             with contextlib.redirect_stdout(output):

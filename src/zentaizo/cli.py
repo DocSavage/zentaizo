@@ -5,8 +5,7 @@ import json
 import pathlib
 import shutil
 import subprocess
-import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from importlib import resources
 
 ATLAS_NAME = "zentaizo.atlas.json"
@@ -20,14 +19,14 @@ DEFAULT_ROLE = "reference"
 
 
 def utc_now() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    return datetime.now(UTC).replace(microsecond=0).isoformat()
 
 
 def read_json(path: pathlib.Path) -> dict:
     try:
         return json.loads(path.read_text())
     except FileNotFoundError:
-        raise SystemExit(f"Missing file: {path}")
+        raise SystemExit(f"Missing file: {path}") from None
     except json.JSONDecodeError as exc:
         raise SystemExit(f"Invalid JSON in {path}: {exc}") from exc
 
@@ -744,9 +743,7 @@ def fetch_edit_repo(workspace: pathlib.Path, repo: dict, do_rebase: bool) -> dic
     upstream_sha = resolve_upstream_sha(dst, repo["ref"])
     head_sha = run_git(["rev-parse", "HEAD"], cwd=dst)
     is_dirty = working_tree_dirty(dst)
-    behind = (
-        head_sha != upstream_sha and is_ancestor(dst, head_sha, upstream_sha)
-    )
+    behind = head_sha != upstream_sha and is_ancestor(dst, head_sha, upstream_sha)
     behind_count = commits_between(dst, head_sha, upstream_sha) if behind else 0
 
     if behind and not is_dirty and do_rebase:
@@ -760,12 +757,10 @@ def fetch_edit_repo(workspace: pathlib.Path, repo: dict, do_rebase: bool) -> dic
             f"by {behind_count} commit(s); working tree clean"
         )
         print(f"  to advance:  git -C {dst} rebase {upstream_sha}")
-        print(f"  or run:      zentaizo fetch --rebase")
+        print("  or run:      zentaizo fetch --rebase")
     else:
         dirty_label = "dirty" if is_dirty else "clean"
-        print(
-            f"  HEAD={head_sha[:12]} ({dirty_label}); upstream {repo['ref']}={upstream_sha[:12]}"
-        )
+        print(f"  HEAD={head_sha[:12]} ({dirty_label}); upstream {repo['ref']}={upstream_sha[:12]}")
 
     print(f"Locked {name} @ upstream {upstream_sha[:12]}")
     return {
@@ -807,7 +802,9 @@ def fetch_workspace(args: argparse.Namespace) -> int:
     write_json(workspace / LOCK_NAME, lock)
 
     if sources.get("docs") or sources.get("papers"):
-        print("Docs and papers are recorded in the lock file; snapshot download is a future command.")
+        print(
+            "Docs and papers are recorded in the lock file; snapshot download is a future command."
+        )
     return 0
 
 
@@ -887,7 +884,7 @@ def inject_block(path: pathlib.Path, block: str) -> None:
         begin = content.find(BEGIN_MARKER)
         end = content.find(END_MARKER)
         if begin != -1 and end != -1:
-            content = content[:begin] + block.rstrip() + content[end + len(END_MARKER):]
+            content = content[:begin] + block.rstrip() + content[end + len(END_MARKER) :]
         else:
             content = content.rstrip() + "\n\n" + block
     else:
@@ -946,7 +943,9 @@ def build_parser() -> argparse.ArgumentParser:
     summarize.add_argument("workspace", nargs="?", default=".", help="workspace directory")
     summarize.set_defaults(func=summarize_workspace)
 
-    provide = sub.add_parser("provide-info", help="inject Zentaizo context into another repo's AGENTS.md")
+    provide = sub.add_parser(
+        "provide-info", help="inject Zentaizo context into another repo's AGENTS.md"
+    )
     provide.add_argument("target", help="target repository directory")
     provide.add_argument("workspace", nargs="?", default=".", help="workspace directory")
     provide.set_defaults(func=provide_info)

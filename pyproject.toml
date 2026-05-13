@@ -13,6 +13,11 @@ authors = [
 ]
 dependencies = []
 
+[project.optional-dependencies]
+dev = [
+  "ruff>=0.6",
+]
+
 [project.scripts]
 zentaizo = "zentaizo.cli:main"
 
@@ -21,3 +26,15 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 zentaizo = ["templates/skills/*.md"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501"]  # line length handled by formatter
+
+[tool.ruff.format]
+quote-style = "double"

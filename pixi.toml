@@ -7,9 +7,13 @@ platforms = ["osx-arm64", "osx-64", "linux-64"]
 
 [dependencies]
 python = ">=3.11"
-pip = "*"
+
+[pypi-dependencies]
+zentaizo = { path = ".", editable = true, extras = ["dev"] }
 
 [tasks]
-install-cli = "python -m pip install -e ."
 test = "python -m unittest discover -s tests"
+lint = "ruff check ."
+fmt = "ruff format ."
+check = { depends-on = ["lint", "test"] }
 help = "python -m zentaizo --help"
