@@ -262,6 +262,12 @@ When the user shares a design conversation, source inventory, or freeform implem
 """
 
 
+WORKSPACE_POINTER_MD = (
+    "**For workspace instructions, see [`AGENTS.md`](AGENTS.md)** — it is the "
+    "model-agnostic source of guidance for this Zentaizo workspace.\n"
+)
+
+
 def install_skills_into_workspace(target: pathlib.Path) -> list[str]:
     """Copy the bundled model-agnostic skill files into <target>/skills/.
 
@@ -304,6 +310,8 @@ def create_workspace(args: argparse.Namespace) -> int:
 
     (target / "README.md").write_text(workspace_readme(name))
     (target / "AGENTS.md").write_text(workspace_agents(name))
+    (target / "CLAUDE.md").write_text(WORKSPACE_POINTER_MD)
+    (target / "GEMINI.md").write_text(WORKSPACE_POINTER_MD)
     (target / ".gitignore").write_text(
         "\n".join(
             [
@@ -359,6 +367,8 @@ def update_workspace(args: argparse.Namespace) -> int:
 
     apply_text("AGENTS.md", workspace / "AGENTS.md", workspace_agents(name))
     apply_text("README.md", workspace / "README.md", workspace_readme(name))
+    apply_text("CLAUDE.md", workspace / "CLAUDE.md", WORKSPACE_POINTER_MD)
+    apply_text("GEMINI.md", workspace / "GEMINI.md", WORKSPACE_POINTER_MD)
 
     for subdir in ["brainstorming", "changes", "questions", "debugging"]:
         path = workspace / "sessions" / subdir

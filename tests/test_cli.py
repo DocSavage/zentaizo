@@ -27,6 +27,13 @@ class CliTests(unittest.TestCase):
             self.assertFalse((workspace / "zentaizo.lock.json").exists())
             self.assertTrue((workspace / "AGENTS.md").exists())
 
+            for pointer in ("CLAUDE.md", "GEMINI.md"):
+                pointer_path = workspace / pointer
+                self.assertTrue(pointer_path.exists(), f"missing {pointer}")
+                body = pointer_path.read_text()
+                self.assertIn("[`AGENTS.md`](AGENTS.md)", body)
+                self.assertIn("Zentaizo workspace", body)
+
             agents = (workspace / "AGENTS.md").read_text()
             self.assertIn("If `zentaizo.atlas.json` is missing", agents)
             self.assertIn("Do not write to Claude Memory", agents)
@@ -108,6 +115,8 @@ class CliTests(unittest.TestCase):
 
             agents_path = workspace / "AGENTS.md"
             agents_path.write_text("# stale content\n")
+            (workspace / "CLAUDE.md").write_text("# stale claude\n")
+            (workspace / "GEMINI.md").unlink()
             (workspace / "skills" / "plan-template.md").unlink()
 
             brainstorming = workspace / "sessions" / "brainstorming"
@@ -120,6 +129,15 @@ class CliTests(unittest.TestCase):
 
             refreshed = agents_path.read_text()
             self.assertIn("Editable vs Reference Repos", refreshed)
+            self.assertIn(
+                "[`AGENTS.md`](AGENTS.md)",
+                (workspace / "CLAUDE.md").read_text(),
+            )
+            self.assertTrue((workspace / "GEMINI.md").exists())
+            self.assertIn(
+                "[`AGENTS.md`](AGENTS.md)",
+                (workspace / "GEMINI.md").read_text(),
+            )
             self.assertTrue((workspace / "skills" / "plan-template.md").exists())
             self.assertTrue(user_file.exists())
             self.assertEqual(user_file.read_text(), "user content")
@@ -130,6 +148,8 @@ class CliTests(unittest.TestCase):
 
             text = output.getvalue()
             self.assertIn("~ AGENTS.md", text)
+            self.assertIn("~ CLAUDE.md", text)
+            self.assertIn("+ GEMINI.md", text)
             self.assertIn("+ skills/plan-template.md", text)
 
     def test_update_dry_run_writes_nothing(self):
