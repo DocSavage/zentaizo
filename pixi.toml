@@ -17,3 +17,8 @@ lint = "ruff check ."
 fmt = "ruff format ."
 check = { depends-on = ["lint", "test"] }
 help = "python -m zentaizo --help"
+clean = "rm -rf dist build src/zentaizo.egg-info"
+build = { cmd = "python -m build", depends-on = ["clean"] }
+publish = "twine upload --skip-existing dist/*"
+hooks-install = "pre-commit install"
+hooks-run = "pre-commit run --all-files"

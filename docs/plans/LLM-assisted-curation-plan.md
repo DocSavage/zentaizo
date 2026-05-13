@@ -59,7 +59,7 @@ The user wants two improvements before this design solidifies:
 
 9. **`/Users/katzw/GitHub/zentaizo/README.md`** — lines 52, 55, 101, 126: filename updates. Line 52's prompt becomes:
    > Collaborate with your chosen LLM to flesh out the parts of the system. Open `skills/curate-atlas.md` and follow the procedure (any LLM-driven coding tool will pick it up via `AGENTS.md`).
-   
+
    Update the directory tree at lines 99–111 to include `skills/`.
 
 10. **`/Users/katzw/GitHub/zentaizo/AGENTS.md`** — line 28: filename. Add one sentence about `skills/`.
