@@ -1,6 +1,6 @@
 # Zentaizo
 
-Zentaizo helps an AI assistant understand the big picture of a complex system before it dives into source code.
+Zentaizo helps an AI agent understand the big picture of a complex system before it dives into source code. It's a tool that can create an AI-native workspace: a virtual monorepo for a curated set of repos, papers, API docs, etc. When installed as a shared skill among your chosen AI harnesses, it also serves as a way to share curated, git-persisted, hierarchically-scaled information.
 
 The name comes from Japanese `zentaizo` (`全体像`, usually romanized `zentaizō`), meaning the overall picture.
 
@@ -15,7 +15,9 @@ Useful software work often depends on context that lives outside the repository 
 - design docs and papers
 - issue reports, traces, and local notes
 
-An assistant can answer better questions and make better changes when it has a structured way to see that broader context. Zentaizo is a workspace format and command-line tool for building that context in a token-efficient way.
+An agent can answer better questions and make better changes when it has a structured way to see that broader context. Zentaizo is a workspace format and command-line tool for building that curated context in a token-efficient readable way.
+
+Aside from external information, zentaizo provides a shared skill for where to share git-persisted information during planning, analysis, and implementation.
 
 ## Core Ideas
 
@@ -39,11 +41,17 @@ You want to ask:
 
 > If we add link expiration, which repos need to change, and what contract should they share?
 
-Zentaizo is meant to prepare the assistant to answer that first, then help make the actual edits in the right repositories.
+Zentaizo is meant to prepare the agent to answer that first, then help make the actual edits in the right repositories.
 
-## Command Shape
+## How to Use
 
-The intended day-to-day interface is a normal command named `zentaizo`:
+To install the zentaizo skill, which describes the workflow and conventions:
+
+```bash
+zentaizo skills install --target claude  # or codex, gemini, all
+```
+
+Typically you'd create a `zen-` prefixed workspace repo that targets a particular project where one or more of the fetched or created repos will be modified:
 
 ```bash
 zentaizo create zen-link-shortener
@@ -71,7 +79,7 @@ zentaizo update --dry-run   # preview
 zentaizo update              # apply
 ```
 
-Then, from `/path/to/shortener-api`, you can ask an AI assistant:
+Then, from `/path/to/shortener-api`, you can ask an AI agent:
 
 > Using the Zentaizo context, inspect the related frontend and client library before changing the API contract for link expiration.
 
@@ -105,7 +113,7 @@ After source discovery and fetch, a workspace looks like:
 zen-link-shortener/
   zentaizo.atlas.json       # human-authored context atlas, created after source discovery
   zentaizo.lock.json        # resolved commits, hashes, and snapshot metadata, written by fetch
-  AGENTS.md                 # assistant instructions for this context
+  AGENTS.md                 # agent instructions for this context
 
   repos/                    # fetched source repositories
   docs/                     # documentation snapshots
