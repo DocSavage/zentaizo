@@ -51,6 +51,16 @@ Call `zentaizo.atlas.json` the "context atlas" so the user understands its role 
    - Use `zentaizo provide-info TARGET` to add bounded Zentaizo instructions to another repo.
    - Explain the intended consultation order: summaries first, then locked repos/docs/papers/notes as needed.
 
+## Upgrading an existing workspace (experimental)
+
+When the user asks to bring an older workspace forward to current Zentaizo
+conventions — or when the workspace's bundled files have visibly fallen behind
+the templates — read `upgrade-zentaizo.md` (sibling file in this skill folder)
+and follow it. The procedure is deliberately AI-driven rather than CLI-driven
+because convention changes routinely touch session-file frontmatter, filenames,
+and cross-references. Treat each upgrade as a reviewable migration staged
+through a normal `sessions/changes/` plan, not a one-shot rewrite.
+
 ## User Interview
 
 Use these prompts when the source set is not obvious:

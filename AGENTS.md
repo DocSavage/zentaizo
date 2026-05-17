@@ -14,9 +14,15 @@ python -m zentaizo create /tmp/example-atlas
 python -m zentaizo status /tmp/example-atlas
 # After creating /tmp/example-atlas/zentaizo.atlas.json:
 python -m zentaizo validate /tmp/example-atlas
-# Refresh generic files (AGENTS.md, README.md, skills/) in an existing workspace:
-python -m zentaizo update /tmp/example-atlas
 ```
+
+To bring an older workspace forward after a Zentaizo conventions bump, run an
+AI session in that workspace and use the experimental `upgrade-zentaizo`
+skill (bundled in the global Zentaizo skill via `zentaizo skills install`).
+There is no `zentaizo update` command — convention changes routinely touch
+session-file frontmatter, filenames, and cross-references, and that
+reconciliation is delegated to an AI-driven plan rather than a one-shot CLI
+overwrite.
 
 After editable installation:
 

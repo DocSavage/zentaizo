@@ -72,12 +72,14 @@ zentaizo summarize
 
 # Give another repo instructions for using this context.
 zentaizo provide-info /path/to/shortener-api
-
-# Later, after upgrading the CLI, refresh the workspace's
-# Zentaizo-owned files (AGENTS.md, README.md, skills/) in place.
-zentaizo update --dry-run   # preview
-zentaizo update              # apply
 ```
+
+To bring an older workspace forward when Zentaizo's conventions have changed,
+run an AI session in the workspace and point it at the experimental
+`upgrade-zentaizo` procedure bundled in the global Zentaizo skill. It diffs the
+current templates against the workspace, classifies each delta, and plans any
+artifact migrations (session-file frontmatter, filename conventions) before
+making changes.
 
 Then, from `/path/to/shortener-api`, you can ask an AI agent:
 
@@ -144,6 +146,6 @@ This is a starter repository. The first useful milestone is a simple local workf
 3. Fetch repositories and write `zentaizo.lock.json`.
 4. Generate or prepare hierarchical summaries.
 5. Inject context instructions into a target repo.
-6. Refresh Zentaizo-owned workspace files in place with `zentaizo update` after upgrading the CLI.
+6. When Zentaizo's conventions move forward, use the experimental `upgrade-zentaizo` skill in an AI session to reconcile the workspace.
 
 See `docs/` for the initial design notes.

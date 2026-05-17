@@ -167,16 +167,13 @@ zentaizo provide-info /path/to/repo-you-are-editing
 
 Injects a bounded reference block into that repo's `AGENTS.md` so an AI working in that repo can find this workspace.
 
-## Refreshing the boilerplate
+## Upgrading after Zentaizo conventions change
 
-The generic files in this workspace (`AGENTS.md`, `README.md`, `skills/curate-atlas.md`, `skills/plan-template.md`) are owned by Zentaizo. When the CLI ships an update, refresh them in place:
+The generic files in this workspace (`AGENTS.md`, `README.md`, `skills/curate-atlas.md`, `skills/plan-template.md`, `skills/plan-and-implement.md`) are owned by Zentaizo, but a workspace also evolves locally — `sessions/` accumulates files written under the conventions in force at the time, and `AGENTS.md` sometimes gets project-specific tuning. A naive overwrite of the generic files cannot reconcile both sides.
 
-```bash
-zentaizo update --dry-run   # preview
-zentaizo update              # apply
-```
+When Zentaizo's templates have moved forward, run an AI session in the workspace and point it at the experimental `upgrade-zentaizo` procedure. It lives in the global Zentaizo skill (installed via `zentaizo skills install`) and walks the AI through diffing template-vs-workspace, classifying each delta, planning any artifact migrations (file renames, frontmatter rewrites), and executing on your approval via a normal `sessions/changes/` plan.
 
-Your atlas, lock file, summaries, repos, and `sessions/` contents are not touched. Review with `git diff` before committing in case you had hand-edited any of the generic files.
+This path is deliberately AI-driven rather than CLI-driven: convention changes routinely touch session-file frontmatter, filenames, and cross-references, and that work is too varied to encode safely in a one-shot command.
 """
 
 
@@ -444,81 +441,6 @@ def create_workspace(args: argparse.Namespace) -> int:
 
     print(f"Created Zentaizo workspace: {target}")
     print(f"Next: start an AI session in {target} to create {ATLAS_NAME}")
-    return 0
-
-
-def update_workspace(args: argparse.Namespace) -> int:
-    workspace = pathlib.Path(args.workspace).resolve()
-    if not workspace.is_dir():
-        raise SystemExit(f"Not a directory: {workspace}")
-
-    atlas = find_atlas(workspace)
-    if atlas is not None:
-        config = read_json(atlas)
-        name = args.name or config.get("name") or workspace.name
-    else:
-        name = args.name or workspace.name
-
-    dry_run = bool(getattr(args, "dry_run", False))
-    skip_skills = bool(getattr(args, "no_skills", False))
-
-    changes: list[tuple[str, str]] = []
-
-    def apply_text(rel: str, target: pathlib.Path, new_text: str) -> None:
-        if not target.exists():
-            changes.append((rel, "create"))
-            if not dry_run:
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_text(new_text)
-            return
-        if target.read_text() != new_text:
-            changes.append((rel, "update"))
-            if not dry_run:
-                target.write_text(new_text)
-        else:
-            changes.append((rel, "unchanged"))
-
-    apply_text("AGENTS.md", workspace / "AGENTS.md", workspace_agents(name))
-    apply_text("README.md", workspace / "README.md", workspace_readme(name))
-    apply_text("CLAUDE.md", workspace / "CLAUDE.md", WORKSPACE_POINTER_MD)
-    apply_text("GEMINI.md", workspace / "GEMINI.md", WORKSPACE_POINTER_MD)
-
-    for subdir in ["brainstorming", "changes", "questions", "debugging"]:
-        path = workspace / "sessions" / subdir
-        if not path.exists():
-            changes.append((f"sessions/{subdir}/", "create"))
-            if not dry_run:
-                path.mkdir(parents=True, exist_ok=True)
-
-    if not skip_skills:
-        skills_src = resources.files("zentaizo").joinpath("templates/skills")
-        skills_dst = workspace / "skills"
-        if not skills_dst.exists() and not dry_run:
-            skills_dst.mkdir(parents=True, exist_ok=True)
-        for entry in skills_src.iterdir():
-            if not entry.is_file() or not entry.name.endswith(".md"):
-                continue
-            with resources.as_file(entry) as src_path:
-                new_text = src_path.read_text()
-            apply_text(f"skills/{entry.name}", skills_dst / entry.name, new_text)
-
-    counts = {"create": 0, "update": 0, "unchanged": 0}
-    for _, status in changes:
-        counts[status] += 1
-
-    label = "[dry-run] " if dry_run else ""
-    print(
-        f"{label}Update summary for {workspace}: "
-        f"{counts['create']} created, {counts['update']} updated, {counts['unchanged']} unchanged"
-    )
-    for rel, status in changes:
-        if status == "unchanged":
-            continue
-        prefix = "+ " if status == "create" else "~ "
-        print(f"  {prefix}{rel}")
-
-    if (counts["create"] or counts["update"]) and not dry_run:
-        print("Review changes with `git diff`; restore any project-specific edits you had made.")
     return 0
 
 
@@ -1251,27 +1173,6 @@ def build_parser() -> argparse.ArgumentParser:
     provide.add_argument("target", help="target repository directory")
     provide.add_argument("workspace", nargs="?", default=".", help="workspace directory")
     provide.set_defaults(func=provide_info)
-
-    update = sub.add_parser(
-        "update",
-        help="refresh generic Zentaizo files (AGENTS.md, README.md, skills, sessions/ subdirs) in an existing workspace",
-    )
-    update.add_argument("workspace", nargs="?", default=".", help="workspace directory")
-    update.add_argument(
-        "--name",
-        help="override workspace name in templates (defaults to atlas name, then directory name)",
-    )
-    update.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="report changes without writing files",
-    )
-    update.add_argument(
-        "--no-skills",
-        action="store_true",
-        help="skip updating skill files",
-    )
-    update.set_defaults(func=update_workspace)
 
     skills = sub.add_parser(
         "skills",
