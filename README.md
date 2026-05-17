@@ -74,6 +74,22 @@ zentaizo summarize
 zentaizo provide-info /path/to/shortener-api
 ```
 
+To seed a fresh workspace from an existing one that overlaps in scope (same
+repos pinned, same papers, shared design notes), use `seed-from`:
+
+```bash
+zentaizo seed-from ../zen-old-workspace            # prompts per atlas entry
+zentaizo seed-from ../zen-old-workspace --dry-run  # preview without writing
+zentaizo seed-from ../zen-old-workspace --accept-all
+```
+
+It walks the source atlas, asks per repo/doc/paper/note (or skips prompts with
+`--accept-all`), appends accepted entries to the target atlas, and copies any
+local files referenced by `path:` (typical for notes). Repos are re-pinned
+declaratively in the atlas; the working tree is populated by `zentaizo fetch`
+afterward, not by copying `repos/`. Existing target atlas entries with the same
+name are left untouched.
+
 To bring an older workspace forward when Zentaizo's conventions have changed,
 run an AI session in the workspace and point it at the experimental
 `upgrade-zentaizo` procedure bundled in the global Zentaizo skill. It diffs the

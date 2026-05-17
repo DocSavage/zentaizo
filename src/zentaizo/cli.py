@@ -949,6 +949,143 @@ def provide_info(args: argparse.Namespace) -> int:
     return 0
 
 
+SEED_KINDS = ("repos", "docs", "papers", "notes")
+
+
+def _entry_summary(kind: str, entry: dict) -> str:
+    name = entry.get("name", "<unnamed>")
+    bits = [name]
+    if kind == "repos":
+        role = entry.get("role", DEFAULT_ROLE)
+        ref = entry.get("ref", "main")
+        bits.append(f"role={role}, ref={ref}")
+    pointer = entry.get("url") or entry.get("path")
+    if pointer:
+        bits.append(pointer)
+    desc = entry.get("description")
+    if desc:
+        bits.append(desc)
+    return " — ".join(bits)
+
+
+def _confirm_transfer(kind: str, entry: dict, has_local_file: bool) -> bool:
+    label = f"{kind[:-1]}" if kind.endswith("s") else kind
+    summary = _entry_summary(kind, entry)
+    note = " (+copy referenced file)" if has_local_file else ""
+    prompt = f"Transfer {label} {summary}{note}? [y/N] "
+    try:
+        ans = input(prompt).strip().lower()
+    except EOFError:
+        return False
+    return ans in ("y", "yes")
+
+
+def seed_from_workspace(args: argparse.Namespace) -> int:
+    source_path = pathlib.Path(args.source).resolve()
+    target_path = pathlib.Path(args.target).resolve()
+    if source_path == target_path:
+        raise SystemExit("Source and target workspaces must differ")
+
+    source_atlas = find_atlas(source_path)
+    if source_atlas is None:
+        raise SystemExit(missing_atlas_message(source_path))
+    target_atlas = find_atlas(target_path)
+    if target_atlas is None:
+        raise SystemExit(missing_atlas_message(target_path))
+
+    source_config = read_json(source_atlas)
+    target_config = read_json(target_atlas)
+    source_sources = source_groups(source_config)
+    target_sources = source_groups(target_config)
+
+    accept_all = bool(getattr(args, "accept_all", False))
+    dry_run = bool(getattr(args, "dry_run", False))
+
+    existing_names = {
+        kind: {entry.get("name") for entry in target_sources.get(kind, [])} for kind in SEED_KINDS
+    }
+
+    transferred: list[tuple[str, str]] = []  # (kind, name)
+    files_copied: list[str] = []
+    skipped: list[tuple[str, str, str]] = []  # (kind, name, reason)
+
+    def queue_file_copy(rel_path: str) -> str | None:
+        """Return reason-to-skip if the file can't be copied cleanly, else None."""
+        src_file = source_path / rel_path
+        dst_file = target_path / rel_path
+        if not src_file.is_file():
+            return f"source file missing: {rel_path}"
+        if dst_file.exists():
+            try:
+                if dst_file.read_bytes() == src_file.read_bytes():
+                    return None  # identical, nothing to do
+            except OSError as exc:
+                return f"could not compare target file: {exc}"
+            return f"target file already exists with different contents: {rel_path}"
+        if not dry_run:
+            dst_file.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src_file, dst_file)
+        files_copied.append(rel_path)
+        return None
+
+    label = "[dry-run] " if dry_run else ""
+    print(f"{label}Seeding {target_path} from {source_path}")
+    if accept_all:
+        print(f"{label}--accept-all: transferring every atlas entry not already present")
+    print()
+
+    for kind in SEED_KINDS:
+        for entry in source_sources.get(kind, []):
+            name = entry.get("name")
+            if not name:
+                skipped.append((kind, "<unnamed>", "entry has no name"))
+                continue
+            if name in existing_names[kind]:
+                skipped.append((kind, name, "already in target atlas"))
+                continue
+
+            rel_path = entry.get("path") if "path" in entry else None
+            has_local_file = bool(rel_path)
+
+            if not accept_all and not _confirm_transfer(kind, entry, has_local_file):
+                skipped.append((kind, name, "user declined"))
+                continue
+
+            if has_local_file:
+                reason = queue_file_copy(rel_path)
+                if reason is not None:
+                    skipped.append((kind, name, reason))
+                    continue
+
+            target_sources.setdefault(kind, []).append(entry)
+            existing_names[kind].add(name)
+            transferred.append((kind, name))
+
+    if transferred and not dry_run:
+        target_config["sources"] = target_sources
+        write_json(target_atlas, target_config)
+
+    print(f"{label}Summary for {target_path}:")
+    print(f"  {len(transferred)} atlas entries transferred")
+    for kind, name in transferred:
+        print(f"    + {kind}/{name}")
+    print(f"  {len(files_copied)} referenced files copied")
+    for rel in files_copied:
+        print(f"    + {rel}")
+    if skipped:
+        print(f"  {len(skipped)} skipped:")
+        for kind, name, reason in skipped:
+            print(f"    - {kind}/{name}: {reason}")
+
+    if transferred and not dry_run:
+        print()
+        print(
+            "Atlas updated. Run `zentaizo validate` and `zentaizo fetch` "
+            "to materialize any newly added repos."
+        )
+    return 0
+
+
 def _global_skill_source() -> pathlib.Path:
     """Path to the canonical zentaizo meta-skill bundled in the package."""
     traversable = resources.files("zentaizo").joinpath(
@@ -1173,6 +1310,29 @@ def build_parser() -> argparse.ArgumentParser:
     provide.add_argument("target", help="target repository directory")
     provide.add_argument("workspace", nargs="?", default=".", help="workspace directory")
     provide.set_defaults(func=provide_info)
+
+    seed = sub.add_parser(
+        "seed-from",
+        help="copy atlas entries (and referenced note files) from another workspace into this one",
+    )
+    seed.add_argument("source", help="source workspace directory to seed from")
+    seed.add_argument(
+        "target",
+        nargs="?",
+        default=".",
+        help="target workspace directory (default: cwd)",
+    )
+    seed.add_argument(
+        "--accept-all",
+        action="store_true",
+        help="transfer every atlas entry not already present in the target without prompting",
+    )
+    seed.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="report what would be transferred without modifying the target",
+    )
+    seed.set_defaults(func=seed_from_workspace)
 
     skills = sub.add_parser(
         "skills",

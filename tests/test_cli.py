@@ -105,6 +105,155 @@ class CliTests(unittest.TestCase):
 
             self.assertFalse((workspace / "skills" / "curate-atlas.md").exists())
 
+    def test_seed_from_accept_all_merges_atlas_and_copies_note_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source-ws"
+            target = Path(tmp) / "target-ws"
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(main(["create", str(source)]), 0)
+                self.assertEqual(main(["create", str(target)]), 0)
+
+            source_atlas = default_atlas("source-ws")
+            source_atlas["sources"]["notes"] = [
+                {
+                    "name": "design-notes",
+                    "path": "notes/design.md",
+                    "description": "early design thoughts",
+                }
+            ]
+            (source / "zentaizo.atlas.json").write_text(json.dumps(source_atlas))
+            (source / "notes" / "design.md").write_text("design content\n")
+
+            # Target starts with an empty atlas (no overlapping names).
+            empty_atlas = default_atlas("target-ws")
+            for kind in ("repos", "docs", "papers", "notes"):
+                empty_atlas["sources"][kind] = []
+            (target / "zentaizo.atlas.json").write_text(json.dumps(empty_atlas))
+
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                self.assertEqual(main(["seed-from", str(source), str(target), "--accept-all"]), 0)
+
+            merged = json.loads((target / "zentaizo.atlas.json").read_text())
+            repo_names = {r["name"] for r in merged["sources"]["repos"]}
+            self.assertIn("shortener-api", repo_names)
+            self.assertEqual(merged["sources"]["notes"][0]["name"], "design-notes")
+            self.assertTrue((target / "notes" / "design.md").exists())
+            self.assertEqual((target / "notes" / "design.md").read_text(), "design content\n")
+
+            text = output.getvalue()
+            self.assertIn("+ repos/shortener-api", text)
+            self.assertIn("+ notes/design-notes", text)
+            self.assertIn("+ notes/design.md", text)
+
+    def test_seed_from_dry_run_writes_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source-ws"
+            target = Path(tmp) / "target-ws"
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(main(["create", str(source)]), 0)
+                self.assertEqual(main(["create", str(target)]), 0)
+
+            (source / "zentaizo.atlas.json").write_text(json.dumps(default_atlas("source-ws")))
+            empty_atlas = default_atlas("target-ws")
+            for kind in ("repos", "docs", "papers", "notes"):
+                empty_atlas["sources"][kind] = []
+            target_text = json.dumps(empty_atlas)
+            (target / "zentaizo.atlas.json").write_text(target_text)
+
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                self.assertEqual(
+                    main(
+                        [
+                            "seed-from",
+                            str(source),
+                            str(target),
+                            "--accept-all",
+                            "--dry-run",
+                        ]
+                    ),
+                    0,
+                )
+
+            # Atlas untouched.
+            self.assertEqual((target / "zentaizo.atlas.json").read_text(), target_text)
+            self.assertIn("[dry-run]", output.getvalue())
+
+    def test_seed_from_skips_name_collisions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source-ws"
+            target = Path(tmp) / "target-ws"
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(main(["create", str(source)]), 0)
+                self.assertEqual(main(["create", str(target)]), 0)
+
+            # Both use the same default atlas so every repo name collides.
+            (source / "zentaizo.atlas.json").write_text(json.dumps(default_atlas("source-ws")))
+            (target / "zentaizo.atlas.json").write_text(json.dumps(default_atlas("target-ws")))
+
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                self.assertEqual(main(["seed-from", str(source), str(target), "--accept-all"]), 0)
+
+            text = output.getvalue()
+            self.assertIn("already in target atlas", text)
+            self.assertIn("0 atlas entries transferred", text)
+
+    def test_seed_from_flags_file_content_conflict(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source-ws"
+            target = Path(tmp) / "target-ws"
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(main(["create", str(source)]), 0)
+                self.assertEqual(main(["create", str(target)]), 0)
+
+            source_atlas = default_atlas("source-ws")
+            source_atlas["sources"]["notes"] = [
+                {"name": "trace", "path": "notes/trace.md", "description": "trace"}
+            ]
+            (source / "zentaizo.atlas.json").write_text(json.dumps(source_atlas))
+            (source / "notes" / "trace.md").write_text("source version\n")
+
+            empty_atlas = default_atlas("target-ws")
+            for kind in ("repos", "docs", "papers", "notes"):
+                empty_atlas["sources"][kind] = []
+            (target / "zentaizo.atlas.json").write_text(json.dumps(empty_atlas))
+            # Pre-existing file with different content blocks the copy.
+            (target / "notes" / "trace.md").write_text("target version\n")
+
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                self.assertEqual(main(["seed-from", str(source), str(target), "--accept-all"]), 0)
+
+            text = output.getvalue()
+            self.assertIn("target file already exists with different contents", text)
+            # Atlas entry should NOT have been added when its file copy failed.
+            merged = json.loads((target / "zentaizo.atlas.json").read_text())
+            self.assertEqual(merged["sources"]["notes"], [])
+            # Pre-existing target file untouched.
+            self.assertEqual((target / "notes" / "trace.md").read_text(), "target version\n")
+
+    def test_seed_from_refuses_same_source_and_target(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "ws"
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(main(["create", str(workspace)]), 0)
+
+            (workspace / "zentaizo.atlas.json").write_text(json.dumps(default_atlas("ws")))
+
+            with (
+                self.assertRaises(SystemExit) as cm,
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                main(["seed-from", str(workspace), str(workspace), "--accept-all"])
+            self.assertIn("Source and target", str(cm.exception))
+
     def test_validate_status_and_summarize_with_atlas(self):
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp) / "example-atlas"
