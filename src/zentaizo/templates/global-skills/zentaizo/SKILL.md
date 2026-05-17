@@ -15,6 +15,7 @@ Call `zentaizo.atlas.json` the "context atlas" so the user understands its role 
 
 1. Orient on the workspace.
    - Read `README.md`, `AGENTS.md`, `docs/`, the current context atlas if present, and any lock file before making recommendations.
+   - The workspace's own `AGENTS.md` is authoritative for workspace conventions (filenames, frontmatter, sessions/ workflow). When it disagrees with anything written below, follow the workspace `AGENTS.md`.
    - If `zentaizo.atlas.json` is missing, treat creating it as the first task.
    - Ask only for the minimum missing facts needed to identify the system boundary.
    - Prefer concrete examples and existing repo conventions over abstract taxonomy.

@@ -1,8 +1,14 @@
 ---
 status: planned
-created: YYYY-MM-DD
-updated: YYYY-MM-DD
+created: "YYYY-MM-DDTHH:MM:SSZ"
+updated: "YYYY-MM-DDTHH:MM:SSZ"
 editable_repos: []
+branch_prefix: main
+# Optional, for non-default-branch work:
+# implementation_branch: <branch-name>
+# implementation_base: <short-sha>
+# implementation_outdir: <path>
+# related: [<path>, ...]
 ---
 
 # <Concise plan title>

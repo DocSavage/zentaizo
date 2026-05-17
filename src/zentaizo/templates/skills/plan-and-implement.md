@@ -22,7 +22,7 @@ Do NOT run it for:
 
 Before drafting the plan:
 
-1. Read `AGENTS.md` for workspace rules — especially "Editable vs Reference Repos" and "Recording Work in `sessions/`".
+1. Read `AGENTS.md` for workspace rules — especially "Editable vs Reference Repos", "Active Implementation Branches", and "Recording Work in `sessions/`".
 2. Read `zentaizo.atlas.json`. List the repos with `role: "edit"`. These are the only repos you may modify in this plan. Reference repos can be read and cited but never written to.
 3. If the user pointed at a doc in `sessions/brainstorming/`, read it in full. Otherwise skim recent files there for relevant context — design conversations often contain the constraints the plan needs.
 4. Read `summaries/overview.md` and any source summary covering the components you expect to touch.
@@ -30,17 +30,18 @@ Before drafting the plan:
 
 ## Drafting the plan
 
-1. Create `sessions/changes/YYYY-MM-DD-<slug>.md` using `skills/plan-template.md` as the scaffold. Use today's date. The slug is 2–5 hyphenated words describing the change (`auth-token-rotation`, not `refactor1`).
+1. Create `sessions/changes/<branch_prefix>-NNNN-<slug>.md` using `skills/plan-template.md` as the scaffold. The full convention is in `AGENTS.md` § Filename Convention — read it before choosing a filename, especially the derivation rule for the branch prefix, the discovery procedure for the next available counter value, and the plan-creation collision check. Example for the first plan on a branch with prefix `featauth`: `featauth-0001-token-rotation.md`.
 2. Fill in the frontmatter:
    - `status: planned`
-   - `created` and `updated`: today's date
+   - `created` and `updated`: the current UTC time as a quoted full ISO 8601 timestamp, for example `"2026-05-13T22:37:00Z"`
    - `editable_repos`: only the subset of `role: "edit"` repos this plan will actually modify
+   - `branch_prefix`: the derived prefix that matches the filename. For non-default-branch work, add `implementation_branch:` and `implementation_base:` as documented in `AGENTS.md`.
 3. Fill in the `## Plan` section:
    - **Problem** — one short paragraph. Cite system context from the atlas/summaries rather than restating it.
    - **Scope** — what's in, what's explicitly out.
    - **Files and components involved** — name the parts that move, not the full repo inventory.
    - **Approach** — small, numbered, individually verifiable steps.
-   - **Acceptance criteria** — checkable outcomes (one checkbox per criterion).
+   - **Acceptance criteria** — checkable outcomes (one checkbox per criterion). Start criteria unchecked; they are marked complete only during closeout when the outcome supports them.
    - **Verification** — commands, tests, or artifacts that prove each criterion.
    - **Open questions** — anything to confirm with the user before starting.
 4. If brainstorming docs informed this plan, link to them by relative path so the lineage is preserved.
@@ -51,10 +52,10 @@ Before drafting the plan:
 
 Once the user approves:
 
-1. Update the plan's frontmatter: `status: in-progress`, refresh `updated`. Treat the `## Plan` section as frozen from this point. If scope changes mid-flight, capture it as a deviation in the upcoming `## Outcome` rather than rewriting the plan.
+1. Update the plan's frontmatter: `status: in-progress`, refresh `updated` to the current quoted UTC ISO timestamp. Treat the `## Plan` section as frozen from this point, except for marking acceptance criteria checkboxes during closeout. If scope changes mid-flight, capture it as a deviation in the upcoming `## Outcome` rather than rewriting the plan.
 2. Work step by step through the approach. Modify files only in repos with `role: "edit"` in the atlas. Read reference repos freely but do not write to them.
 3. Run the verification steps as you go, not just at the end.
-4. If a substantive cross-repo question comes up that the user answers, save it as `sessions/questions/YYYY-MM-DD-<slug>.md`. If a bug investigation is needed mid-implementation, save the trace as `sessions/debugging/YYYY-MM-DD-<slug>.md`. Link these back from the plan if they were load-bearing.
+4. If a substantive cross-repo question comes up that the user answers, save it as `sessions/questions/YYYY-MM-DD-<slug>.md` (questions use the topical date-prefixed convention, not the sequential one). If a bug investigation is needed mid-implementation, save the trace as `sessions/debugging/<branch_prefix>-NNNN-<slug>.md` (debugging uses the same sequential convention as `changes/`). Link these back from the plan if they were load-bearing.
 
 ## Closing out
 
@@ -66,8 +67,9 @@ When the work ships (or is abandoned):
    - **Surprises and lessons** — load-bearing context that isn't obvious from the diff.
    - **Follow-up work** — deferred items; link to any new `sessions/changes/` entries you opened.
    - **Links** — PRs, generated artifacts, related debugging or Q&A files.
-2. Update the frontmatter: `status: done` (or `abandoned`), refresh `updated`.
-3. Show the user the final plan file. Ask whether to commit it alongside the code changes.
+2. Update the frontmatter: `status: done` (or `abandoned`), refresh `updated` to the current quoted UTC ISO timestamp.
+3. Review the `### Acceptance criteria` checklist. Mark each fulfilled item as `[x]`; leave unmet or only partially met items as `[ ]` and explain them under **Deviations from the plan** or **Follow-up work**.
+4. Show the user the final plan file. Ask whether to commit it alongside the code changes. Workspace plan commits and editable-repo code commits go to different repositories — see `AGENTS.md` § Commits.
 
 ## Boundaries — what this procedure does NOT do
 

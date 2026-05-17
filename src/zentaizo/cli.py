@@ -224,16 +224,106 @@ Repos without an explicit `role` are treated as `reference`. If a task seems to 
 
 When proposing a plan or summarizing changes, name the editable repo(s) explicitly so the user can confirm scope. Do not restate the full edit/reference list as boilerplate in every plan; read it from `{ATLAS_NAME}` at the start of each session.
 
+## Active Implementation Branches
+
+Editable repos can be on a non-`main` branch when work-in-progress lives there. To prevent future sessions from getting confused about which branch holds the current work:
+
+1. **The checked-out branch in each editable repo is the source of truth.** On session startup, run `git -C <repo-path> branch --show-current` for each editable repo and note any branch that differs from the atlas-pinned `ref`.
+2. **Find the active plan via frontmatter.** Plan files in `sessions/changes/` may declare extension fields `implementation_branch:` and `implementation_base:` to mark which branch they belong to. The most recent plan whose `implementation_branch` matches the checked-out branch is the active context.
+3. **The atlas `ref` stays pinned to the durable default** (usually `"main"`). Do not mutate the atlas to follow transient branch work — active-branch state is conveyed by checked-out state plus plan frontmatter, not by atlas mutation.
+4. **Record branch switches** in the active plan's outcome section so the lineage stays durable across sessions.
+
 ## Recording Work in `sessions/`
 
 `sessions/` is the durable trail of how this workspace has been used. Prefer writing to it over leaving substantive work only in chat history. Four subdirectories exist:
 
 - `sessions/brainstorming/` — freeform input. Drop AI chat transcripts, sketches, source inventories, and exploratory design conversations here. No required schema, no required filename pattern. This is the *pre-atlas* dumping ground used to inform `{ATLAS_NAME}` during curation; later it also holds open-ended design discussions that aren't yet executable plans.
-- `sessions/changes/` — implementation plans for multi-repo changes. Before editing in earnest, save a plan as `sessions/changes/YYYY-MM-DD-<slug>.md` covering problem, files involved, step-by-step approach, and verification. Use the status frontmatter convention below so a single file tracks the work from planning through delivery. The full procedure (drafting → executing → closing out) is in `skills/plan-and-implement.md`; `skills/plan-template.md` is the scaffold it copies.
-- `sessions/questions/` — Q&A logs. When the user asks a substantive cross-repo question and you produce a researched answer, save the question, the answer, and source citations as `sessions/questions/YYYY-MM-DD-<slug>.md`.
-- `sessions/debugging/` — traces, hypotheses, and resolutions. When investigating a bug across the atlas, save the trace and final root cause as `sessions/debugging/YYYY-MM-DD-<slug>.md`.
+- `sessions/changes/` — implementation plans for multi-repo changes. Before editing in earnest, save a plan covering problem, files involved, step-by-step approach, and verification. Filename follows the sequential convention below. Use the status frontmatter convention so a single file tracks the work from planning through delivery. The full procedure (drafting -> executing -> closing out) is in `skills/plan-and-implement.md`; `skills/plan-template.md` is the scaffold it copies.
+- `sessions/questions/` — Q&A logs. When the user asks a substantive cross-repo question and you produce a researched answer, save the question, the answer, and source citations as `sessions/questions/YYYY-MM-DD-<slug>.md` (date-prefixed, topical).
+- `sessions/debugging/` — traces, hypotheses, and resolutions. When investigating a bug across the atlas, save the trace and final root cause. Filename follows the sequential convention below.
 
-Filenames in `changes/`, `questions/`, and `debugging/` should sort chronologically. The slug should be 2–5 hyphenated words describing the topic (`shortener-link-expiration-contract`, not `plan1`).
+### Filename Convention
+
+Two file shapes live in `sessions/`, one for sequential decision/investigation logs and one for topical content:
+
+| Subdirectory | Convention |
+|---|---|
+| `changes/`, `debugging/` | `<branch_prefix>-NNNN-<slug>.md` (sequential, per-branch counter) |
+| `questions/` | `YYYY-MM-DD-<slug>.md` (date-prefixed, topical) |
+| `brainstorming/` | freeform, no required schema |
+
+Files in `changes/` and `debugging/` follow:
+
+    <branch_prefix>-NNNN-<slug>.md
+
+- **`branch_prefix`**: deterministically derived from the current git branch name. Take the branch name, lowercase it, strip every character that is not an ASCII letter or digit, and truncate the result to the first 8 characters. Length floor is 1, ceiling 8. Always present (`main` for the default branch). Examples:
+
+  | git branch              | derived prefix |
+  |-------------------------|----------------|
+  | `main`                  | `main`         |
+  | `trunk`                 | `trunk`        |
+  | `mc-gpu`                | `mcgpu`        |
+  | `mc-gpu-marching-cubes` | `mcgpumar`     |
+  | `feat/auth`             | `featauth`     |
+  | `v2-api`                | `v2api`        |
+
+  Reference implementation:
+
+  ```python
+  def derive_prefix(branch_name):
+      alnum = ''.join(c for c in branch_name.lower() if c.isalnum())
+      if len(alnum) < 1:
+          raise ValueError(f"Branch {{branch_name!r}} has no alphanumerics")
+      return alnum[:8]
+  ```
+
+  Two distinct branches must derive to distinct prefixes. Collisions are detected at plan-creation time (procedure below) rather than enforced by tooling at branch-creation time.
+
+- **`NNNN`**: 4-digit zero-padded monotonic counter, per-branch. Starts at 0001. Never reused. The counter is unified across `changes/` and `debugging/` for a given branch — one sequence per branch regardless of which of those two subdirectories the file lives in. `questions/` and `brainstorming/` do not consume counter values.
+
+- **`slug`**: 2–5 hyphenated words. May include a leading semantic phase marker (`phase1-`, `phase2-`) when the plan belongs to a named project phase. Optional.
+
+The date does not appear in the filename. It lives in frontmatter as `created:` and `updated:` (ISO 8601 UTC) and is canonical there.
+
+### Finding the next counter value
+
+Before creating a new plan, list existing files for the current branch's prefix:
+
+```bash
+P=$(git branch --show-current | tr -d '[:punct:][:space:]_' \\
+    | tr '[:upper:]' '[:lower:]' | head -c 8)
+ls sessions/changes/ sessions/debugging/ 2>/dev/null \\
+  | grep -E "^${{P}}-" | sort | tail -1
+```
+
+The next counter is the trailing number plus one, zero-padded to 4 digits.
+
+### Plan-creation collision check
+
+Before writing the first plan on a branch, verify the derived prefix is not already in use by a different branch:
+
+1. Compute `P` from the current branch name using the rule above.
+2. List files matching `<P>-*` across `sessions/changes/` and `sessions/debugging/`.
+3. If any match exists, open its frontmatter and read `implementation_branch:`:
+   - Same as the current branch — proceed with the next sequence number.
+   - Different from the current branch — **collision**. Refuse to write the plan. Surface the conflict to the user with both branch names and ask them to rename one before continuing.
+4. If no match exists, this is the first plan on this prefix; write it as `<P>-0001-<slug>.md`.
+
+### Parallel-agent safety
+
+The deterministic prefix derivation plus the plan-creation collision check together prevent cross-branch collisions when the procedure is followed (by AI or human). Same-branch collisions are not addressed by the naming convention — operational discipline is one agent per branch at a time, with git worktrees as the escape hatch when concurrent same-branch work is required.
+
+Use `tmp/` as a workspace-local scratch directory. It's under `.gitignore` and is only cleared by the user.
+
+### Commits
+
+Commit changes at reasonable milestones. For editable repos, make focused commits after each coherent, verified implementation slice rather than mixing unrelated source, docs, and generated artifacts.
+
+Before each commit, run relevant verification, inspect git status, and commit only files belonging to that milestone. Do not commit generated build outputs, local fixtures, local environment directories such as `.pixi/`, or unrelated workspace changes. Commit messages should capture the breadth of the changes, not just one detail; use bullet items in the body for significant changes. When a commit needs both a subject and body, write one complete commit message and pass it with `git commit -F` rather than repeated `-m` flags (repeated `-m` inserts unwanted blank lines).
+
+If your AI harness emits a `Co-authored-by:` trailer, include the actual model identifier and reasoning level used in the session rather than a hardcoded value. Determine these from the active session or local harness configuration before committing.
+
+Commit Zentaizo workspace notes/plans separately from edited repo code. Do not mix workspace session commits with editable-repo commits — they belong to different repositories anyway, and keeping them separate preserves a clean lineage.
 
 ### Status frontmatter for `sessions/changes/`
 
@@ -242,15 +332,34 @@ Each plan file begins with YAML frontmatter:
 ```yaml
 ---
 status: planned          # planned | in-progress | done | abandoned
-created: YYYY-MM-DD
-updated: YYYY-MM-DD
+created: "YYYY-MM-DDTHH:MM:SSZ"
+updated: "YYYY-MM-DDTHH:MM:SSZ"
 editable_repos: [name, ...]   # repos this plan will modify; must have role: edit in the atlas
 ---
 ```
 
+Use full ISO 8601 UTC timestamps for `created:` and `updated:` and quote them to avoid YAML parser differences. The date does not appear in `changes/` or `debugging/` filenames (it's canonical in frontmatter); `questions/` files keep the `YYYY-MM-DD-` filename prefix.
+
+Required for `changes/` and `debugging/` files:
+
+```yaml
+branch_prefix: <prefix>                # derived from the git branch name (see Filename Convention)
+```
+
+Optional extension fields for plans tied to a non-default branch:
+
+```yaml
+implementation_branch: <branch-name>   # branch within an editable repo this plan targets
+implementation_base: <short-sha>       # commit the branch was rooted at (its divergence point)
+implementation_outdir: <path>          # branch-scoped output directory in the editable repo, kept out of git
+related: [<path>, ...]                 # cross-references to other session notes
+```
+
+`branch_prefix` lets readers verify the filename matches the declared branch without recomputing the derivation. For routine `main`-branch work, `branch_prefix: main` is the only required addition beyond the base frontmatter.
+
 The body uses two top-level sections:
 
-- `## Plan` — written before work starts: problem statement, scope, files involved, step-by-step approach, acceptance criteria, and verification. Treat this section as frozen once status moves to `in-progress`; edit it only to correct factual errors.
+- `## Plan` — written before work starts: problem statement, scope, files involved, step-by-step approach, acceptance criteria, and verification. Treat this section as frozen once status moves to `in-progress`; edit it only to correct factual errors. The exception is the acceptance checklist: when writing `## Outcome`, mark fulfilled criteria as `[x]`, leave unmet criteria as `[ ]`, and explain any unchecked items in the outcome.
 - `## Outcome` — appended when status moves to `done` (or `abandoned`): what was actually built, deviations from the plan and why, surprises, follow-up work, and links to commits or PRs.
 
 Update `status:` and `updated:` whenever the state changes. Do not move or rename the file when work completes — the same path holds intent and result so future sessions can read both.
@@ -261,7 +370,7 @@ When the user shares a design conversation, source inventory, or freeform implem
 
 1. Save the raw material under `sessions/brainstorming/` with a meaningful filename.
 2. Separate workspace-generic facts from project-specific constraints. Generic facts (which repos exist, which are editable, what the system is) belong in `{ATLAS_NAME}`. Project-specific constraints (hardware targets, phase exclusions, acceptance criteria, reporting format) belong in the eventual `sessions/changes/` plan.
-3. Run `skills/plan-and-implement.md` to distill the actionable parts into a `sessions/changes/YYYY-MM-DD-<slug>.md` plan. Link back to the brainstorming source(s) so the lineage is preserved.
+3. Run `skills/plan-and-implement.md` to distill the actionable parts into a `sessions/changes/<branch_prefix>-NNNN-<slug>.md` plan. Link back to the brainstorming source(s) so the lineage is preserved.
 """
 
 
@@ -322,6 +431,7 @@ def create_workspace(args: argparse.Namespace) -> int:
                 "docs/snapshots/",
                 "papers/*.pdf",
                 ".zentaizo/",
+                "tmp/",
                 "",
             ]
         )
