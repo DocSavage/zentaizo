@@ -105,6 +105,39 @@ class CliTests(unittest.TestCase):
 
             self.assertFalse((workspace / "skills" / "curate-atlas.md").exists())
 
+    def test_validate_flags_dangling_path_entries(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "dangling-atlas"
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(main(["create", str(workspace)]), 0)
+
+            atlas = default_atlas("dangling-atlas")
+            atlas["sources"]["notes"] = [
+                {
+                    "name": "exists-note",
+                    "path": "notes/here.md",
+                    "description": "ok",
+                },
+                {
+                    "name": "missing-note",
+                    "path": "notes/gone.md",
+                    "description": "broken pointer",
+                },
+            ]
+            (workspace / "zentaizo.atlas.json").write_text(json.dumps(atlas))
+            (workspace / "notes" / "here.md").write_text("present\n")
+
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                self.assertEqual(main(["validate", str(workspace)]), 1)
+
+            text = output.getvalue()
+            self.assertIn("invalid", text)
+            self.assertIn("missing-note", text)
+            self.assertIn("notes/gone.md", text)
+            self.assertNotIn("exists-note", text)
+
     def test_seed_from_accept_all_merges_atlas_and_copies_note_files(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "source-ws"

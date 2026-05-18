@@ -531,6 +531,16 @@ def validate_workspace(args: argparse.Namespace) -> int:
             if not item.get("name"):
                 errors.append(f"{group}[{index}] is missing name")
 
+    for group in ["repos", "docs", "papers", "notes"]:
+        for index, item in enumerate(sources.get(group, []), start=1):
+            rel_path = item.get("path")
+            if not rel_path:
+                continue
+            target = (workspace / rel_path).resolve()
+            if not target.exists():
+                name = item.get("name") or f"{group}[{index}]"
+                errors.append(f"{group} {name!r} path does not exist: {rel_path}")
+
     if errors:
         print(f"{workspace}: invalid")
         for error in errors:

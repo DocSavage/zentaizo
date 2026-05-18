@@ -32,10 +32,16 @@ Do **not** run it for:
 
 ## Pre-flight
 
-1. Confirm the workspace is clean in git (`git status` shows no unstaged
+1. Run `zentaizo validate` in the workspace and resolve anything it reports
+   **before** starting the upgrade. The most common pre-existing issue is
+   dangling `path:` entries in `zentaizo.atlas.json` whose targets were
+   renamed or removed in earlier work. Integrity bugs in the workspace are
+   not part of an upgrade's scope — fixing them up front keeps the upgrade
+   diff narrow and the `## Outcome` honest about what changed.
+2. Confirm the workspace is clean in git (`git status` shows no unstaged
    changes), or that the user understands the upgrade will land alongside their
    existing work-in-progress.
-2. Confirm the user has the current Zentaizo source available. The procedure
+3. Confirm the user has the current Zentaizo source available. The procedure
    needs to read the installed templates for comparison. If `zentaizo skills
    install` was used as a symlink, the source is wherever that symlink points;
    otherwise it's the `templates/` directory inside the installed `zentaizo`
