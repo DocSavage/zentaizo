@@ -676,11 +676,39 @@ def run_git(args: list[str], cwd: pathlib.Path | None = None) -> str:
     result = subprocess.run(
         ["git", *args],
         cwd=cwd,
-        check=True,
         capture_output=True,
         text=True,
     )
+    if result.returncode != 0:
+        where = f" in {cwd}" if cwd else ""
+        details = (result.stderr or result.stdout or "").rstrip()
+        message = f"git {' '.join(args)} failed (exit {result.returncode}){where}"
+        if details:
+            message = f"{message}:\n{details}"
+        if "git-lfs" in details:
+            message = (
+                f"{message}\n\n"
+                "Hint: this repo uses Git LFS but the git-lfs binary is not "
+                "available. Install it (e.g. `sudo apt install git-lfs && "
+                "git lfs install`) and rerun `zentaizo fetch`."
+            )
+        raise SystemExit(message)
     return result.stdout.strip()
+
+
+def clone_repo(url: str, dst: pathlib.Path) -> None:
+    """Clone ``url`` into ``dst``, cleaning up the partial directory on failure.
+
+    Without cleanup, a failed clone (e.g. git-lfs smudge errors) leaves a
+    half-populated ``dst`` that the next ``zentaizo fetch`` treats as an
+    existing checkout with a dirty working tree.
+    """
+    try:
+        run_git(["clone", url, str(dst)])
+    except SystemExit:
+        if dst.exists():
+            shutil.rmtree(dst, ignore_errors=True)
+        raise
 
 
 def try_run_git(args: list[str], cwd: pathlib.Path | None = None) -> str | None:
@@ -755,7 +783,7 @@ def fetch_reference_repo(workspace: pathlib.Path, repo: dict) -> dict:
         run_git(["checkout", repo["ref"]], cwd=dst)
     else:
         print(f"Cloning {name} (reference)...")
-        run_git(["clone", repo["url"], str(dst)])
+        clone_repo(repo["url"], dst)
         run_git(["checkout", repo["ref"]], cwd=dst)
 
     commit = run_git(["rev-parse", "HEAD"], cwd=dst)
@@ -778,7 +806,7 @@ def fetch_edit_repo(workspace: pathlib.Path, repo: dict, do_rebase: bool) -> dic
 
     if not dst.exists():
         print(f"Cloning {name} (edit)...")
-        run_git(["clone", repo["url"], str(dst)])
+        clone_repo(repo["url"], dst)
         run_git(["checkout", repo["ref"]], cwd=dst)
         commit = run_git(["rev-parse", "HEAD"], cwd=dst)
         print(f"Locked {name} @ {commit[:12]} — create a branch before committing")
