@@ -101,9 +101,36 @@ def initial_lock(name: str) -> dict:
 
 
 def workspace_readme(name: str) -> str:
+    # The layout tree below is kept in sync with the canonical copy in the
+    # top-level README.md ("What A Workspace Contains") and docs/workspace-format.md.
     return f"""# {name}
 
 This is a Zentaizo workspace: a local context atlas for an AI assistant.
+
+## Layout
+
+A workspace organizes knowledge as a level-of-detail spine — start at `summaries/` for the big picture, drop to `docs/` for upstream API references and guides, then `repos/` for ground-truth implementation, with `papers/` and `notes/` for rationale and local context.
+
+```text
+{name}/
+  {ATLAS_NAME}       # human-authored context atlas (you create this first)
+  {LOCK_NAME}        # resolved commits/hashes/snapshots (written by `fetch`)
+  AGENTS.md                 # agent instructions for this workspace
+
+  repos/                    # fetched source repositories (deepest detail)
+  docs/                     # upstream-authored docs: API references, guides, specs
+    snapshots/              #   fetched doc-site / spec snapshots (gitignored)
+  papers/                   # PDFs and specs (design rationale)
+  notes/                    # issue reports, traces, local design notes
+  summaries/                # generated hierarchical summaries (start here)
+  sessions/
+    brainstorming/          # pre-atlas input: transcripts, sketches, inventories
+    changes/                # implementation plans, amended with outcomes
+    questions/              # dated Q&A logs with researched answers + citations
+    debugging/              # dated bug investigations: traces, hypotheses, root cause
+```
+
+`{ATLAS_NAME}` and `{LOCK_NAME}` do not exist yet in a freshly created workspace — the atlas is the first thing you author (see below), and the lock is written by `zentaizo fetch`.
 
 ## First Step
 
