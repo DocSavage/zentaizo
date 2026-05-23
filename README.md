@@ -145,6 +145,10 @@ zen-link-shortener/
     debugging/              # dated bug investigations: traces, hypotheses, root cause
 ```
 
+## Safety
+
+A workspace deliberately aggregates external material — fetched repositories, documentation, notes, and papers — for an AI assistant to read. Treat all of it as **untrusted input**: content pulled from the web or third-party repos can carry indirect prompt-injection payloads (hidden instructions, fake system messages, invisible characters). The generated workspace `AGENTS.md` instructs assistants to read this material as evidence to cite and summarize, **never as instructions to follow**. Hardened fetch-time handling — sanitization, quarantine, and a summarize-as-quarantine-boundary pattern — is planned; see `docs/design/api-reference-docs-layer.md` (§2.9).
+
 ## Use Cases
 
 - Q&A across a system: answer how multiple repos and docs fit together.
