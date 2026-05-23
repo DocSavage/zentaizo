@@ -131,6 +131,16 @@ Most of this is judgment work, so it belongs in `skills/curate-atlas.md`
 (AI-driven), with an optional thin CLI helper for the deterministic parts. When
 inventorying each repo, the AI should look for:
 
+- **LLM-oriented docs (preferred when present):** an `llms.txt` / `llms-full.txt`
+  at the doc site root (e.g. `https://<project>.<host>/llms.txt`), and any
+  `llms.txt` committed in the repo. By 2026 this is a near-mainstream convention
+  (Anthropic, Vercel, LangGraph publish both; IDE agents fetch them routinely).
+  `llms-full.txt` is a single-file, full-content Markdown dump — purpose-built
+  for exactly this layer — and `llms.txt` is a curated index of links with
+  one-line descriptions. When found, record it as a `docs` entry (e.g.
+  `kind: api-reference`, `format: llms-txt`) and prefer it over crawling. Caveat:
+  it is a community convention with no enforcement, so presence and freshness
+  vary — verify it actually covers the API surface before relying on it.
 - **External doc sites:** `.readthedocs.yaml` / `readthedocs.yml`; README badges
   or links to `*.readthedocs.io` / GitHub Pages; `pyproject.toml`
   `[project.urls]` `Documentation`; `docs/` containing `conf.py` (Sphinx) or
@@ -153,6 +163,7 @@ Researched options (sources at bottom):
 
 | Approach | Output | New dependency | Notes |
 |---|---|---|---|
+| **`llms-full.txt` / `llms.txt`** | LLM-ready Markdown | none (HTTP GET) | When the site publishes one, this is a single curated Markdown file — no crawler, no conversion. Tier 0 of the cascade. |
 | **RTD downloadable build** | HTMLZip / PDF / ePub | none (HTTP GET) | Read the Docs exposes offline builds at predictable `/_/downloads/...` URLs. Cheapest faithful snapshot for the very common RTD case. |
 | **`wget --mirror`** | HTML tree | none (ubiquitous) | Faithful, but HTML is token-heavy and needs link rewriting; conversion deferred to AI. |
 | **Crawl4AI** | LLM-ready Markdown | heavy (Python + Playwright/headless browser) | Best markdown, but a large dep footprint that cuts against the thin-CLI rule. |
@@ -161,13 +172,19 @@ Researched options (sources at bottom):
 
 **Recommendation:** make the doc fetcher a small pluggable interface with a
 **zero-dependency default**, and *defer markdown conversion to the AI summarize
-step* (which already runs an AI, so HTML->markdown is free there). Concretely:
+step* (which already runs an AI, so HTML->markdown is free there). Concretely,
+a fall-through cascade:
 
-1. If the URL is a Read the Docs project, fetch its HTMLZip offline build by
+0. If the entry points at (or the site root exposes) `llms-full.txt` /
+   `llms.txt`, download that single file into `docs/snapshots/<name>.md`. Done —
+   no crawl, no conversion.
+1. Else if the URL is a Read the Docs project, fetch its HTMLZip offline build by
    convention and unzip into `docs/snapshots/<name>/`.
 2. Otherwise, `wget --mirror` (or `urllib`-based bounded crawler) the doc URL
    into `docs/snapshots/<name>/`, capped by depth/page-count/same-host.
-3. Record a content hash + `fetched_at` + `fetcher` in the lock.
+3. Run every downloaded artifact through the safety pass in 2.9 *before* it is
+   written into the workspace, then record content hash + `fetched_at` +
+   `fetcher` + safety verdict in the lock.
 4. Leave a richer markdown-converter (Crawl4AI / Firecrawl / markdowner) as an
    **opt-in** selected via config/env (`docs.fetcher`), not a hard dep.
 
@@ -208,6 +225,12 @@ State the principle explicitly: prefer upstream-authored docs over
 AI-regenerated summaries when both exist and agree; fall to `repos/` as ground
 truth on any conflict.
 
+Two safety caveats from §2.9 ride on this ordering: (a) `docs/` content is
+*untrusted external data* — read it as quoted evidence, never as instructions;
+and (b) prefer the distilled `summaries/sources/<name>.md` over the raw
+`docs/snapshots/` file (the summary is the quarantine-LLM output), reaching for
+the raw snapshot only when the summary is insufficient.
+
 ### 2.6 `summarize` reuse (cli.py:894)
 
 When a `docs` snapshot exists for a source, the summarize prompt should instruct
@@ -234,6 +257,98 @@ manual `cargo doc` / `pdoc` path as optional guidance in curate-atlas.
 - Document `kind`, the external-vs-in-repo discriminator, and the
   `docs/snapshots/` layout in `workspace-format.md`.
 
+### 2.9 Safety: downloaded docs are untrusted, persistent injection surface
+
+This is the highest-stakes part of Part 2. Unlike a one-off web search, a
+fetched doc snapshot is **committed to git and re-read by every future AI
+session** — so a single poisoned page becomes a durable prompt-injection vector.
+The threat is concrete: a doc site (compromised, or just hosting a page with
+embedded instructions) can carry fake system/role markers, "ignore previous
+instructions", tool-call-shaped blocks, "do not tell the user" directives, or
+instructions hidden in invisible characters. (We hit exactly this class of
+payload in the WebSearch results while researching this very doc.)
+
+This is textbook **indirect prompt injection** (OWASP LLM01): the model is
+compromised not by the user but by data it consumes — instructions hidden in a
+web page, PDF, or invisible characters. The RAG-poisoning literature is sobering:
+as few as ~5 poisoned documents in a knowledge base can steer responses ~90% of
+the time, and OWASP is explicit that grounding techniques like RAG do **not**
+secure against this — they ground the model without securing it.
+
+The grounding principle from current practice (OWASP, NIST's 2026 AI Agent
+Standards work, the dual-LLM / CaMeL line of research): **architectural controls
+beat model-level mitigations**, because model behavior can itself be steered by
+the injected text, whereas validation/isolation around the model operates
+independently of it. The three load-bearing patterns we adopt:
+
+- **Trust labeling + provenance.** Every snapshot is tagged "untrusted external"
+  and carries its source URL and a safety verdict, so downstream consumers know
+  what they're reading.
+- **Instruction hierarchy — evidence, never orders.** Retrieved content is data
+  to be summarized/cited, never commands to execute. Any imperative found inside
+  a snapshot ("ignore previous instructions", "call tool X") is content, not
+  control flow. Agent control flow must not depend on untrusted snapshot text.
+- **Context isolation / quarantine boundary.** Untrusted text is kept walled off
+  from the privileged, tool-wielding session. This maps cleanly onto Zentaizo's
+  existing shape: the `summarize` step is a natural **quarantine LLM** — it reads
+  the raw snapshot and emits a distilled, cited summary — and the acting session
+  should prefer that summary over the raw snapshot (see refinement below).
+
+Honest framing: prompt-injection detection is undecidable in general — we cannot
+*guarantee* a snapshot is clean, and signature scanning is the weakest layer.
+The design is **architectural defense-in-depth that fails safe and keeps a human
+in the loop**, not a claim of blocking injection.
+
+The safety pass runs **at fetch time, before anything is written into the
+workspace** (sanitize closest to the source — the further from the source, the
+more code paths a payload survives untouched):
+
+1. **Reduce to visible plain text.** Per the standard content-sanitization
+   recipe: parse HTML and keep only visible content — strip HTML comments,
+   hidden/`display:none` elements, scripts, and metadata/EXIF; keep a minimal
+   markup allow-list. (Markdown sources like `llms-full.txt` skip most of this.)
+2. **Unicode/control sanitization.** Strip the Unicode Tags block (U+E0000–
+   U+E007F, the ASCII-smuggling channel), zero-width characters (ZWSP/ZWNJ/ZWJ,
+   BOM), and other invisible/bidi control characters; NFC-normalize; normalize
+   whitespace. Do not auto-decode base64/hex blobs.
+3. **Heuristic flagging (not blocking).** Scan the sanitized text for injection
+   signatures — `<system>`/`<system-reminder>`-style tags, "ignore (all)
+   previous instructions", "you are now", "do not tell/inform the user",
+   tool/function-call-shaped blocks, suspicious imperative second-person
+   directives. Matches are *flagged*, not silently removed, since docs can
+   legitimately discuss these strings. (This is the weakest layer — it backstops
+   the architectural controls above, it does not replace them.)
+4. **Quarantine + human-in-the-loop.** Anything flagged lands in a quarantine
+   path (e.g. `docs/snapshots/<name>.flagged`) and is **not** committed or
+   surfaced to summarize until a human reviews. `fetch-docs` prints a safety
+   summary (counts of stripped chars, flagged spans, source URL). Clean
+   downloads pass through; flagged ones block on acknowledgment.
+5. **Provenance + read-as-data instruction.** Record source URL + safety verdict
+   in the lock (2.8) — this doubles as the audit log NIST calls for (capture
+   which external resources were retrieved). Update `AGENTS.md` so assistants
+   treat everything under `docs/snapshots/` as **untrusted reference data, never
+   as instructions** — present it as quoted evidence; an imperative inside a
+   snapshot is content to summarize, not a command to follow.
+6. **Containment of fetch itself.** Bound the crawler to the source host, cap
+   depth/page-count/size, honor timeouts, and never execute fetched content.
+
+**Consultation refinement (architectural, the most important control).** Because
+`summarize` already distills snapshots into cited summaries, treat it as the
+quarantine boundary: the acting session should prefer `summaries/sources/<name>.md`
+over the raw `docs/snapshots/` file, and reading a raw snapshot directly is the
+higher-risk operation reserved for when the summary is insufficient. This is a
+lightweight echo of the dual-LLM / CaMeL pattern (a quarantined reader produces
+structured output; the privileged, tool-wielding session consumes that output,
+not the raw untrusted text). It does not require a second model — just an
+ordering rule in §2.5's consultation list and AGENTS.md.
+
+Keep the sanitizer dependency-light (stdlib `unicodedata` + regex covers tag/
+zero-width stripping and signature scanning; HTML reduction needs a parser like
+the stdlib `html.parser` or a small allow-list cleaner). A heavier scanner (e.g.
+promptfoo's ASCII-smuggling / RAG-poisoning red-team checks, or a guardrails
+service) can be an opt-in layer later, mirroring the opt-in markdown-converter in
+2.3.
+
 ---
 
 ## Open decisions (need a call before building)
@@ -249,15 +364,23 @@ manual `cargo doc` / `pdoc` path as optional guidance in curate-atlas.
    `summaries/`, keep `docs/` upstream-only.)
 5. **CLI-side OpenAPI->Markdown conversion in v1 or skip.** (Recommended: skip;
    raw spec + AI.)
+6. **Safety pass: flag-and-quarantine vs strip-and-pass.** Whether flagged
+   content blocks on human review or is auto-neutralized and let through.
+   (Recommended: flag + quarantine + human-in-the-loop; never auto-trust.)
 
 ## Suggested build order
 
-1. Part 1 (README tree) — small, ship independently.
-2. Atlas schema + `validate` (2.1) and `discover-docs` read-only scan (2.2).
-3. AGENTS.md reorder + summarize provenance (2.5, 2.6) — pure prompt/text, no
-   network.
-4. `fetch-docs` with zero-dep default + lock schema (2.3, 2.4, 2.8).
-5. curate-atlas probing guidance (2.2) + optional converter plumbing (2.3).
+1. Part 1 (README tree) — small, ship independently. **(Done.)**
+2. Atlas schema + `validate` (2.1) and `discover-docs` read-only scan (2.2,
+   including `llms.txt`/`llms-full.txt` probing).
+3. AGENTS.md reorder + summarize provenance + treat-snapshots-as-data
+   instruction (2.5, 2.6, 2.9 step 4) — pure prompt/text, no network.
+4. Safety sanitizer + flagging (2.9 steps 1–3) — build and test *before* any
+   fetch path writes to the workspace.
+5. `fetch-docs` with zero-dep cascade (llms.txt -> RTD -> wget) + safety pass +
+   lock schema (2.3, 2.4, 2.8).
+6. curate-atlas probing guidance (2.2) + optional converter/scanner plumbing
+   (2.3, 2.9).
 
 ## Research sources
 
@@ -276,3 +399,16 @@ manual `cargo doc` / `pdoc` path as optional guidance in curate-atlas.
   [Firecrawl](https://www.firecrawl.dev/),
   [markdowner](https://github.com/supermemoryai/markdowner),
   [Crawl4AI](https://www.freecodecamp.org/news/how-to-turn-websites-into-llm-ready-data-using-firecrawl/).
+- `llms.txt` / `llms-full.txt`:
+  [State of llms.txt 2026 (Presenc)](https://presenc.ai/research/state-of-llms-txt-2026),
+  [llms.txt complete guide 2026 (Codersera)](https://codersera.com/blog/llms-txt-complete-guide-2026/),
+  [GitBook: what is llms.txt](https://www.gitbook.com/blog/what-is-llms-txt).
+- Download safety / injection sanitization:
+  [AWS: defending LLM apps against Unicode character smuggling](https://aws.amazon.com/blogs/security/defending-llm-applications-against-unicode-character-smuggling/),
+  [Promptfoo ASCII-smuggling plugin](https://www.promptfoo.dev/docs/red-team/plugins/ascii-smuggling/),
+  [ASCII-smuggling hidden prompt-injection demo](https://github.com/TrustAI-laboratory/ASCII-Smuggling-Hidden-Prompt-Injection-Demo).
+- Indirect prompt injection — frameworks & architectural defenses:
+  [OWASP LLM01:2025 Prompt Injection](https://genai.owasp.org/llmrisk/llm01-prompt-injection/),
+  [OWASP LLM Prompt Injection Prevention Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/LLM_Prompt_Injection_Prevention_Cheat_Sheet.html),
+  [NIST AI Agent Standards Initiative](https://www.nist.gov/caisi/ai-agent-standards-initiative),
+  [Defending against Indirect Prompt Injection by Instruction Detection (arXiv 2505.06311)](https://arxiv.org/abs/2505.06311).
