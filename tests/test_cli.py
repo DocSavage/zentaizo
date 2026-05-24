@@ -44,6 +44,12 @@ class CliTests(unittest.TestCase):
             self.assertIn("sessions/questions/", agents)
             self.assertIn("sessions/debugging/", agents)
             self.assertIn("Editable vs Reference Repos", agents)
+            # Consultation order puts upstream docs above raw repos.
+            self.assertIn("the abbreviated, authoritative layer between summaries", agents)
+            self.assertLess(
+                agents.index("Use `docs/` for upstream-authored"),
+                agents.index("Use `repos/` for implementation details"),
+            )
             self.assertIn("status: planned", agents)
             self.assertIn("skills/plan-template.md", agents)
             self.assertIn("skills/plan-and-implement.md", agents)
@@ -307,7 +313,11 @@ class CliTests(unittest.TestCase):
 
             prompt = workspace / "summaries" / "summarize.prompt.md"
             self.assertTrue(prompt.exists())
-            self.assertIn("Zentaizo Summary Task", prompt.read_text())
+            prompt_text = prompt.read_text()
+            self.assertIn("Zentaizo Summary Task", prompt_text)
+            self.assertIn("Reuse, don't regenerate", prompt_text)
+            self.assertIn("Record provenance", prompt_text)
+            self.assertIn("(kind: api-reference, upstream)", prompt_text)
 
             text = output.getvalue()
             self.assertIn("Atlas: zentaizo.atlas.json", text)
