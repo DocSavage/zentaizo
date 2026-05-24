@@ -421,6 +421,110 @@ class CliTests(unittest.TestCase):
             self.assertIn("'edit'", text)
             self.assertIn("'reference'", text)
 
+    def _write_docs_atlas(self, workspace: Path, docs: list[dict], repos: list[dict] | None = None):
+        workspace.mkdir(parents=True, exist_ok=True)
+        (workspace / "zentaizo.atlas.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "name": workspace.name,
+                    "sources": {
+                        "repos": repos
+                        or [
+                            {
+                                "name": "api",
+                                "url": "https://example.com/api.git",
+                                "ref": "main",
+                            }
+                        ],
+                        "docs": docs,
+                        "papers": [],
+                        "notes": [],
+                    },
+                }
+            )
+        )
+
+    def _validate_text(self, workspace: Path) -> tuple[int, str]:
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            code = main(["validate", str(workspace)])
+        return code, output.getvalue()
+
+    def test_validate_rejects_invalid_doc_kind(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "kind-atlas"
+            self._write_docs_atlas(
+                workspace,
+                [{"name": "api-docs", "kind": "blog", "url": "https://example.com/api"}],
+            )
+            code, text = self._validate_text(workspace)
+            self.assertEqual(code, 1)
+            self.assertIn("invalid kind", text)
+            self.assertIn("'blog'", text)
+            self.assertIn("'api-reference'", text)
+
+    def test_validate_accepts_in_repo_doc_entry(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "inrepo-atlas"
+            self._write_docs_atlas(
+                workspace,
+                [
+                    {
+                        "name": "api-spec",
+                        "kind": "spec",
+                        "repo": "api",
+                        "path": "openapi/openapi.yaml",
+                    }
+                ],
+            )
+            # The repo is not fetched, but an in-repo doc path must not be
+            # checked against the workspace tree before fetch.
+            code, text = self._validate_text(workspace)
+            self.assertEqual(code, 0)
+            self.assertIn("valid", text)
+
+    def test_validate_rejects_in_repo_doc_without_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "nopath-atlas"
+            self._write_docs_atlas(
+                workspace,
+                [{"name": "api-spec", "repo": "api"}],
+            )
+            code, text = self._validate_text(workspace)
+            self.assertEqual(code, 1)
+            self.assertIn("no path", text)
+
+    def test_validate_rejects_doc_with_both_url_and_repo(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "both-atlas"
+            self._write_docs_atlas(
+                workspace,
+                [
+                    {
+                        "name": "api-spec",
+                        "repo": "api",
+                        "path": "openapi.yaml",
+                        "url": "https://example.com/api",
+                    }
+                ],
+            )
+            code, text = self._validate_text(workspace)
+            self.assertEqual(code, 1)
+            self.assertIn("both url and repo", text)
+
+    def test_validate_rejects_doc_referencing_unknown_repo(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "unknown-repo-atlas"
+            self._write_docs_atlas(
+                workspace,
+                [{"name": "api-spec", "repo": "ghost", "path": "openapi.yaml"}],
+            )
+            code, text = self._validate_text(workspace)
+            self.assertEqual(code, 1)
+            self.assertIn("unknown repo", text)
+            self.assertIn("'ghost'", text)
+
     def test_legacy_config_file_still_validates(self):
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp) / "legacy-atlas"

@@ -20,6 +20,8 @@ GLOBAL_SKILL_TARGETS = ("claude", "codex", "gemini")
 VALID_ROLES = ("edit", "reference")
 DEFAULT_ROLE = "reference"
 
+VALID_DOC_KINDS = ("api-reference", "guide", "tutorial", "spec", "changelog")
+
 
 def utc_now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat()
@@ -70,6 +72,7 @@ def default_atlas(name: str) -> dict:
             "docs": [
                 {
                     "name": "api-docs",
+                    "kind": "api-reference",
                     "url": "https://example.com/shortener/api",
                     "description": "Public API documentation",
                 }
@@ -535,6 +538,36 @@ def count_roles(repos: list[dict]) -> tuple[int, int]:
     return edit_count, len(repos) - edit_count
 
 
+def doc_is_in_repo(doc: dict) -> bool:
+    """A doc entry sourced from a fetched repo carries a `repo` reference."""
+    return bool(doc.get("repo"))
+
+
+def validate_doc_entries(docs: list[dict], repo_names: set[str]) -> list[str]:
+    """Validate `kind` and the url-vs-(repo+path) discriminator on doc entries."""
+    errors: list[str] = []
+    for index, doc in enumerate(docs, start=1):
+        label = doc.get("name") or f"docs[{index}]"
+
+        kind = doc.get("kind")
+        if kind is not None and kind not in VALID_DOC_KINDS:
+            allowed = ", ".join(repr(k) for k in VALID_DOC_KINDS)
+            errors.append(f"docs {label!r} has invalid kind {kind!r}; expected one of {allowed}")
+
+        if doc_is_in_repo(doc):
+            repo_ref = doc["repo"]
+            if doc.get("url"):
+                errors.append(
+                    f"docs {label!r} has both url and repo; an entry is either "
+                    "external (url) or in-repo (repo + path)"
+                )
+            if not doc.get("path"):
+                errors.append(f"docs {label!r} has repo {repo_ref!r} but no path")
+            if repo_ref not in repo_names:
+                errors.append(f"docs {label!r} references unknown repo {repo_ref!r}")
+    return errors
+
+
 def validate_workspace(args: argparse.Namespace) -> int:
     workspace = pathlib.Path(args.workspace).resolve()
     atlas = find_atlas(workspace)
@@ -566,8 +599,16 @@ def validate_workspace(args: argparse.Namespace) -> int:
             if not item.get("name"):
                 errors.append(f"{group}[{index}] is missing name")
 
+    repo_names = {repo["name"] for repo in sources.get("repos", []) if repo.get("name")}
+    errors.extend(validate_doc_entries(sources.get("docs", []), repo_names))
+
     for group in ["repos", "docs", "papers", "notes"]:
         for index, item in enumerate(sources.get(group, []), start=1):
+            # In-repo docs carry a repo-relative `path` resolved against the
+            # fetched repo, which may not exist before `fetch`; skip the
+            # workspace-relative existence check for them.
+            if group == "docs" and doc_is_in_repo(item):
+                continue
             rel_path = item.get("path")
             if not rel_path:
                 continue

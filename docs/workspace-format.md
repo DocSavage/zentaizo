@@ -50,8 +50,16 @@ This file is human-authored. It says which sources belong to the system, why the
     "docs": [
       {
         "name": "api-docs",
+        "kind": "api-reference",
         "url": "https://example.com/shortener/api",
         "description": "Public API documentation"
+      },
+      {
+        "name": "shortener-openapi",
+        "kind": "spec",
+        "repo": "shortener-api",
+        "path": "openapi/openapi.yaml",
+        "description": "OpenAPI spec living inside the API repo"
       }
     ],
     "papers": [],
@@ -59,6 +67,15 @@ This file is human-authored. It says which sources belong to the system, why the
   }
 }
 ```
+
+### Doc `kind` and source
+
+Each `docs` entry may carry an optional `kind`, one of `api-reference`, `guide`, `tutorial`, `spec`, or `changelog`. It is used to order how an assistant consults docs (an `api-reference`/`spec` is the abbreviated layer between summaries and raw code) and is otherwise advisory.
+
+A doc entry names its source one of two ways, never both:
+
+- **External** — a `url` pointing at a documentation site (readthedocs/Sphinx/MkDocs, an `llms.txt`, an OpenAPI URL, etc.).
+- **In-repo** — a `repo` (the `name` of a repo source in this atlas) plus a `path` relative to that repo's fetched tree, for an API definition that already ships in the code (e.g. an `openapi.yaml`). `validate` checks that the referenced repo exists and that a `path` is given; the file itself is resolved under `repos/<repo>/<path>` after `zentaizo fetch`, so it is not required to exist at validation time.
 
 ### Repo `role`
 
