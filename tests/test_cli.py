@@ -718,6 +718,41 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(main(["fetch-docs", str(workspace)]), 0)
             self.assertIn("No docs", output.getvalue())
 
+    def test_discover_docs_finds_specs_dedupes_and_prunes_noise(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._docs_workspace(
+                tmp,
+                [{"name": "api-existing", "kind": "spec", "repo": "api", "path": "openapi.yaml"}],
+            )
+            repo = workspace / "repos" / "api"
+            (repo / "sub").mkdir(parents=True)
+            (repo / "openapi.yaml").write_text("openapi: 3.1.0\n")  # already in atlas
+            (repo / "schema.graphql").write_text("type Query { x: Int }\n")
+            (repo / "sub" / "users.proto").write_text("message U {}\n")
+            (repo / ".readthedocs.yaml").write_text("version: 2\n")
+            (repo / "node_modules").mkdir()
+            (repo / "node_modules" / "swagger.json").write_text("{}")  # pruned
+
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                self.assertEqual(main(["discover-docs", str(workspace)]), 0)
+            text = output.getvalue()
+
+            self.assertIn("schema.graphql", text)
+            self.assertIn("sub/users.proto", text)
+            self.assertIn(".readthedocs.yaml (Read the Docs)", text)
+            # Already-listed spec is not re-suggested; pruned dir is not scanned.
+            self.assertNotIn('"path": "openapi.yaml"', text)
+            self.assertNotIn("node_modules", text)
+
+    def test_discover_docs_no_fetched_repos(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._docs_workspace(tmp, [])
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                self.assertEqual(main(["discover-docs", str(workspace)]), 0)
+            self.assertIn("Run `zentaizo fetch` first", output.getvalue())
+
     def test_legacy_config_file_still_validates(self):
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp) / "legacy-atlas"

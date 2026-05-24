@@ -1181,6 +1181,123 @@ def fetch_docs_workspace(args: argparse.Namespace) -> int:
     return 0
 
 
+_SCAN_NOISE_DIRS = {
+    "node_modules",
+    ".venv",
+    "venv",
+    "__pycache__",
+    "dist",
+    "build",
+    ".tox",
+    "vendor",
+    "target",
+    "site-packages",
+}
+_SITE_CONFIG_FILES = {
+    ".readthedocs.yaml": "Read the Docs",
+    ".readthedocs.yml": "Read the Docs",
+    "mkdocs.yml": "MkDocs",
+}
+
+
+def _classify_doc_file(name: str, rel: str) -> tuple[str, str] | None:
+    """Map a repo file to (kind, label) if it is an in-repo doc source."""
+    low = name.lower()
+    if (low.startswith(("openapi", "swagger"))) and low.endswith((".yaml", ".yml", ".json")):
+        return "spec", "OpenAPI/Swagger spec"
+    if low.endswith((".graphql", ".graphqls")):
+        return "spec", "GraphQL schema"
+    if low.endswith(".proto"):
+        return "spec", "protobuf schema"
+    if low in ("llms.txt", "llms-full.txt"):
+        return "api-reference", "llms.txt"
+    return None
+
+
+def _scan_repo_for_docs(repo_dir: pathlib.Path, limit: int = 25) -> tuple[list[dict], list[str]]:
+    """Return (doc-file candidates, doc-site config markers) found in a repo.
+
+    Read-only filesystem walk; prunes noisy and hidden directories.
+    """
+    candidates: list[tuple[str, str, str]] = []  # (kind, rel, label)
+    site_markers: list[str] = []
+    for root, dirs, files in os.walk(repo_dir):
+        dirs[:] = [d for d in dirs if d not in _SCAN_NOISE_DIRS and not d.startswith(".")]
+        root_path = pathlib.Path(root)
+        for fname in files:
+            rel = str((root_path / fname).relative_to(repo_dir))
+            if fname in _SITE_CONFIG_FILES:
+                site_markers.append(f"{rel} ({_SITE_CONFIG_FILES[fname]})")
+            elif rel == "docs/conf.py":
+                site_markers.append(f"{rel} (Sphinx)")
+            else:
+                classified = _classify_doc_file(fname, rel)
+                if classified:
+                    candidates.append((classified[0], rel, classified[1]))
+
+    candidates.sort(key=lambda c: c[1])
+    entries: list[dict] = []
+    for kind, rel, label in candidates[:limit]:
+        stem = pathlib.Path(rel).stem
+        entries.append({"kind": kind, "path": rel, "stem": stem, "label": label})
+    truncated = len(candidates) > limit
+    if truncated:
+        site_markers.append(f"... and {len(candidates) - limit} more doc file(s) not shown")
+    return entries, sorted(set(site_markers))
+
+
+def discover_docs_workspace(args: argparse.Namespace) -> int:
+    workspace, config = load_workspace(args.workspace)
+    sources = source_groups(config)
+    repos = [r.get("name") for r in sources.get("repos", []) if r.get("name")]
+    existing = {
+        (d.get("repo"), d.get("path")) for d in sources.get("docs", []) if doc_is_in_repo(d)
+    }
+
+    repos_root = workspace / "repos"
+    scanned = 0
+    total_candidates = 0
+    for repo_name in repos:
+        repo_dir = repos_root / repo_name
+        if not repo_dir.is_dir():
+            continue
+        scanned += 1
+        entries, site_markers = _scan_repo_for_docs(repo_dir)
+        fresh = [e for e in entries if (repo_name, e["path"]) not in existing]
+        if not fresh and not site_markers:
+            continue
+        print(f"repo `{repo_name}`:")
+        if fresh:
+            print("  candidate docs entries (paste into zentaizo.atlas.json -> sources.docs):")
+            used: set[str] = set()
+            for entry in fresh:
+                name = f"{repo_name}-{entry['stem']}"
+                suffix = 2
+                while name in used:
+                    name = f"{repo_name}-{entry['stem']}-{suffix}"
+                    suffix += 1
+                used.add(name)
+                total_candidates += 1
+                candidate = {
+                    "name": name,
+                    "kind": entry["kind"],
+                    "repo": repo_name,
+                    "path": entry["path"],
+                    "description": entry["label"],
+                }
+                print("    " + json.dumps(candidate))
+        if site_markers:
+            print("  doc-site config detected (add an external `url` entry once you know the URL):")
+            for marker in site_markers:
+                print(f"    - {marker}")
+
+    if scanned == 0:
+        print("No fetched repos found under repos/. Run `zentaizo fetch` first.")
+    elif total_candidates == 0:
+        print("No new in-repo doc sources found.")
+    return 0
+
+
 def summarize_workspace(args: argparse.Namespace) -> int:
     workspace, config = load_workspace(args.workspace)
     sources = source_groups(config)
@@ -1650,6 +1767,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     fetch_docs.add_argument("workspace", nargs="?", default=".", help="workspace directory")
     fetch_docs.set_defaults(func=fetch_docs_workspace)
+
+    discover_docs = sub.add_parser(
+        "discover-docs",
+        help="scan fetched repos for in-repo doc sources and print candidate atlas entries",
+    )
+    discover_docs.add_argument("workspace", nargs="?", default=".", help="workspace directory")
+    discover_docs.set_defaults(func=discover_docs_workspace)
 
     summarize = sub.add_parser("summarize", help="write a prompt for hierarchical summaries")
     summarize.add_argument("workspace", nargs="?", default=".", help="workspace directory")

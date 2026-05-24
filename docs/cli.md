@@ -5,6 +5,7 @@ Zentaizo should feel like a normal tool:
 ```bash
 zentaizo create my-system-atlas
 zentaizo fetch
+zentaizo discover-docs
 zentaizo fetch-docs
 zentaizo summarize
 zentaizo provide-info /path/to/repo
@@ -90,6 +91,12 @@ Source handling:
 
 - **In-repo** (`repo` + `path`) — read from the already-fetched `repos/<repo>/<path>`. No network.
 - **External** (`url`) — a stdlib fetch cascade: probe `llms-full.txt`/`llms.txt` at the site root first (a single curated Markdown file), else salvage the single referenced page (HTML reduced to text). Full-site mirroring and Read-the-Docs archive extraction are deferred to the optional `[docs-rich]` extra.
+
+```bash
+zentaizo discover-docs [PATH]
+```
+
+Read-only scan of the fetched `repos/` for in-repo doc sources — OpenAPI/Swagger specs, GraphQL schemas, `.proto` files, and `llms.txt`/`llms-full.txt` — and prints ready-to-paste `docs` atlas entries (`repo` + `path`). It also flags doc-site configs (`.readthedocs.yaml`, `mkdocs.yml`, `docs/conf.py`) so you can add an external `url` entry once you know the published URL. Sources already listed in the atlas are skipped; noisy/vendored directories are pruned. Writes nothing — paste the entries you want into `zentaizo.atlas.json` yourself.
 
 ```bash
 zentaizo summarize [PATH]
