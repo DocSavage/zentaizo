@@ -452,18 +452,23 @@ load-bearing regardless of which scanner is installed.
 ## Suggested build order
 
 1. Part 1 (README tree) — small, ship independently. **(Done.)**
-2. Atlas schema + `validate` (2.1) and `discover-docs` read-only scan (2.2,
-   including `llms.txt`/`llms-full.txt` probing).
-3. AGENTS.md reorder + summarize provenance + treat-snapshots-as-data
-   instruction (2.5, 2.6, 2.9 step 4) — pure prompt/text, no network.
-4. Safety sanitizer + flagging (2.9 steps 1–3) — build and test *before* any
-   fetch path writes to the workspace.
-5. `fetch-docs` with the stdlib-baseline cascade (llms.txt -> RTD -> wget ->
-   reference-only) + safety pass + lock schema (2.3, 2.4, 2.8).
-6. Optional extras + pluggable backends: `zentaizo[docs]` (trafilatura + nh3),
-   `[docs-rich]` (crawlers), `[docs-scan]` (LLM Guard), wired through the
-   fetcher/scanner interfaces (2.3 "Dependency strategy", 2.9). Plus curate-atlas
-   probing guidance (2.2).
+2. Atlas schema + `validate` (2.1). **(Done.)** Doc entries carry `kind` and an
+   external-vs-in-repo (`repo`+`path`) discriminator, validated. The optional
+   `discover-docs` read-only scan (incl. `llms.txt` probing) is **not yet built**
+   and rolls into step 6's curate-atlas work.
+3. AGENTS.md reorder + summarize provenance + treat-sources-as-data instruction
+   (2.5, 2.6, 2.9 step 4). **(Done.)**
+4. Safety sanitizer + flagging (2.9 steps 1–3). **(Done.)** Stdlib-only
+   `safety.py`, built and tested before any fetch path could write.
+5. `fetch-docs` + safety pass + lock schema (2.3, 2.4, 2.8). **(Done.)** In-repo
+   specs snapshot from the fetched tree; external URLs use the stdlib cascade
+   `llms.txt -> single-page -> reference-only`. The heavier RTD-archive and
+   wget-mirror tiers were deferred to step 6 / the `[docs-rich]` extra.
+6. **(Next.)** Optional extras + pluggable backends: `zentaizo[docs]`
+   (trafilatura + nh3), `[docs-rich]` (crawlers, RTD-zip, wget mirror),
+   `[docs-scan]` (LLM Guard), wired through the fetcher/scanner interfaces (2.3
+   "Dependency strategy", 2.9). Plus curate-atlas probing guidance and
+   `discover-docs` (2.2).
 
 ## Research sources
 
