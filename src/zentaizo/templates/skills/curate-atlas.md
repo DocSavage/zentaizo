@@ -74,12 +74,22 @@ Examples to prompt the user:
 - Scheduled jobs, cron tasks, lambdas.
 - Dev tooling, testing harnesses, CI configuration.
 
-### Step 4 — Public documentation
+### Step 4 — Documentation and API references
 
-Ask: "Are there public docs or API references the assistant should be able to consult?"
+Ask: "Are there docs or API references the assistant should be able to consult?" Then *actively probe* rather than relying on memory — for each central repo, look for:
 
-- API references, vendor docs, public wikis, OpenAPI specs hosted on the web.
-- Capture URL plus a 1-line description. Snapshot download is a future Zentaizo command — for now the URL alone is recorded.
+- An `llms.txt` / `llms-full.txt` at the project's doc site (the ideal source: a single LLM-ready Markdown file).
+- A published docs site: readthedocs (`.readthedocs.yaml`), Sphinx (`docs/conf.py`), MkDocs (`mkdocs.yml`), GitHub Pages, or a `Documentation` URL in `pyproject.toml`/package metadata.
+- API definitions that ship *inside* the code: `openapi.{yaml,json}`, `swagger.*`, GraphQL `schema.graphql`, `.proto` files.
+
+Record each as a `docs` entry. Two shapes, never both:
+
+- **External** — a `url` (the doc site, an `llms.txt`, or an OpenAPI URL).
+- **In-repo** — a `repo` (the name of a repo source) plus a `path` relative to that repo, for a spec that lives in the code.
+
+Add an optional `kind` to each: `api-reference`, `guide`, `tutorial`, `spec`, or `changelog`. It orders how the assistant consults docs (an `api-reference`/`spec` sits between summaries and raw code).
+
+Tip: after the repos are fetched (`zentaizo fetch`), run `zentaizo discover-docs` to scan the fetched trees for in-repo specs and print ready-to-paste entries. `zentaizo fetch-docs` then snapshots these sources (with a safety pass) into `docs/snapshots/`.
 
 ### Step 5 — Papers and design docs
 

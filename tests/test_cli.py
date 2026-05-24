@@ -89,6 +89,9 @@ class CliTests(unittest.TestCase):
             body = skill.read_text()
             self.assertIn("Curate the Zentaizo Atlas", body)
             self.assertNotIn("---\nname:", body[:200])
+            # Step 4 guides probing for doc sources and using discover-docs.
+            self.assertIn("llms.txt", body)
+            self.assertIn("zentaizo discover-docs", body)
 
             plan = workspace / "skills" / "plan-template.md"
             self.assertTrue(plan.exists())
