@@ -7,6 +7,10 @@ import os
 import pathlib
 import shutil
 import subprocess
+import urllib.error
+import urllib.parse
+import urllib.request
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from importlib import resources
 
@@ -973,39 +977,34 @@ def fetch_workspace(args: argparse.Namespace) -> int:
 
 DOC_SNAPSHOTS_SUBDIR = ("docs", "snapshots")
 _HTML_SUFFIXES = (".html", ".htm")
+_HTTP_TIMEOUT = 10
+_HTTP_MAX_BYTES = 5_000_000
 
 
 def _hash_text(text: str) -> str:
     return "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def _snapshot_in_repo_doc(workspace: pathlib.Path, doc: dict) -> dict:
-    """Snapshot an in-repo doc (repo + path) that is already fetched locally.
-
-    No network: the file lives under ``repos/<repo>/<path>`` after ``fetch``.
-    Content is sanitized before being written into ``docs/snapshots/``; flagged
-    content is quarantined and not surfaced as a clean snapshot.
-    """
-    name = doc.get("name") or "<unnamed>"
-    repo_ref = doc["repo"]
-    rel = doc["path"]
-    entry = {
-        "name": name,
+def _new_doc_entry(doc: dict, source: dict) -> dict:
+    return {
+        "name": doc.get("name") or "<unnamed>",
         "kind": doc.get("kind"),
-        "source": {"repo": repo_ref, "path": rel},
+        "source": source,
         "snapshot": None,
         "content_hash": None,
         "fetched_at": utc_now(),
     }
 
-    src_path = workspace / "repos" / repo_ref / rel
-    if not src_path.is_file():
-        entry["status"] = "reference-only"
-        entry["reason"] = "not-fetched"
-        return entry
 
-    raw = src_path.read_text(errors="replace")
-    is_html = src_path.suffix.lower() in _HTML_SUFFIXES
+def _apply_safety_and_write(
+    workspace: pathlib.Path, entry: dict, raw: str, *, is_html: bool, suffix: str
+) -> dict:
+    """Sanitize fetched content, then write a snapshot or quarantine if flagged.
+
+    Mutates and returns `entry` with content hash, safety verdict, and status.
+    Flagged content is written to a `.flagged` path and never surfaced as a
+    usable snapshot.
+    """
     result = sanitize(raw, is_html=is_html)
     entry["content_hash"] = _hash_text(result.cleaned_text)
     entry["safety"] = {
@@ -1016,7 +1015,8 @@ def _snapshot_in_repo_doc(workspace: pathlib.Path, doc: dict) -> dict:
 
     snapshots_dir = workspace.joinpath(*DOC_SNAPSHOTS_SUBDIR)
     snapshots_dir.mkdir(parents=True, exist_ok=True)
-    suffix = ".txt" if is_html else (src_path.suffix or ".txt")
+    suffix = ".txt" if is_html else (suffix or ".txt")
+    name = entry["name"]
     if result.verdict == "flagged":
         out = snapshots_dir / f"{name}.flagged{suffix}"
         out.write_text(result.cleaned_text)
@@ -1030,18 +1030,108 @@ def _snapshot_in_repo_doc(workspace: pathlib.Path, doc: dict) -> dict:
     return entry
 
 
-def _record_external_doc(doc: dict) -> dict:
-    """External (url) docs: recorded as reference-only until network fetch lands."""
-    return {
-        "name": doc.get("name") or "<unnamed>",
-        "kind": doc.get("kind"),
-        "source": {"url": doc.get("url")},
-        "snapshot": None,
-        "content_hash": None,
-        "status": "reference-only",
-        "reason": "network-fetch-not-implemented",
-        "fetched_at": utc_now(),
-    }
+def _snapshot_in_repo_doc(workspace: pathlib.Path, doc: dict) -> dict:
+    """Snapshot an in-repo doc (repo + path) that is already fetched locally.
+
+    No network: the file lives under ``repos/<repo>/<path>`` after ``fetch``.
+    """
+    repo_ref = doc["repo"]
+    rel = doc["path"]
+    entry = _new_doc_entry(doc, {"repo": repo_ref, "path": rel})
+
+    src_path = workspace / "repos" / repo_ref / rel
+    if not src_path.is_file():
+        entry["status"] = "reference-only"
+        entry["reason"] = "not-fetched"
+        return entry
+
+    raw = src_path.read_text(errors="replace")
+    is_html = src_path.suffix.lower() in _HTML_SUFFIXES
+    return _apply_safety_and_write(
+        workspace, entry, raw, is_html=is_html, suffix=src_path.suffix or ".txt"
+    )
+
+
+@dataclass
+class _HttpResult:
+    url: str
+    content_type: str
+    text: str
+
+
+def _http_get(url: str) -> _HttpResult:
+    """Fetch a URL over HTTP(S). Raises urllib errors; bounded by size/timeout.
+
+    Isolated so tests can monkeypatch network access.
+    """
+    # Callers restrict the scheme to http/https before reaching here.
+    req = urllib.request.Request(url, headers={"User-Agent": "zentaizo-fetch-docs"})
+    with urllib.request.urlopen(req, timeout=_HTTP_TIMEOUT) as resp:
+        raw = resp.read(_HTTP_MAX_BYTES)
+        charset = resp.headers.get_content_charset() or "utf-8"
+        return _HttpResult(
+            url=resp.geturl(),
+            content_type=resp.headers.get_content_type(),
+            text=raw.decode(charset, errors="replace"),
+        )
+
+
+def _try_http_get(url: str) -> tuple[_HttpResult | None, str | None]:
+    try:
+        return _http_get(url), None
+    except urllib.error.HTTPError as exc:
+        return None, f"HTTP {exc.code}"
+    except (urllib.error.URLError, TimeoutError, ValueError) as exc:
+        return None, str(getattr(exc, "reason", exc))
+
+
+def _llms_candidates(url: str) -> list[str]:
+    """URLs to probe for an llms.txt / llms-full.txt, most-complete first."""
+    parsed = urllib.parse.urlparse(url)
+    if parsed.path.rsplit("/", 1)[-1] in ("llms.txt", "llms-full.txt"):
+        return [url]
+    root = f"{parsed.scheme}://{parsed.netloc}"
+    return [f"{root}/llms-full.txt", f"{root}/llms.txt"]
+
+
+def _fetch_external_doc(workspace: pathlib.Path, doc: dict) -> dict:
+    """Fetch an external (url) doc via the stdlib cascade: llms.txt -> single
+    page -> reference-only. Each downloaded artifact goes through the safety
+    pass before being written.
+    """
+    url = doc.get("url")
+    entry = _new_doc_entry(doc, {"url": url})
+
+    parsed = urllib.parse.urlparse(url or "")
+    if parsed.scheme not in ("http", "https"):
+        entry["status"] = "reference-only"
+        entry["reason"] = "no-source"
+        return entry
+
+    # Tier 0: a single curated Markdown file, when the site publishes one.
+    for candidate in _llms_candidates(url):
+        result, _ = _try_http_get(candidate)
+        if result and result.text.strip():
+            entry["source"] = {"url": url, "fetched_url": result.url, "fetcher": "llms-txt"}
+            return _apply_safety_and_write(
+                workspace, entry, result.text, is_html=False, suffix=".md"
+            )
+
+    # Tier 2.5: salvage the single referenced page (no full-site crawl in the
+    # stdlib baseline; mirroring belongs to the optional [docs-rich] extra).
+    result, error = _try_http_get(url)
+    if result:
+        is_html = result.content_type == "text/html"
+        entry["source"] = {"url": url, "fetched_url": result.url, "fetcher": "single-page"}
+        return _apply_safety_and_write(
+            workspace, entry, result.text, is_html=is_html, suffix=".txt"
+        )
+
+    # Tier 4: reference-only. A fetch error is loud; absence is quiet.
+    entry["status"] = "reference-only"
+    entry["reason"] = "fetch-error"
+    entry["error"] = error
+    return entry
 
 
 def fetch_docs_workspace(args: argparse.Namespace) -> int:
@@ -1062,7 +1152,7 @@ def fetch_docs_workspace(args: argparse.Namespace) -> int:
         if doc_is_in_repo(doc):
             entries.append(_snapshot_in_repo_doc(workspace, doc))
         else:
-            entries.append(_record_external_doc(doc))
+            entries.append(_fetch_external_doc(workspace, doc))
 
     lock["updated_at"] = utc_now()
     lock["doc_snapshots"] = entries
@@ -1081,6 +1171,13 @@ def fetch_docs_workspace(args: argparse.Namespace) -> int:
             print(f"    - {note}")
     if flagged:
         print("Review quarantined files before trusting them; they are not surfaced as snapshots.")
+
+    # A fetch error is loud (a real failure); a quietly-absent source is not.
+    for entry in entries:
+        if entry["status"] == "reference-only" and entry.get("reason") == "fetch-error":
+            print(
+                f"  WARNING {entry['name']!r}: fetch failed ({entry.get('error')}); recorded as reference-only"
+            )
     return 0
 
 

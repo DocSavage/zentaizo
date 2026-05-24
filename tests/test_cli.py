@@ -4,9 +4,11 @@ import json
 import os
 import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
+from unittest import mock
 
-from zentaizo.cli import default_atlas, main
+from zentaizo.cli import _HttpResult, default_atlas, main
 
 
 def write_example_atlas(workspace: Path, name: str = "example-atlas") -> None:
@@ -592,29 +594,121 @@ class CliTests(unittest.TestCase):
             self.assertEqual(entry["quarantine"], "docs/snapshots/evil.flagged.txt")
             self.assertIn("FLAGGED", output.getvalue())
 
-    def test_fetch_docs_records_missing_and_external_as_reference_only(self):
+    def test_fetch_docs_missing_in_repo_is_reference_only(self):
         with tempfile.TemporaryDirectory() as tmp:
             workspace = self._docs_workspace(
                 tmp,
-                [
-                    {"name": "missing", "kind": "spec", "repo": "api", "path": "gone.yaml"},
-                    {
-                        "name": "external",
-                        "kind": "api-reference",
-                        "url": "https://example.com/docs",
-                    },
-                ],
+                [{"name": "missing", "kind": "spec", "repo": "api", "path": "gone.yaml"}],
             )
-
             with contextlib.redirect_stdout(io.StringIO()):
                 self.assertEqual(main(["fetch-docs", str(workspace)]), 0)
 
             lock = json.loads((workspace / "zentaizo.lock.json").read_text())
-            by_name = {e["name"]: e for e in lock["doc_snapshots"]}
-            self.assertEqual(by_name["missing"]["status"], "reference-only")
-            self.assertEqual(by_name["missing"]["reason"], "not-fetched")
-            self.assertEqual(by_name["external"]["status"], "reference-only")
-            self.assertEqual(by_name["external"]["reason"], "network-fetch-not-implemented")
+            entry = lock["doc_snapshots"][0]
+            self.assertEqual(entry["status"], "reference-only")
+            self.assertEqual(entry["reason"], "not-fetched")
+
+    def _run_fetch_docs_with_http(self, workspace: Path, responses: dict) -> str:
+        """Run fetch-docs with _http_get mocked. `responses` maps URL ->
+        (content_type, text) for success, or to an Exception to raise."""
+
+        def fake_get(url):
+            value = responses.get(url)
+            if value is None:
+                raise urllib.error.URLError("404 Not Found")
+            if isinstance(value, Exception):
+                raise value
+            content_type, text = value
+            return _HttpResult(url=url, content_type=content_type, text=text)
+
+        output = io.StringIO()
+        with (
+            mock.patch("zentaizo.cli._http_get", side_effect=fake_get),
+            contextlib.redirect_stdout(output),
+        ):
+            self.assertEqual(main(["fetch-docs", str(workspace)]), 0)
+        return output.getvalue()
+
+    def test_fetch_docs_external_prefers_llms_txt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._docs_workspace(
+                tmp,
+                [{"name": "site", "kind": "api-reference", "url": "https://example.com/docs/"}],
+            )
+            self._run_fetch_docs_with_http(
+                workspace,
+                {"https://example.com/llms-full.txt": ("text/plain", "# API\n\nFull docs.\n")},
+            )
+            snapshot = workspace / "docs" / "snapshots" / "site.md"
+            self.assertTrue(snapshot.exists())
+            self.assertIn("Full docs.", snapshot.read_text())
+            entry = json.loads((workspace / "zentaizo.lock.json").read_text())["doc_snapshots"][0]
+            self.assertEqual(entry["status"], "ok")
+            self.assertEqual(entry["source"]["fetcher"], "llms-txt")
+
+    def test_fetch_docs_external_falls_back_to_single_page(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._docs_workspace(
+                tmp,
+                [{"name": "site", "url": "https://example.com/api"}],
+            )
+            # No llms.txt (404s); the page itself returns HTML.
+            self._run_fetch_docs_with_http(
+                workspace,
+                {
+                    "https://example.com/api": (
+                        "text/html",
+                        "<html><body><h1>API</h1><p>Reference.</p></body></html>",
+                    )
+                },
+            )
+            snapshot = workspace / "docs" / "snapshots" / "site.txt"
+            self.assertTrue(snapshot.exists())
+            text = snapshot.read_text()
+            self.assertIn("Reference.", text)
+            self.assertNotIn("<h1>", text)
+            entry = json.loads((workspace / "zentaizo.lock.json").read_text())["doc_snapshots"][0]
+            self.assertEqual(entry["source"]["fetcher"], "single-page")
+
+    def test_fetch_docs_external_fetch_error_is_reference_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._docs_workspace(
+                tmp,
+                [{"name": "site", "url": "https://example.com/api"}],
+            )
+            err = urllib.error.URLError("connection refused")
+            text = self._run_fetch_docs_with_http(
+                workspace,
+                {
+                    "https://example.com/llms-full.txt": err,
+                    "https://example.com/llms.txt": err,
+                    "https://example.com/api": err,
+                },
+            )
+            entry = json.loads((workspace / "zentaizo.lock.json").read_text())["doc_snapshots"][0]
+            self.assertEqual(entry["status"], "reference-only")
+            self.assertEqual(entry["reason"], "fetch-error")
+            self.assertIn("WARNING", text)
+
+    def test_fetch_docs_external_non_http_scheme_no_network(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._docs_workspace(
+                tmp,
+                [{"name": "site", "url": "ftp://example.com/api"}],
+            )
+
+            def boom(url):
+                raise AssertionError("network must not be touched for non-http schemes")
+
+            with (
+                mock.patch("zentaizo.cli._http_get", side_effect=boom),
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                self.assertEqual(main(["fetch-docs", str(workspace)]), 0)
+
+            entry = json.loads((workspace / "zentaizo.lock.json").read_text())["doc_snapshots"][0]
+            self.assertEqual(entry["status"], "reference-only")
+            self.assertEqual(entry["reason"], "no-source")
 
     def test_fetch_docs_with_no_docs(self):
         with tempfile.TemporaryDirectory() as tmp:

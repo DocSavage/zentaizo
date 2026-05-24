@@ -84,9 +84,12 @@ Snapshots `docs` sources into `docs/snapshots/`, running every fetched artifact 
 
 - **`ok`** — content was sanitized and written as a snapshot, with a content hash.
 - **`flagged`** — an injection signature matched; the content is quarantined as `docs/snapshots/<name>.flagged.<ext>` and **not** surfaced as a usable snapshot until a human reviews it.
-- **`reference-only`** — no local snapshot was produced; the entry keeps its URL/source as a pointer. The `reason` distinguishes `not-fetched` (an in-repo `repo`+`path` whose repo has not been fetched) from `network-fetch-not-implemented` (external `url` sources; live fetching is a planned follow-up).
+- **`reference-only`** — no local snapshot was produced; the entry keeps its source as a pointer. The `reason` is `not-fetched` (an in-repo `repo`+`path` whose repo has not been fetched yet), `no-source` (a non-http(s) URL), or `fetch-error` (the fetch failed — surfaced as a loud `WARNING`).
 
-In-repo doc sources (`repo` + `path`) are read from the already-fetched `repos/<repo>/<path>` — no network. External `url` sources are currently recorded as `reference-only`.
+Source handling:
+
+- **In-repo** (`repo` + `path`) — read from the already-fetched `repos/<repo>/<path>`. No network.
+- **External** (`url`) — a stdlib fetch cascade: probe `llms-full.txt`/`llms.txt` at the site root first (a single curated Markdown file), else salvage the single referenced page (HTML reduced to text). Full-site mirroring and Read-the-Docs archive extraction are deferred to the optional `[docs-rich]` extra.
 
 ```bash
 zentaizo summarize [PATH]
