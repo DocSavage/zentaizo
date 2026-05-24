@@ -5,6 +5,7 @@ Zentaizo should feel like a normal tool:
 ```bash
 zentaizo create my-system-atlas
 zentaizo fetch
+zentaizo fetch-docs
 zentaizo summarize
 zentaizo provide-info /path/to/repo
 ```
@@ -74,6 +75,18 @@ Fetches repositories listed in `zentaizo.atlas.json` and records resolved commit
 
 - `role: "reference"` — re-resolves the pin (`ref`), checks it out, refuses to overwrite a dirty working tree.
 - `role: "edit"` — clones and checks out `ref` on first fetch only; on subsequent fetches refreshes remotes (`git fetch --tags --prune`) but leaves HEAD and the working tree alone. If the tree is clean and HEAD is behind the freshly-resolved upstream, `fetch` prints the exact rebase command. `--rebase` runs the rebase for every clean+behind edit repo.
+
+```bash
+zentaizo fetch-docs [PATH]
+```
+
+Snapshots `docs` sources into `docs/snapshots/`, running every fetched artifact through a content-safety pass first (strips invisible/smuggling characters, flags injection signatures). Results are recorded under `doc_snapshots` in `zentaizo.lock.json` with a per-source status:
+
+- **`ok`** — content was sanitized and written as a snapshot, with a content hash.
+- **`flagged`** — an injection signature matched; the content is quarantined as `docs/snapshots/<name>.flagged.<ext>` and **not** surfaced as a usable snapshot until a human reviews it.
+- **`reference-only`** — no local snapshot was produced; the entry keeps its URL/source as a pointer. The `reason` distinguishes `not-fetched` (an in-repo `repo`+`path` whose repo has not been fetched) from `network-fetch-not-implemented` (external `url` sources; live fetching is a planned follow-up).
+
+In-repo doc sources (`repo` + `path`) are read from the already-fetched `repos/<repo>/<path>` — no network. External `url` sources are currently recorded as `reference-only`.
 
 ```bash
 zentaizo summarize [PATH]

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import pathlib
@@ -8,6 +9,8 @@ import shutil
 import subprocess
 from datetime import UTC, datetime
 from importlib import resources
+
+from zentaizo.safety import sanitize
 
 ATLAS_NAME = "zentaizo.atlas.json"
 LEGACY_CONFIG_NAME = "zentaizo.config.json"
@@ -962,8 +965,122 @@ def fetch_workspace(args: argparse.Namespace) -> int:
 
     if sources.get("docs") or sources.get("papers"):
         print(
-            "Docs and papers are recorded in the lock file; snapshot download is a future command."
+            "Docs and papers are recorded in the lock file; "
+            "run `zentaizo fetch-docs` to snapshot doc sources."
         )
+    return 0
+
+
+DOC_SNAPSHOTS_SUBDIR = ("docs", "snapshots")
+_HTML_SUFFIXES = (".html", ".htm")
+
+
+def _hash_text(text: str) -> str:
+    return "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _snapshot_in_repo_doc(workspace: pathlib.Path, doc: dict) -> dict:
+    """Snapshot an in-repo doc (repo + path) that is already fetched locally.
+
+    No network: the file lives under ``repos/<repo>/<path>`` after ``fetch``.
+    Content is sanitized before being written into ``docs/snapshots/``; flagged
+    content is quarantined and not surfaced as a clean snapshot.
+    """
+    name = doc.get("name") or "<unnamed>"
+    repo_ref = doc["repo"]
+    rel = doc["path"]
+    entry = {
+        "name": name,
+        "kind": doc.get("kind"),
+        "source": {"repo": repo_ref, "path": rel},
+        "snapshot": None,
+        "content_hash": None,
+        "fetched_at": utc_now(),
+    }
+
+    src_path = workspace / "repos" / repo_ref / rel
+    if not src_path.is_file():
+        entry["status"] = "reference-only"
+        entry["reason"] = "not-fetched"
+        return entry
+
+    raw = src_path.read_text(errors="replace")
+    is_html = src_path.suffix.lower() in _HTML_SUFFIXES
+    result = sanitize(raw, is_html=is_html)
+    entry["content_hash"] = _hash_text(result.cleaned_text)
+    entry["safety"] = {
+        "verdict": result.verdict,
+        "stripped": result.stripped,
+        "flags": result.flags,
+    }
+
+    snapshots_dir = workspace.joinpath(*DOC_SNAPSHOTS_SUBDIR)
+    snapshots_dir.mkdir(parents=True, exist_ok=True)
+    suffix = ".txt" if is_html else (src_path.suffix or ".txt")
+    if result.verdict == "flagged":
+        out = snapshots_dir / f"{name}.flagged{suffix}"
+        out.write_text(result.cleaned_text)
+        entry["status"] = "flagged"
+        entry["quarantine"] = str(out.relative_to(workspace))
+    else:
+        out = snapshots_dir / f"{name}{suffix}"
+        out.write_text(result.cleaned_text)
+        entry["status"] = "ok"
+        entry["snapshot"] = str(out.relative_to(workspace))
+    return entry
+
+
+def _record_external_doc(doc: dict) -> dict:
+    """External (url) docs: recorded as reference-only until network fetch lands."""
+    return {
+        "name": doc.get("name") or "<unnamed>",
+        "kind": doc.get("kind"),
+        "source": {"url": doc.get("url")},
+        "snapshot": None,
+        "content_hash": None,
+        "status": "reference-only",
+        "reason": "network-fetch-not-implemented",
+        "fetched_at": utc_now(),
+    }
+
+
+def fetch_docs_workspace(args: argparse.Namespace) -> int:
+    workspace, config = load_workspace(args.workspace)
+    docs = source_groups(config).get("docs", [])
+    if not docs:
+        print("No docs in atlas; nothing to snapshot.")
+        return 0
+
+    lock = (
+        read_json(workspace / LOCK_NAME)
+        if (workspace / LOCK_NAME).exists()
+        else initial_lock(config.get("name", workspace.name))
+    )
+
+    entries: list[dict] = []
+    for doc in docs:
+        if doc_is_in_repo(doc):
+            entries.append(_snapshot_in_repo_doc(workspace, doc))
+        else:
+            entries.append(_record_external_doc(doc))
+
+    lock["updated_at"] = utc_now()
+    lock["doc_snapshots"] = entries
+    write_json(workspace / LOCK_NAME, lock)
+
+    by_status: dict[str, int] = {}
+    for entry in entries:
+        by_status[entry["status"]] = by_status.get(entry["status"], 0) + 1
+    summary = ", ".join(f"{count} {status}" for status, count in sorted(by_status.items()))
+    print(f"Snapshotted {len(entries)} doc source(s): {summary}")
+
+    flagged = [e for e in entries if e["status"] == "flagged"]
+    for entry in flagged:
+        print(f"  FLAGGED {entry['name']!r}: quarantined at {entry['quarantine']}")
+        for note in entry.get("safety", {}).get("flags", []):
+            print(f"    - {note}")
+    if flagged:
+        print("Review quarantined files before trusting them; they are not surfaced as snapshots.")
     return 0
 
 
@@ -1429,6 +1546,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="rebase clean edit repos that are behind their upstream ref",
     )
     fetch.set_defaults(func=fetch_workspace)
+
+    fetch_docs = sub.add_parser(
+        "fetch-docs",
+        help="snapshot doc sources into docs/snapshots/ with a safety pass",
+    )
+    fetch_docs.add_argument("workspace", nargs="?", default=".", help="workspace directory")
+    fetch_docs.set_defaults(func=fetch_docs_workspace)
 
     summarize = sub.add_parser("summarize", help="write a prompt for hierarchical summaries")
     summarize.add_argument("workspace", nargs="?", default=".", help="workspace directory")
