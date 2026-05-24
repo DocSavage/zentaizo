@@ -171,9 +171,11 @@ Researched options (sources at bottom):
 | **Firecrawl** | Markdown | paid hosted API / self-host | Cleanest markdown; external paid dependency, network egress of source URLs. |
 
 **Recommendation:** make the doc fetcher a small pluggable interface with a
-**zero-dependency default**, and *defer markdown conversion to the AI summarize
-step* (which already runs an AI, so HTML->markdown is free there). Concretely,
-a fall-through cascade:
+**zero-dependency baseline that always works**, and add quality via **opt-in
+extras** (see "Dependency strategy" below) rather than a single hard default.
+Defer markdown conversion to the AI summarize step when no extra is installed
+(it already runs an AI, so HTML->markdown is free there). Concretely, a
+fall-through cascade:
 
 0. If the entry points at (or the site root exposes) `llms-full.txt` /
    `llms.txt`, download that single file into `docs/snapshots/<name>.md`. Done —
@@ -182,11 +184,60 @@ a fall-through cascade:
    convention and unzip into `docs/snapshots/<name>/`.
 2. Otherwise, `wget --mirror` (or `urllib`-based bounded crawler) the doc URL
    into `docs/snapshots/<name>/`, capped by depth/page-count/same-host.
+2.5. (Optional salvage) If a full mirror is overkill or blocked, a single-page
+   `urllib` GET of just the reference URL into `docs/snapshots/<name>.html` (or
+   `.md`) — still runs the safety pass — captures the one page rather than
+   nothing.
 3. Run every downloaded artifact through the safety pass in 2.9 *before* it is
    written into the workspace, then record content hash + `fetched_at` +
    `fetcher` + safety verdict in the lock.
-4. Leave a richer markdown-converter (Crawl4AI / Firecrawl / markdowner) as an
-   **opt-in** selected via config/env (`docs.fetcher`), not a hard dep.
+4. **Terminal fallback — reference-only.** If every tier above yields no usable
+   snapshot, do **not** fail the entry: keep it in the atlas/lock with its URL
+   and record `snapshot: none` plus a status (see distinction below). This is
+   the always-present baseline — recording the doc's HTTP reference is what
+   `fetch` already does today (`cli.py:882`), independent of snapshotting. No
+   quarantine applies (nothing was downloaded, so there is no local injection
+   surface yet); the consultation rules treat a reference-only entry as a **live
+   pointer the assistant may fetch at use-time**, not a committed local copy
+   (and anything fetched live is still untrusted per 2.9).
+5. Prefer a better backend when an extra is installed: cleaner content
+   extraction (trafilatura), or a JS-capable markdown crawler (Crawl4AI /
+   Firecrawl / markdowner), selected via config/env (`docs.fetcher`).
+
+Distinguish two ways the cascade reaches reference-only, and record which in the
+lock:
+
+- **`no-source`** — graceful and expected: no `llms.txt`, not an RTD project,
+  nothing mirrorable (e.g. a JS-only site). Not an error; reported quietly.
+- **`fetch-error`** — a real failure: network error, timeout, partial/corrupt
+  download, non-2xx response. Surface it **loudly** with the failure reason so
+  it is diagnosable, and never silently swallow it as `no-source`.
+
+#### Dependency strategy — break zero-dep, but only via opt-in extras
+
+The repo is zero-runtime-dep today (`pyproject.toml` `dependencies = []`), but
+`AGENTS.md` never mandates that — its style rules are about UX/config simplicity
+("don't require Pixi for end-user examples", "boring JSON"). So adding
+dependencies for fetching/safety does not violate a stated principle; the bar is
+"is the dep worth it." The structure that keeps both worlds:
+
+- **Baseline (no extras):** stdlib only — `urllib` fetch, `html.parser`
+  reduction, the §2.9 sanitizer, `wget` if present. `fetch-docs` always works
+  without a build toolchain.
+- **`zentaizo[docs]`:** the solid *mechanical* tier — `trafilatura`
+  (main-content extraction) + `nh3` (Rust-backed HTML sanitizer, far better than
+  hand-rolled regex). Modest, well-maintained deps.
+- **`zentaizo[docs-rich]`:** heavy JS-capable crawlers (Crawl4AI / Firecrawl).
+  Big footprint; Firecrawl also egresses source content to a third party.
+- **`zentaizo[docs-scan]`:** the optional content scanner (see 2.9).
+
+The fetcher/sanitizer picks the best backend that is installed. Pin the relevant
+extra's resolved versions into the lock for reproducibility.
+
+**Supply-chain caveat (important, and a little ironic):** every heavy package
+added *for security* also **expands the supply-chain attack surface and install
+footprint of the tool itself**. "More deps = safer" is not monotonic. This is
+the core reason these stay opt-in and the baseline stays stdlib.
 
 Put this behind a **separate subcommand `zentaizo fetch-docs`**, not inside
 `zentaizo fetch`. Rationale: cloning pinned git repos and crawling arbitrary
@@ -254,8 +305,12 @@ manual `cargo doc` / `pdoc` path as optional guidance in curate-atlas.
 - Fill the deferred docs/papers lock schema (`workspace-format.md:88`): per doc
   source record `url` or (`repo`,`path`), snapshot path under
   `docs/snapshots/`, content hash, `fetched_at`, and `fetcher`/converter used.
-- Document `kind`, the external-vs-in-repo discriminator, and the
-  `docs/snapshots/` layout in `workspace-format.md`.
+- Record a **snapshot status** per doc source: `ok` (snapshotted),
+  `reference-only` with a reason of `no-source` or `fetch-error` (see 2.3 tier
+  4), or `flagged`/`quarantined` (see 2.9). A reference-only entry has no hash
+  and points only at its `url`.
+- Document `kind`, the external-vs-in-repo discriminator, the snapshot-status
+  field, and the `docs/snapshots/` layout in `workspace-format.md`.
 
 ### 2.9 Safety: downloaded docs are untrusted, persistent injection surface
 
@@ -342,12 +397,31 @@ structured output; the privileged, tool-wielding session consumes that output,
 not the raw untrusted text). It does not require a second model — just an
 ordering rule in §2.5's consultation list and AGENTS.md.
 
-Keep the sanitizer dependency-light (stdlib `unicodedata` + regex covers tag/
-zero-width stripping and signature scanning; HTML reduction needs a parser like
-the stdlib `html.parser` or a small allow-list cleaner). A heavier scanner (e.g.
-promptfoo's ASCII-smuggling / RAG-poisoning red-team checks, or a guardrails
-service) can be an opt-in layer later, mirroring the opt-in markdown-converter in
-2.3.
+**Scanner is pluggable; baseline is stdlib.** The always-on baseline stays
+dependency-light: stdlib `unicodedata` + regex cover tag/zero-width stripping and
+the signature heuristics (step 3), and `html.parser` (or `nh3` from the
+`zentaizo[docs]` extra) handles the reduction in step 1. Step 3's flagging is
+then a **pluggable scanner interface**: with `zentaizo[docs-scan]` installed,
+swap the regex heuristics for a deeper sweep.
+
+The "antivirus scan" candidate for `zentaizo[docs-scan]` is **LLM Guard**
+(ProtectAI, MIT, actively maintained): a modular suite of input scanners —
+`PromptInjection` (model-based), plus **secrets** and **malicious-URL**
+detection, which are real bonuses since we *commit* fetched docs to git (a leaked
+token in a doc page is its own problem). Alternatives noted: Vigil (literally
+YARA-signature-based, but alpha/experimental) and Rebuff (prototype). It runs
+locally, so content does not leave the machine — but it pulls in
+`transformers`/`torch` (hundreds of MB + model downloads), which is exactly why
+it is opt-in and may fit better attached to the model-touching `summarize` step
+than to every `fetch-docs`.
+
+The "antivirus" analogy holds in **both** directions: like AV, these scanners are
+signature/heuristic/classifier-based — they catch known patterns, miss novel
+ones, and throw false positives (2026 evals of LLM Guard / Vigil / Rebuff show
+mixed accuracy, and all disclaim completeness). So `docs-scan` is a *stronger
+backstop*, never a replacement for the architectural controls above
+(quarantine-via-summarize, evidence-not-orders, human-in-the-loop), which remain
+load-bearing regardless of which scanner is installed.
 
 ---
 
@@ -355,9 +429,16 @@ service) can be an opt-in layer later, mirroring the opt-in markdown-converter i
 
 1. **Reuse `docs` kind vs new `api/` kind.** Spec assumes reuse + `kind` field.
    (Recommended: reuse.)
-2. **CLI fetcher dependency.** Zero-dep default (RTD build / wget) with opt-in
-   markdown converter, vs commit to one markdown crawler (Crawl4AI/Firecrawl)
-   for quality. (Recommended: zero-dep default, conversion at summarize.)
+2. **Dependency posture.** Hold a hard zero-dep line, vs break it. (Recommended:
+   break zero-dep via **opt-in extras** with a stdlib baseline that always
+   works — `zentaizo[docs]` for the mechanical tier (trafilatura + nh3),
+   `[docs-rich]` for heavy crawlers, `[docs-scan]` for the content scanner. See
+   "Dependency strategy" in 2.3. Weigh the supply-chain caveat: heavy deps added
+   for security also enlarge the tool's own attack surface.)
+2a. **Content scanner backend for `[docs-scan]`.** LLM Guard (maintained, modular,
+   adds secrets/URL scanners; heavy torch dep) vs lighter/none. (Recommended:
+   LLM Guard, opt-in, possibly attached to `summarize` rather than `fetch-docs`;
+   treat as backstop, not foundation.)
 3. **`fetch-docs` separate subcommand vs folding into `fetch`.** (Recommended:
    separate, opt-in.)
 4. **Generated API docs home: `summaries/` vs synthetic `docs/`.** (Recommended:
@@ -377,10 +458,12 @@ service) can be an opt-in layer later, mirroring the opt-in markdown-converter i
    instruction (2.5, 2.6, 2.9 step 4) — pure prompt/text, no network.
 4. Safety sanitizer + flagging (2.9 steps 1–3) — build and test *before* any
    fetch path writes to the workspace.
-5. `fetch-docs` with zero-dep cascade (llms.txt -> RTD -> wget) + safety pass +
-   lock schema (2.3, 2.4, 2.8).
-6. curate-atlas probing guidance (2.2) + optional converter/scanner plumbing
-   (2.3, 2.9).
+5. `fetch-docs` with the stdlib-baseline cascade (llms.txt -> RTD -> wget ->
+   reference-only) + safety pass + lock schema (2.3, 2.4, 2.8).
+6. Optional extras + pluggable backends: `zentaizo[docs]` (trafilatura + nh3),
+   `[docs-rich]` (crawlers), `[docs-scan]` (LLM Guard), wired through the
+   fetcher/scanner interfaces (2.3 "Dependency strategy", 2.9). Plus curate-atlas
+   probing guidance (2.2).
 
 ## Research sources
 
@@ -412,3 +495,11 @@ service) can be an opt-in layer later, mirroring the opt-in markdown-converter i
   [OWASP LLM Prompt Injection Prevention Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/LLM_Prompt_Injection_Prevention_Cheat_Sheet.html),
   [NIST AI Agent Standards Initiative](https://www.nist.gov/caisi/ai-agent-standards-initiative),
   [Defending against Indirect Prompt Injection by Instruction Detection (arXiv 2505.06311)](https://arxiv.org/abs/2505.06311).
+- Content scanners (the `[docs-scan]` "antivirus" tier):
+  [LLM Guard (ProtectAI)](https://protectai.github.io/llm-guard/input_scanners/prompt_injection/),
+  [Vigil (deadbits/vigil-llm)](https://github.com/deadbits/vigil-llm),
+  [Rebuff (protectai/rebuff)](https://github.com/protectai/rebuff),
+  [Eval of early detection systems (arXiv 2506.19109)](https://arxiv.org/html/2506.19109v1).
+- Mechanical sanitization/extraction libs (the `[docs]` tier):
+  [nh3 (ammonia HTML sanitizer)](https://pypi.org/project/nh3/),
+  [trafilatura](https://trafilatura.readthedocs.io/).
