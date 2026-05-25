@@ -1,6 +1,9 @@
 import unittest
+from unittest import mock
 
 from zentaizo.safety import (
+    deep_scanner_state,
+    load_deep_scanner,
     reduce_html_to_text,
     sanitize,
     scan_for_injection,
@@ -87,6 +90,23 @@ class SanitizeEndToEndTests(unittest.TestCase):
         self.assertEqual(result.verdict, "flagged")
         self.assertTrue(any("ignore-instructions" in f for f in result.flags))
         self.assertIn("verdict=flagged", result.summary())
+
+    def test_deep_scan_findings_merge_into_flags(self):
+        result = sanitize("Clean API docs.", deep_scan=lambda text: ["fake: hit"])
+        self.assertEqual(result.verdict, "flagged")
+        self.assertEqual(result.flags, ["fake: hit"])
+
+    def test_deep_scan_none_keeps_baseline_behavior(self):
+        result = sanitize("Clean API docs.", deep_scan=None)
+        self.assertEqual(result.verdict, "ok")
+        self.assertEqual(result.flags, [])
+
+
+class DeepScannerLoaderTests(unittest.TestCase):
+    def test_loader_absent_path_is_baseline_only(self):
+        with mock.patch("zentaizo.safety.importlib.import_module", side_effect=ImportError):
+            self.assertIsNone(load_deep_scanner())
+        self.assertEqual(deep_scanner_state(), "none")
 
 
 if __name__ == "__main__":

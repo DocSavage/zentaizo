@@ -1164,8 +1164,9 @@ packages:
 - pypi: ./
   name: zentaizo
   version: 0.1.0
-  sha256: 314f16beceff3e48f4435e58f4ca1878fcb66da15ae81e3a51cf1c079d635c6f
+  sha256: 4df02c2bee367ab91e7507c913915fe72dcf5eb0a426b1a9ce5eda448dab2707
   requires_dist:
+  - llm-guard>=0.3.16 ; extra == 'docs-scan'
   - ruff>=0.6 ; extra == 'dev'
   - pre-commit>=3.7 ; extra == 'dev'
   - build>=1.2 ; extra == 'dev'

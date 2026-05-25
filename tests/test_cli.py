@@ -569,6 +569,8 @@ class CliTests(unittest.TestCase):
             self.assertEqual(entry["status"], "ok")
             self.assertEqual(entry["snapshot"], "docs/snapshots/api-spec.yaml")
             self.assertTrue(entry["content_hash"].startswith("sha256:"))
+            self.assertEqual(entry["safety"]["baseline_scanner"], "stdlib")
+            self.assertIn(entry["safety"]["deep_scanner"], {"none", "llm-guard", "unavailable"})
             self.assertIn("1 ok", output.getvalue())
 
     def test_fetch_docs_quarantines_flagged_content(self):
@@ -596,6 +598,50 @@ class CliTests(unittest.TestCase):
             self.assertIsNone(entry["snapshot"])
             self.assertEqual(entry["quarantine"], "docs/snapshots/evil.flagged.txt")
             self.assertIn("FLAGGED", output.getvalue())
+
+    def test_fetch_docs_reports_deep_scan_off_when_loader_absent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._docs_workspace(
+                tmp,
+                [{"name": "api-spec", "kind": "spec", "repo": "api", "path": "openapi.yaml"}],
+            )
+            (workspace / "repos" / "api").mkdir(parents=True)
+            (workspace / "repos" / "api" / "openapi.yaml").write_text("openapi: 3.1.0\n")
+
+            output = io.StringIO()
+            with (
+                mock.patch("zentaizo.cli.safety.load_deep_scanner", return_value=None),
+                mock.patch("zentaizo.cli.safety.deep_scanner_state", return_value="none"),
+                contextlib.redirect_stdout(output),
+            ):
+                self.assertEqual(main(["fetch-docs", str(workspace)]), 0)
+
+            self.assertIn("Deep scan: off", output.getvalue())
+            entry = json.loads((workspace / "zentaizo.lock.json").read_text())["doc_snapshots"][0]
+            self.assertEqual(entry["safety"]["baseline_scanner"], "stdlib")
+            self.assertEqual(entry["safety"]["deep_scanner"], "none")
+
+    def test_fetch_docs_no_deep_scan_forces_baseline(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._docs_workspace(
+                tmp,
+                [{"name": "api-spec", "kind": "spec", "repo": "api", "path": "openapi.yaml"}],
+            )
+            (workspace / "repos" / "api").mkdir(parents=True)
+            (workspace / "repos" / "api" / "openapi.yaml").write_text("openapi: 3.1.0\n")
+
+            output = io.StringIO()
+            with (
+                mock.patch("zentaizo.cli.safety.load_deep_scanner") as load_deep_scanner,
+                contextlib.redirect_stdout(output),
+            ):
+                self.assertEqual(main(["fetch-docs", str(workspace), "--no-deep-scan"]), 0)
+
+            load_deep_scanner.assert_not_called()
+            self.assertIn("Deep scan: disabled (--no-deep-scan)", output.getvalue())
+            entry = json.loads((workspace / "zentaizo.lock.json").read_text())["doc_snapshots"][0]
+            self.assertEqual(entry["safety"]["baseline_scanner"], "stdlib")
+            self.assertEqual(entry["safety"]["deep_scanner"], "disabled")
 
     def test_fetch_docs_missing_in_repo_is_reference_only(self):
         with tempfile.TemporaryDirectory() as tmp:

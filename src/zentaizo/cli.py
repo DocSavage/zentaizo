@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from importlib import resources
 
-from zentaizo.safety import sanitize
+from zentaizo import safety
 
 ATLAS_NAME = "zentaizo.atlas.json"
 LEGACY_CONFIG_NAME = "zentaizo.config.json"
@@ -997,7 +997,14 @@ def _new_doc_entry(doc: dict, source: dict) -> dict:
 
 
 def _apply_safety_and_write(
-    workspace: pathlib.Path, entry: dict, raw: str, *, is_html: bool, suffix: str
+    workspace: pathlib.Path,
+    entry: dict,
+    raw: str,
+    *,
+    is_html: bool,
+    suffix: str,
+    deep_scan: safety.DeepScanner | None = None,
+    deep_scanner_state: str = "none",
 ) -> dict:
     """Sanitize fetched content, then write a snapshot or quarantine if flagged.
 
@@ -1005,12 +1012,14 @@ def _apply_safety_and_write(
     Flagged content is written to a `.flagged` path and never surfaced as a
     usable snapshot.
     """
-    result = sanitize(raw, is_html=is_html)
+    result = safety.sanitize(raw, is_html=is_html, deep_scan=deep_scan)
     entry["content_hash"] = _hash_text(result.cleaned_text)
     entry["safety"] = {
         "verdict": result.verdict,
         "stripped": result.stripped,
         "flags": result.flags,
+        "baseline_scanner": "stdlib",
+        "deep_scanner": deep_scanner_state,
     }
 
     snapshots_dir = workspace.joinpath(*DOC_SNAPSHOTS_SUBDIR)
@@ -1030,7 +1039,13 @@ def _apply_safety_and_write(
     return entry
 
 
-def _snapshot_in_repo_doc(workspace: pathlib.Path, doc: dict) -> dict:
+def _snapshot_in_repo_doc(
+    workspace: pathlib.Path,
+    doc: dict,
+    *,
+    deep_scan: safety.DeepScanner | None = None,
+    deep_scanner_state: str = "none",
+) -> dict:
     """Snapshot an in-repo doc (repo + path) that is already fetched locally.
 
     No network: the file lives under ``repos/<repo>/<path>`` after ``fetch``.
@@ -1048,7 +1063,13 @@ def _snapshot_in_repo_doc(workspace: pathlib.Path, doc: dict) -> dict:
     raw = src_path.read_text(errors="replace")
     is_html = src_path.suffix.lower() in _HTML_SUFFIXES
     return _apply_safety_and_write(
-        workspace, entry, raw, is_html=is_html, suffix=src_path.suffix or ".txt"
+        workspace,
+        entry,
+        raw,
+        is_html=is_html,
+        suffix=src_path.suffix or ".txt",
+        deep_scan=deep_scan,
+        deep_scanner_state=deep_scanner_state,
     )
 
 
@@ -1094,7 +1115,13 @@ def _llms_candidates(url: str) -> list[str]:
     return [f"{root}/llms-full.txt", f"{root}/llms.txt"]
 
 
-def _fetch_external_doc(workspace: pathlib.Path, doc: dict) -> dict:
+def _fetch_external_doc(
+    workspace: pathlib.Path,
+    doc: dict,
+    *,
+    deep_scan: safety.DeepScanner | None = None,
+    deep_scanner_state: str = "none",
+) -> dict:
     """Fetch an external (url) doc via the stdlib cascade: llms.txt -> single
     page -> reference-only. Each downloaded artifact goes through the safety
     pass before being written.
@@ -1114,7 +1141,13 @@ def _fetch_external_doc(workspace: pathlib.Path, doc: dict) -> dict:
         if result and result.text.strip():
             entry["source"] = {"url": url, "fetched_url": result.url, "fetcher": "llms-txt"}
             return _apply_safety_and_write(
-                workspace, entry, result.text, is_html=False, suffix=".md"
+                workspace,
+                entry,
+                result.text,
+                is_html=False,
+                suffix=".md",
+                deep_scan=deep_scan,
+                deep_scanner_state=deep_scanner_state,
             )
 
     # Tier 2.5: salvage the single referenced page (no full-site crawl in the
@@ -1124,7 +1157,13 @@ def _fetch_external_doc(workspace: pathlib.Path, doc: dict) -> dict:
         is_html = result.content_type == "text/html"
         entry["source"] = {"url": url, "fetched_url": result.url, "fetcher": "single-page"}
         return _apply_safety_and_write(
-            workspace, entry, result.text, is_html=is_html, suffix=".txt"
+            workspace,
+            entry,
+            result.text,
+            is_html=is_html,
+            suffix=".txt",
+            deep_scan=deep_scan,
+            deep_scanner_state=deep_scanner_state,
         )
 
     # Tier 4: reference-only. A fetch error is loud; absence is quiet.
@@ -1134,12 +1173,30 @@ def _fetch_external_doc(workspace: pathlib.Path, doc: dict) -> dict:
     return entry
 
 
+def _deep_scan_message(state: str) -> str:
+    if state == "llm-guard":
+        return "Deep scan: llm-guard"
+    if state == "disabled":
+        return "Deep scan: disabled (--no-deep-scan)"
+    if state == "unavailable":
+        return "Deep scan: unavailable (load failed)"
+    return "Deep scan: off (install zentaizo[docs-scan] to enable)"
+
+
 def fetch_docs_workspace(args: argparse.Namespace) -> int:
     workspace, config = load_workspace(args.workspace)
     docs = source_groups(config).get("docs", [])
     if not docs:
         print("No docs in atlas; nothing to snapshot.")
         return 0
+
+    deep_scan = None
+    if getattr(args, "no_deep_scan", False):
+        deep_scanner_state = "disabled"
+    else:
+        deep_scan = safety.load_deep_scanner()
+        deep_scanner_state = safety.deep_scanner_state()
+    print(_deep_scan_message(deep_scanner_state))
 
     lock = (
         read_json(workspace / LOCK_NAME)
@@ -1150,9 +1207,23 @@ def fetch_docs_workspace(args: argparse.Namespace) -> int:
     entries: list[dict] = []
     for doc in docs:
         if doc_is_in_repo(doc):
-            entries.append(_snapshot_in_repo_doc(workspace, doc))
+            entries.append(
+                _snapshot_in_repo_doc(
+                    workspace,
+                    doc,
+                    deep_scan=deep_scan,
+                    deep_scanner_state=deep_scanner_state,
+                )
+            )
         else:
-            entries.append(_fetch_external_doc(workspace, doc))
+            entries.append(
+                _fetch_external_doc(
+                    workspace,
+                    doc,
+                    deep_scan=deep_scan,
+                    deep_scanner_state=deep_scanner_state,
+                )
+            )
 
     lock["updated_at"] = utc_now()
     lock["doc_snapshots"] = entries
@@ -1766,6 +1837,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="snapshot doc sources into docs/snapshots/ with a safety pass",
     )
     fetch_docs.add_argument("workspace", nargs="?", default=".", help="workspace directory")
+    fetch_docs.add_argument(
+        "--no-deep-scan",
+        action="store_true",
+        help="disable optional docs-scan backend; mandatory stdlib safety pass still runs",
+    )
     fetch_docs.set_defaults(func=fetch_docs_workspace)
 
     discover_docs = sub.add_parser(

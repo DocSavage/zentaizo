@@ -19,10 +19,15 @@ the optional `zentaizo[docs-scan]` extra.
 
 from __future__ import annotations
 
+import importlib
 import re
 import unicodedata
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
+
+DeepScanner = Callable[[str], list[str]]
+_deep_scanner_state = "none"
 
 # Invisible / smuggling characters stripped in step 2.
 #
@@ -197,16 +202,52 @@ def scan_for_injection(text: str) -> list[str]:
     return flags
 
 
-def sanitize(content: str, *, is_html: bool = False) -> SafetyResult:
+def load_deep_scanner() -> DeepScanner | None:
+    """Return an llm-guard-backed scanner if [docs-scan] is installed and loads.
+
+    Missing optional dependencies are an expected baseline path. Installed-but-broken
+    scanners are warned about and treated as unavailable so fetch-docs never crashes.
+    """
+    global _deep_scanner_state
+    try:
+        adapter = importlib.import_module("zentaizo._llm_guard_scan")
+    except ImportError:
+        _deep_scanner_state = "none"
+        return None
+
+    try:
+        if not adapter.ensure_available():
+            _deep_scanner_state = "none" if adapter.state() == "missing" else "unavailable"
+            return None
+    except Exception as exc:
+        print(f"WARNING: docs-scan backend failed to load ({exc}); using baseline only")
+        _deep_scanner_state = "unavailable"
+        return None
+
+    _deep_scanner_state = "llm-guard"
+    return adapter.scan
+
+
+def deep_scanner_state() -> str:
+    """State from the last load_deep_scanner() call."""
+    return _deep_scanner_state
+
+
+def sanitize(
+    content: str, *, is_html: bool = False, deep_scan: DeepScanner | None = None
+) -> SafetyResult:
     """Run the full fetch-time safety pass on one piece of content.
 
     `is_html=True` first reduces markup to visible text (step 1). Then strips
     invisible/smuggling characters (step 2) and flags injection signatures
-    (step 3) on the result.
+    (step 3) on the result. When provided, `deep_scan` runs after the baseline
+    pass and contributes extra findings to the same flags list.
     """
     text = reduce_html_to_text(content) if is_html else content
     cleaned, stripped = strip_unsafe_unicode(text)
     if not is_html:
         cleaned = _normalize_whitespace(cleaned)
     flags = scan_for_injection(cleaned)
+    if deep_scan is not None:
+        flags.extend(deep_scan(cleaned))
     return SafetyResult(cleaned_text=cleaned, stripped=stripped, flags=flags)

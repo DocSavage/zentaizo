@@ -92,6 +92,8 @@ Source handling:
 - **In-repo** (`repo` + `path`) — read from the already-fetched `repos/<repo>/<path>`. No network.
 - **External** (`url`) — a stdlib fetch cascade: probe `llms-full.txt`/`llms.txt` at the site root first (a single curated Markdown file), else salvage the single referenced page (HTML reduced to text). Full-site mirroring and Read-the-Docs archive extraction are deferred to the optional `[docs-rich]` extra.
 
+The stdlib safety pass always runs and cannot be disabled. Installing the optional `zentaizo[docs-scan]` extra (LLM Guard) adds a deeper, model-based scan layered **on top of** the baseline; it auto-enables when installed. `--no-deep-scan` turns off only that optional layer (the baseline still runs). Each `doc_snapshots` entry records `baseline_scanner` and `deep_scanner` (`llm-guard` / `none` / `disabled` / `unavailable`) for audit.
+
 ```bash
 zentaizo discover-docs [PATH]
 ```
