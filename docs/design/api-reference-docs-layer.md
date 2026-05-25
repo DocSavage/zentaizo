@@ -455,9 +455,8 @@ load-bearing regardless of which scanner is installed.
 
 1. Part 1 (README tree) — small, ship independently. **(Done.)**
 2. Atlas schema + `validate` (2.1). **(Done.)** Doc entries carry `kind` and an
-   external-vs-in-repo (`repo`+`path`) discriminator, validated. The optional
-   `discover-docs` read-only scan (incl. `llms.txt` probing) is **not yet built**
-   and rolls into step 6's curate-atlas work.
+   external-vs-in-repo (`repo`+`path`) discriminator, validated. The
+   `discover-docs` read-only scan shipped in step 6.
 3. AGENTS.md reorder + summarize provenance + treat-sources-as-data instruction
    (2.5, 2.6, 2.9 step 4). **(Done.)**
 4. Safety sanitizer + flagging (2.9 steps 1–3). **(Done.)** Stdlib-only
@@ -466,11 +465,13 @@ load-bearing regardless of which scanner is installed.
    specs snapshot from the fetched tree; external URLs use the stdlib cascade
    `llms.txt -> single-page -> reference-only`. The heavier RTD-archive and
    wget-mirror tiers were deferred to step 6 / the `[docs-rich]` extra.
-6. **(Next.)** Optional extras + pluggable backends: `zentaizo[docs]`
-   (trafilatura + nh3), `[docs-rich]` (crawlers, RTD-zip, wget mirror),
-   `[docs-scan]` (LLM Guard), wired through the fetcher/scanner interfaces (2.3
-   "Dependency strategy", 2.9). Plus curate-atlas probing guidance and
-   `discover-docs` (2.2).
+6. Optional extras + pluggable backends + curation. **(Partially done.)**
+   - `discover-docs` read-only scan and curate-atlas probing guidance (2.2). **(Done.)**
+   - `[docs-scan]` (LLM Guard) pluggable scanner, wired through the safety seam
+     (2.9). **(Done.)** Verified against real `llm-guard` 0.3.16.
+   - **Still deferred:** `[docs]` (trafilatura + nh3) and `[docs-rich]`
+     (crawlers, RTD-zip, wget mirror) — the latter implies the directory /
+     multi-file snapshot model, a separate increment (2.3 "Dependency strategy").
 
 ## Research sources
 
