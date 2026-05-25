@@ -401,8 +401,10 @@ ordering rule in §2.5's consultation list and AGENTS.md.
 dependency-light: stdlib `unicodedata` + regex cover tag/zero-width stripping and
 the signature heuristics (step 3), and `html.parser` (or `nh3` from the
 `zentaizo[docs]` extra) handles the reduction in step 1. Step 3's flagging is
-then a **pluggable scanner interface**: with `zentaizo[docs-scan]` installed,
-swap the regex heuristics for a deeper sweep.
+then a **pluggable scanner interface**: with `zentaizo[docs-scan]` installed, a
+deeper sweep runs **in addition to** the baseline heuristics — it layers on top,
+it does not replace them, so the stdlib stripping and signature flags always run.
+Its findings merge into the same flag/quarantine path.
 
 The "antivirus scan" candidate for `zentaizo[docs-scan]` is **LLM Guard**
 (ProtectAI, MIT, actively maintained): a modular suite of input scanners —
