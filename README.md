@@ -74,6 +74,10 @@ zentaizo summarize
 zentaizo provide-info /path/to/shortener-api
 ```
 
+Then, from `/path/to/shortener-api`, you can ask an AI agent:
+
+> Using the Zentaizo context, inspect the related frontend and client library before changing the API contract for link expiration.
+
 To seed a fresh workspace from an existing one that overlaps in scope (same
 repos pinned, same papers, shared design notes), use `seed-from`:
 
@@ -96,10 +100,6 @@ run an AI session in the workspace and point it at the experimental
 current templates against the workspace, classifies each delta, and plans any
 artifact migrations (session-file frontmatter, filename conventions) before
 making changes.
-
-Then, from `/path/to/shortener-api`, you can ask an AI agent:
-
-> Using the Zentaizo context, inspect the related frontend and client library before changing the API contract for link expiration.
 
 ## Installing The Command
 
