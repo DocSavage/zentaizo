@@ -230,6 +230,15 @@ dependencies for fetching/safety does not violate a stated principle; the bar is
 - **`zentaizo[docs-rich]`:** heavy JS-capable crawlers (Crawl4AI / Firecrawl).
   Big footprint; Firecrawl also egresses source content to a third party.
 - **`zentaizo[docs-scan]`:** the optional content scanner (see 2.9).
+- **`zentaizo[docs-chub]`:** an optional fetcher tier backed by
+  [Context Hub](https://github.com/andrewyng/context-hub) (`chub`), which serves
+  curated, versioned, language-specific API docs from a registry (or a local
+  `chub build` tree). Because `chub` is an npm CLI, this is a *marker extra +
+  PATH detection* rather than a pip dependency — the tier runs `chub get` when
+  the binary is present and falls through to reference-only when it is not. Its
+  output still passes the §2.9 safety pass like any untrusted snapshot. Full
+  install/usage and the integration design live in
+  `context-hub-integration-plan.md`.
 
 The fetcher/sanitizer picks the best backend that is installed. Pin the relevant
 extra's resolved versions into the lock for reproducibility.
