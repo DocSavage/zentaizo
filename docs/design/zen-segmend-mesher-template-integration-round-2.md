@@ -63,7 +63,9 @@ The original request flagged a recurring dogfooding idea: *replace the AI‑proc
 The shape it would take — and why it is deferred, not done:
 
 - A read‑only `zentaizo next-slice [--dir changes|debugging]` that derives the branch prefix, scans `changes/` + `debugging/` for the current prefix, runs the cross‑branch collision check, and prints the next canonical filename (`<branch_prefix>-NNNN-<slug>` skeleton). It fits the repo's thin‑CLI rule (no network, no judgment — just locate‑and‑print) and removes a class of agent arithmetic mistakes (skipped/duplicated counters, wrong zero‑padding, prefix derivation drift).
-- **Deferred because** it is an *ergonomic* refinement, not a correctness gap — the prose convention works and the collision check is already specified. It also overlaps with idea #4 in [`ideas-worth-borrowing.md`](ideas-worth-borrowing.md) ("an explicit agent‑facing retrieval verb"), which proposes a `zentaizo get`/`search` read surface; a counter/filename helper is the same "thin verb the agent calls instead of filesystem spelunking" instinct and should be designed alongside it rather than bolted on. Worth a real design doc when the next batch of CLI verbs is scoped.
+- It overlaps with idea #4 in [`ideas-worth-borrowing.md`](ideas-worth-borrowing.md) ("an explicit agent‑facing retrieval verb"), which proposes a `zentaizo get`/`search` read surface; a counter/filename helper is the same "thin verb the agent calls instead of filesystem spelunking" instinct and shares an output convention with it.
+
+**Now designed:** the full proposal — a `zentaizo next-slice` family that scaffolds the file with deterministic frontmatter across all six session kinds, plus the resulting `AGENTS.md` slimming — lives in [`next-slice-cli-helper.md`](next-slice-cli-helper.md). The maintainer's steer was explicit: a deterministic tool is preferred over expanding `AGENTS.md` with rules an LLM re‑derives non‑deterministically each session (context rot).
 
 ## Recommended next step for `zen-segmend-mesher`
 
