@@ -45,6 +45,8 @@ class CliTests(unittest.TestCase):
             self.assertIn("sessions/changes/", agents)
             self.assertIn("sessions/questions/", agents)
             self.assertIn("sessions/debugging/", agents)
+            self.assertIn("sessions/handoffs/", agents)
+            self.assertIn("sessions/reports/", agents)
             self.assertIn("Editable vs Reference Repos", agents)
             # Consultation order puts upstream docs above raw repos.
             self.assertIn("the abbreviated, authoritative layer between summaries", agents)
@@ -52,11 +54,19 @@ class CliTests(unittest.TestCase):
                 agents.index("Use `docs/` for upstream-authored"),
                 agents.index("Use `repos/` for implementation details"),
             )
-            self.assertIn("status: planned", agents)
+            # The status-frontmatter schema lives in the skill/template, not AGENTS.md.
+            self.assertIn("status frontmatter convention", agents)
             self.assertIn("skills/plan-template.md", agents)
             self.assertIn("skills/plan-and-implement.md", agents)
 
-            for subdir in ["brainstorming", "changes", "questions", "debugging"]:
+            for subdir in [
+                "brainstorming",
+                "changes",
+                "questions",
+                "debugging",
+                "handoffs",
+                "reports",
+            ]:
                 self.assertTrue((workspace / "sessions" / subdir).is_dir())
 
             readme = (workspace / "README.md").read_text()
@@ -68,6 +78,8 @@ class CliTests(unittest.TestCase):
             )
             self.assertIn("sessions/brainstorming/", readme)
             self.assertIn("sessions/changes/", readme)
+            self.assertIn("sessions/handoffs/", readme)
+            self.assertIn("sessions/reports/", readme)
             self.assertIn("Plan and implement changes", readme)
             self.assertIn("auto-discovers", readme)
             self.assertNotIn("Do not write to assistant memory", readme)

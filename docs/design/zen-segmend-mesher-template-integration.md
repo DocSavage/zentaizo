@@ -1,5 +1,7 @@
 # Integrating `zen-segmend-mesher` workspace conventions back into the templates
 
+_Round 1. Integrated 2026-05-17 (commit `f31cfe9`). Covers workspace commits through `410eef7` (2026-05-16). Round 2 is recorded in [`zen-segmend-mesher-template-integration-round-2.md`](zen-segmend-mesher-template-integration-round-2.md)._
+
 ## Context
 
 `zen-segmend-mesher` was the first Zentaizo workspace driven hard against real multi-week, multi-agent, multi-branch implementation work. Across ~60 commits the workspace's own `AGENTS.md` and `skills/plan-and-implement.md` diverged from what `zentaizo create` emits. The workspace's `skills/curate-atlas.md` stayed identical to upstream.

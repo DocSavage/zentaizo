@@ -65,8 +65,8 @@ files Zentaizo owns are:
 - `skills/curate-atlas.md`, `skills/plan-and-implement.md`,
   `skills/plan-template.md` — copied verbatim from
   `src/zentaizo/templates/skills/`.
-- The four `sessions/` subdirectory shells: `brainstorming/`, `changes/`,
-  `questions/`, `debugging/`.
+- The six `sessions/` subdirectory shells: `brainstorming/`, `changes/`,
+  `questions/`, `debugging/`, `handoffs/`, `reports/`.
 
 Read both sides. Capture each delta. Do not edit yet.
 

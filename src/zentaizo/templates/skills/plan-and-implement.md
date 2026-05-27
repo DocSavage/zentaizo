@@ -35,7 +35,7 @@ Before drafting the plan:
    - `status: planned`
    - `created` and `updated`: the current UTC time as a quoted full ISO 8601 timestamp, for example `"2026-05-13T22:37:00Z"`
    - `editable_repos`: only the subset of `role: "edit"` repos this plan will actually modify
-   - `branch_prefix`: the derived prefix that matches the filename. For non-default-branch work, add `implementation_branch:` and `implementation_base:` as documented in `AGENTS.md`.
+   - `branch_prefix`: the derived prefix that matches the filename. For non-default-branch work, add `implementation_branch:` and `implementation_base:` as shown in the `skills/plan-template.md` scaffold.
 3. Fill in the `## Plan` section:
    - **Problem** — one short paragraph. Cite system context from the atlas/summaries rather than restating it.
    - **Scope** — what's in, what's explicitly out.
@@ -48,9 +48,19 @@ Before drafting the plan:
 5. Leave `## Outcome` empty (or omit it) until work is done.
 6. Show the user the plan file (or a unified diff) and wait for confirmation before editing any code. Do not start implementation while `status: planned`.
 
+## Handing off to an implementing agent (planner/implementor split)
+
+If the agent that drafted the plan will also implement it, skip this section and continue to *Executing the plan*.
+
+If a *different* agent will implement (e.g. one model plans, an implementing agent such as Codex, Claude, or Gemini executes):
+
+1. After the user approves the plan (while `status:` is still `planned`), write a paste-ready execution prompt to `sessions/handoffs/<branch_prefix>-NNNN-<agent>.md`, where `<agent>` is the implementing agent (`codex`/`claude`/`gemini`/…). It should name the plan file as the authoritative spec, the editable repos, the environment/preflight steps, and any standing guardrails; keep generated context (commit SHAs, paths, HEAD) current so the implementor doesn't act on stale state.
+2. Hand off. The implementing agent reads `AGENTS.md` + the plan + the handoff, flips the plan to `status: in-progress`, and resumes at *Executing the plan* below.
+3. Handoffs are execution glue, not part of the plan's lifecycle: write a fresh `-resume`/`-restart` (or `-diagnosis`) variant per restart, and remember they do **not** consume the `changes/`/`debugging/` sequential counter (see `AGENTS.md` § Recording Work in `sessions/`).
+
 ## Executing the plan
 
-Once the user approves:
+Once the user approves (and, for a split, once the handoff has been written):
 
 1. Update the plan's frontmatter: `status: in-progress`, refresh `updated` to the current quoted UTC ISO timestamp. Treat the `## Plan` section as frozen from this point, except for marking acceptance criteria checkboxes during closeout. If scope changes mid-flight, capture it as a deviation in the upcoming `## Outcome` rather than rewriting the plan.
 2. Work step by step through the approach. Modify files only in repos with `role: "edit"` in the atlas. Read reference repos freely but do not write to them.

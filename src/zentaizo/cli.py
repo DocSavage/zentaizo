@@ -134,10 +134,12 @@ A workspace organizes knowledge as a level-of-detail spine — start at `summari
   notes/                    # issue reports, traces, local design notes
   summaries/                # generated hierarchical summaries (start here)
   sessions/
-    brainstorming/          # pre-atlas input: transcripts, sketches, inventories
-    changes/                # implementation plans, amended with outcomes
+    brainstorming/          # pre-decision input: transcripts, sketches, surveys
+    changes/                # implementation plans (slices), amended with outcomes
+    debugging/              # bug investigations: traces, hypotheses, root cause
     questions/              # dated Q&A logs with researched answers + citations
-    debugging/              # dated bug investigations: traces, hypotheses, root cause
+    handoffs/               # paste-ready execution prompts for the implementing agent
+    reports/                # living evidence-backed syntheses (must-read deliverables)
 ```
 
 `{ATLAS_NAME}` and `{LOCK_NAME}` do not exist yet in a freshly created workspace — the atlas is the first thing you author (see below), and the lock is written by `zentaizo fetch`.
@@ -190,11 +192,11 @@ For each multi-repo change, ask the AI to follow [`skills/plan-and-implement.md`
 
 > Follow [`skills/plan-and-implement.md`](skills/plan-and-implement.md) to draft and execute a plan for <describe change>.
 
-The skill handles the full lifecycle: read the atlas to find editable repos, draft the plan in `sessions/changes/YYYY-MM-DD-<slug>.md` using [`skills/plan-template.md`](skills/plan-template.md) as scaffold, run with `status: planned` → `in-progress` → `done`, and append a `## Outcome` section on completion.
+The skill handles the full lifecycle: read the atlas to find editable repos, draft the plan in `sessions/changes/<branch_prefix>-NNNN-<slug>.md` (the sequential per-branch convention from [`AGENTS.md`](AGENTS.md)) using [`skills/plan-template.md`](skills/plan-template.md) as scaffold, run with `status: planned` → `in-progress` → `done`, and append a `## Outcome` section on completion.
 
 ### 6. Capture Q&A and debugging as they happen
 
-Substantive cross-repo answers go in `sessions/questions/YYYY-MM-DD-<slug>.md`; bug investigations go in `sessions/debugging/YYYY-MM-DD-<slug>.md`. Ask the AI to write these as you work — future sessions will read them instead of re-deriving the same context. The conventions are in [`AGENTS.md`](AGENTS.md).
+Substantive cross-repo answers go in `sessions/questions/YYYY-MM-DD-<slug>.md` (date-prefixed); bug investigations go in `sessions/debugging/<branch_prefix>-NNNN-<slug>.md` (sequential). Paste-ready execution prompts for an implementing agent go in `sessions/handoffs/`, and living evidence-backed syntheses in `sessions/reports/`. Ask the AI to write these as you work — future sessions will read them instead of re-deriving the same context. The conventions are in [`AGENTS.md`](AGENTS.md).
 
 ### 7. (Optional) Share this context with another repo
 
@@ -277,12 +279,27 @@ Editable repos can be on a non-`main` branch when work-in-progress lives there. 
 
 ## Recording Work in `sessions/`
 
-`sessions/` is the durable trail of how this workspace has been used. Prefer writing to it over leaving substantive work only in chat history. Four subdirectories exist:
+`sessions/` is the durable trail of how this workspace has been used. Prefer writing to it over leaving substantive work only in chat history. Six subdirectories exist, summarized here and detailed below:
 
-- `sessions/brainstorming/` — freeform input. Drop AI chat transcripts, sketches, source inventories, and exploratory design conversations here. No required schema, no required filename pattern. This is the *pre-atlas* dumping ground used to inform `{ATLAS_NAME}` during curation; later it also holds open-ended design discussions that aren't yet executable plans.
-- `sessions/changes/` — implementation plans for multi-repo changes. Before editing in earnest, save a plan covering problem, files involved, step-by-step approach, and verification. Filename follows the sequential convention below. Use the status frontmatter convention so a single file tracks the work from planning through delivery. The full procedure (drafting -> executing -> closing out) is in `skills/plan-and-implement.md`; `skills/plan-template.md` is the scaffold it copies.
+| Dir | Charter | Lifecycle |
+|---|---|---|
+| `brainstorming/` | freeform input: surveys, hypotheses, roadmaps, design conversations, source inventories — *before* a decision | exploratory, no schema |
+| `changes/` | implementation plans (slices) | `planned→done` |
+| `debugging/` | traces, root-cause | sequential |
+| `questions/` | dated Q&A logs | one-shot |
+| `handoffs/` | paste-ready execution prompts for whichever agent implements (Codex/Claude/Gemini/…): the initial handoff + resume/restart and diagnosis prompts — tied to a slice | ephemeral, regenerated per restart |
+| `reports/` | evidence-backed living syntheses with a conclusion; must-read before architecture decisions | living, revised across slices |
+
+The clean mental model: **`brainstorming/` is *before* (input), `reports/` is *after* (synthesized output with evidence + a conclusion), `handoffs/` is the *execution* glue; `changes/`/`debugging/`/`questions/` are the work itself.**
+
+In detail:
+
+- `sessions/brainstorming/` — freeform input *before* a decision. Drop AI chat transcripts, sketches, source inventories, surveys, hypotheses, roadmaps, and exploratory design conversations here. No required schema, no required filename pattern. This is the *pre-atlas* dumping ground used to inform `{ATLAS_NAME}` during curation; later it also holds open-ended design discussions that aren't yet executable plans. It is **not** a home for execution prompts (those are `handoffs/`) or finished syntheses (those are `reports/`).
+- `sessions/changes/` — implementation plans for multi-repo changes. Before editing in earnest, save a plan covering problem, files involved, step-by-step approach, and verification. Filename follows the sequential convention below. Use the status frontmatter convention (documented in `skills/plan-and-implement.md`, scaffolded by `skills/plan-template.md`) so a single file tracks the work from planning through delivery. The full procedure (drafting -> executing -> closing out) is in `skills/plan-and-implement.md`; `skills/plan-template.md` is the scaffold it copies.
 - `sessions/questions/` — Q&A logs. When the user asks a substantive cross-repo question and you produce a researched answer, save the question, the answer, and source citations as `sessions/questions/YYYY-MM-DD-<slug>.md` (date-prefixed, topical).
 - `sessions/debugging/` — traces, hypotheses, and resolutions. When investigating a bug across the atlas, save the trace and final root cause. Filename follows the sequential convention below.
+- `sessions/handoffs/` — paste-ready **execution prompts** for whichever agent implements the work (Codex, Claude, Gemini, … — the implementor is not assumed): the initial handoff to that agent, plus resume/restart and diagnosis prompts. These are *execution glue* tied to a slice, not brainstorming — keep them out of `brainstorming/`. Filename is **slice-keyed, no date**: `<branch_prefix>-NNNN-<role>.md`, where `<role>` is either the **implementing agent** (`codex`/`claude`/`gemini`/…) or the **handoff type** (`resume`/`restart`/`diagnosis`) — e.g. `featauth-0007-codex.md`, `featauth-0008-claude.md`, `featauth-0006-resume.md`. A topical slug is the fallback for prompts not tied to one slice (e.g. `auth-migration-restart.md`). The `NNNN` is the **slice id of the paired plan, reused** — a handoff does **not** allocate a new counter value (only `changes/`/`debugging/` consume the sequence). The date lives in a `Date:` line or frontmatter. Multiple handoffs per slice are fine (distinguished by `<role>`).
+- `sessions/reports/` — evidence-backed **living syntheses with a conclusion**: cross-slice deliverables that are *must-reads* before architecture decisions, distinct from a one-shot `questions/` answer and from pre-decision `brainstorming/`. Filename is a **topical slug** (`<slug>.md`, e.g. `auth-rollout-findings.md`). Frontmatter carries `title`, `status: living|final`, `current_as_of:`, `created/updated`, `related:` (the slices that fed it), and optionally `destined_for:` (e.g. a production repo's `docs/` once cut). Keep **one living report per topic** and revise it in place as new results land — do not fork a second report for the same topic. `current_as_of` marks the latest state the report reflects (a slice id and/or date, e.g. `featauth-0007 (2026-05-20)` — not a strict timestamp); bump it on each revision.
 
 ### Filename Convention
 
@@ -291,7 +308,9 @@ Two file shapes live in `sessions/`, one for sequential decision/investigation l
 | Subdirectory | Convention |
 |---|---|
 | `changes/`, `debugging/` | `<branch_prefix>-NNNN-<slug>.md` (sequential, per-branch counter) |
+| `handoffs/` | `<branch_prefix>-NNNN-<role>.md` — `NNNN` reuses the paired plan's slice id (no date; topical-slug fallback). Does **not** consume the sequential counter |
 | `questions/` | `YYYY-MM-DD-<slug>.md` (date-prefixed, topical) |
+| `reports/` | `<slug>.md` (topical, living; frontmatter status/current_as_of/related) |
 | `brainstorming/` | freeform, no required schema |
 
 Files in `changes/` and `debugging/` follow:
@@ -321,7 +340,7 @@ Files in `changes/` and `debugging/` follow:
 
   Two distinct branches must derive to distinct prefixes. Collisions are detected at plan-creation time (procedure below) rather than enforced by tooling at branch-creation time.
 
-- **`NNNN`**: 4-digit zero-padded monotonic counter, per-branch. Starts at 0001. Never reused. The counter is unified across `changes/` and `debugging/` for a given branch — one sequence per branch regardless of which of those two subdirectories the file lives in. `questions/` and `brainstorming/` do not consume counter values.
+- **`NNNN`**: 4-digit zero-padded monotonic counter, per-branch. Starts at 0001. Never reused. The counter is unified across `changes/` and `debugging/` for a given branch — one sequence per branch regardless of which of those two subdirectories the file lives in. **Only `changes/` and `debugging/` consume the per-branch sequence**; `handoffs/`, `reports/`, `questions/`, and `brainstorming/` do not (a handoff reuses its paired plan's slice id — see the `handoffs/` charter).
 
 - **`slug`**: 2–5 hyphenated words. May include a leading semantic phase marker (`phase1-`, `phase2-`) when the plan belongs to a named project phase. Optional.
 
@@ -367,44 +386,7 @@ If your AI harness emits a `Co-authored-by:` trailer, include the actual model i
 
 Commit Zentaizo workspace notes/plans separately from edited repo code. Do not mix workspace session commits with editable-repo commits — they belong to different repositories anyway, and keeping them separate preserves a clean lineage.
 
-### Status frontmatter for `sessions/changes/`
-
-Each plan file begins with YAML frontmatter:
-
-```yaml
----
-status: planned          # planned | in-progress | done | abandoned
-created: "YYYY-MM-DDTHH:MM:SSZ"
-updated: "YYYY-MM-DDTHH:MM:SSZ"
-editable_repos: [name, ...]   # repos this plan will modify; must have role: edit in the atlas
----
-```
-
-Use full ISO 8601 UTC timestamps for `created:` and `updated:` and quote them to avoid YAML parser differences. The date does not appear in `changes/` or `debugging/` filenames (it's canonical in frontmatter); `questions/` files keep the `YYYY-MM-DD-` filename prefix.
-
-Required for `changes/` and `debugging/` files:
-
-```yaml
-branch_prefix: <prefix>                # derived from the git branch name (see Filename Convention)
-```
-
-Optional extension fields for plans tied to a non-default branch:
-
-```yaml
-implementation_branch: <branch-name>   # branch within an editable repo this plan targets
-implementation_base: <short-sha>       # commit the branch was rooted at (its divergence point)
-implementation_outdir: <path>          # branch-scoped output directory in the editable repo, kept out of git
-related: [<path>, ...]                 # cross-references to other session notes
-```
-
-`branch_prefix` lets readers verify the filename matches the declared branch without recomputing the derivation. For routine `main`-branch work, `branch_prefix: main` is the only required addition beyond the base frontmatter.
-
-The body uses two top-level sections:
-
-- `## Plan` — written before work starts: problem statement, scope, files involved, step-by-step approach, acceptance criteria, and verification. Treat this section as frozen once status moves to `in-progress`; edit it only to correct factual errors. The exception is the acceptance checklist: when writing `## Outcome`, mark fulfilled criteria as `[x]`, leave unmet criteria as `[ ]`, and explain any unchecked items in the outcome.
-- `## Outcome` — appended when status moves to `done` (or `abandoned`): what was actually built, deviations from the plan and why, surprises, follow-up work, and links to commits or PRs.
-
-Update `status:` and `updated:` whenever the state changes. Do not move or rename the file when work completes — the same path holds intent and result so future sessions can read both.
+The status-frontmatter schema (`status`/`created`/`updated`/`editable_repos`/`branch_prefix` plus the optional `implementation_*`/`related` branch fields), the `## Plan`/`## Outcome` body sections, and the acceptance-checkbox closeout rule are documented in `skills/plan-and-implement.md` and scaffolded by `skills/plan-template.md`. Follow those when writing a plan rather than reproducing the schema here.
 
 ## From Brainstorming to Plan
 
@@ -413,6 +395,7 @@ When the user shares a design conversation, source inventory, or freeform implem
 1. Save the raw material under `sessions/brainstorming/` with a meaningful filename.
 2. Separate workspace-generic facts from project-specific constraints. Generic facts (which repos exist, which are editable, what the system is) belong in `{ATLAS_NAME}`. Project-specific constraints (hardware targets, phase exclusions, acceptance criteria, reporting format) belong in the eventual `sessions/changes/` plan.
 3. Run `skills/plan-and-implement.md` to distill the actionable parts into a `sessions/changes/<branch_prefix>-NNNN-<slug>.md` plan. Link back to the brainstorming source(s) so the lineage is preserved.
+4. If a *different* agent will implement the plan than the one that wrote it — a **planner/implementor split** (e.g. one agent plans, an implementing agent such as Codex/Claude/Gemini executes) — capture a paste-ready execution prompt under `sessions/handoffs/<branch_prefix>-NNNN-<agent>.md` once the plan is approved. `skills/plan-and-implement.md` covers when to write it and what it holds; if the same agent plans and implements, no handoff is needed.
 """
 
 
@@ -459,6 +442,8 @@ def create_workspace(args: argparse.Namespace) -> int:
         "sessions/changes",
         "sessions/questions",
         "sessions/debugging",
+        "sessions/handoffs",
+        "sessions/reports",
     ]:
         (target / subdir).mkdir(parents=True, exist_ok=True)
 
