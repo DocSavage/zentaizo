@@ -33,7 +33,7 @@ where = ["src"]
 [tool.setuptools.package-data]
 zentaizo = [
   "templates/skills/*.md",
-  "templates/global-skills/zentaizo/SKILL.md",
+  "templates/global-skills/zentaizo/*.md",
   "templates/global-skills/zentaizo/agents/*.yaml",
 ]
 
