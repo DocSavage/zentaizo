@@ -981,5 +981,161 @@ class SkillsCommandTests(unittest.TestCase):
         self.assertNotIn("BEGIN zentaizo", content)
 
 
+def _git(repo_dir, *args):
+    import subprocess
+
+    subprocess.run(["git", *args], cwd=repo_dir, check=True, capture_output=True, text=True)
+
+
+def _init_repo_with_feature_branch(repo_dir: Path) -> str:
+    """Create a git repo on `main` with a `feat/auth` branch; return the base sha."""
+    import subprocess
+
+    repo_dir.mkdir(parents=True)
+    _git(repo_dir, "init", "-q", "-b", "main")
+    _git(repo_dir, "config", "user.email", "t@example.com")
+    _git(repo_dir, "config", "user.name", "Test")
+    (repo_dir / "f.txt").write_text("base\n")
+    _git(repo_dir, "add", ".")
+    _git(repo_dir, "commit", "-q", "-m", "base")
+    base = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo_dir, capture_output=True, text=True
+    ).stdout.strip()
+    _git(repo_dir, "checkout", "-q", "-b", "feat/auth")
+    (repo_dir / "g.txt").write_text("feat\n")
+    _git(repo_dir, "add", ".")
+    _git(repo_dir, "commit", "-q", "-m", "feat")
+    return base
+
+
+class EffortTests(unittest.TestCase):
+    def _make_workspace(self, tmp: str) -> Path:
+        workspace = Path(tmp) / "ws"
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(main(["create", str(workspace)]), 0)
+        return workspace
+
+    def _run(self, argv: list[str]) -> tuple[int, str, str]:
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = main(argv)
+        return code, out.getvalue(), err.getvalue()
+
+    def _registry(self, workspace: Path) -> dict:
+        return json.loads((workspace / "sessions" / "efforts.json").read_text())
+
+    def test_create_seeds_main_effort(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            data = self._registry(workspace)
+            self.assertEqual(data["current"], "main")
+            self.assertEqual([e["label"] for e in data["efforts"]], ["main"])
+
+    def test_themed_label_allocation_is_deterministic(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._run(["effort", "new", "-C", str(workspace)])
+            self._run(["effort", "new", "-C", str(workspace)])
+            labels = [e["label"] for e in self._registry(workspace)["efforts"]]
+            self.assertEqual(labels, ["main", "sushi", "tempura"])
+
+    def test_duplicate_label_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self.assertEqual(self._run(["effort", "new", "katana", "-C", str(workspace)])[0], 0)
+            code, _, err = self._run(["effort", "new", "katana", "-C", str(workspace)])
+            self.assertEqual(code, 2)
+            self.assertIn("already in use", err)
+
+    def test_label_already_used_on_disk_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            # A pre-existing slice file reserves its label even without a registry entry.
+            (workspace / "sessions" / "changes" / "katana-0001-x.md").write_text("---\n---\n")
+            code, _, err = self._run(["effort", "new", "katana", "-C", str(workspace)])
+            self.assertEqual(code, 2)
+            self.assertIn("already in use", err)
+
+    def test_bad_label_is_usage_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            for bad in ["../evil", "a/b", "."]:
+                code, _, _ = self._run(["effort", "new", bad, "-C", str(workspace)])
+                self.assertEqual(code, 1, bad)
+
+    def test_label_normalization(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._run(["effort", "new", "Auth Migration!", "-C", str(workspace)])
+            labels = [e["label"] for e in self._registry(workspace)["efforts"]]
+            self.assertIn("auth-migration", labels)
+
+    def test_switch_sets_current(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._run(["effort", "new", "katana", "-C", str(workspace)])
+            self._run(["effort", "new", "dojo", "-C", str(workspace)])
+            self.assertEqual(self._registry(workspace)["current"], "dojo")
+            self.assertEqual(self._run(["effort", "switch", "katana", "-C", str(workspace)])[0], 0)
+            self.assertEqual(self._registry(workspace)["current"], "katana")
+            self.assertEqual(self._run(["effort", "switch", "nope", "-C", str(workspace)])[0], 2)
+
+    def test_show_unknown_effort_exits_2(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self.assertEqual(self._run(["effort", "show", "ghost", "-C", str(workspace)])[0], 2)
+
+    def test_set_branch_computes_base(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            write_example_atlas(workspace)  # shortener-api is role: edit, ref: main
+            base = _init_repo_with_feature_branch(workspace / "repos" / "shortener-api")
+            self._run(["effort", "new", "katana", "-C", str(workspace)])
+            code, _, _ = self._run(
+                [
+                    "effort",
+                    "set-branch",
+                    "katana",
+                    "--repo",
+                    "shortener-api=feat/auth",
+                    "-C",
+                    str(workspace),
+                ]
+            )
+            self.assertEqual(code, 0)
+            repos = next(e for e in self._registry(workspace)["efforts"] if e["label"] == "katana")[
+                "repos"
+            ]
+            self.assertEqual(repos["shortener-api"]["branch"], "feat/auth")
+            self.assertEqual(repos["shortener-api"]["base"], base[:12])
+
+    def test_set_branch_rejects_reference_repo(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            write_example_atlas(workspace)  # shortener-web is role: reference
+            self._run(["effort", "new", "katana", "-C", str(workspace)])
+            code, _, err = self._run(
+                [
+                    "effort",
+                    "set-branch",
+                    "katana",
+                    "--repo",
+                    "shortener-web=x",
+                    "-C",
+                    str(workspace),
+                ]
+            )
+            self.assertEqual(code, 2)
+            self.assertIn("role", err)
+
+    def test_close_flips_status(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._run(["effort", "new", "katana", "-C", str(workspace)])
+            self.assertEqual(self._run(["effort", "close", "katana", "-C", str(workspace)])[0], 0)
+            effort = next(e for e in self._registry(workspace)["efforts"] if e["label"] == "katana")
+            self.assertEqual(effort["status"], "closed")
+
+
 if __name__ == "__main__":
     unittest.main()

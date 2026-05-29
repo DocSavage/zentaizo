@@ -5,8 +5,10 @@ import hashlib
 import json
 import os
 import pathlib
+import re
 import shutil
 import subprocess
+import sys
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -15,6 +17,21 @@ from datetime import UTC, datetime
 from importlib import resources
 
 from zentaizo import safety
+
+
+class CliError(Exception):
+    """Raised by resolver/registry helpers; carries a process exit code.
+
+    Distinct from ``SystemExit`` (which existing commands use for exit 1):
+    ``code`` lets the new commands return 2 for not-found / collision /
+    undeterminable-effort and 1 for a semantic usage error (bad slug/id),
+    while keeping the message on stderr.
+    """
+
+    def __init__(self, message: str, code: int = 2):
+        super().__init__(message)
+        self.code = code
+
 
 ATLAS_NAME = "zentaizo.atlas.json"
 LEGACY_CONFIG_NAME = "zentaizo.config.json"
@@ -446,6 +463,8 @@ def create_workspace(args: argparse.Namespace) -> int:
         "sessions/reports",
     ]:
         (target / subdir).mkdir(parents=True, exist_ok=True)
+
+    write_json(target / SESSIONS_DIR / EFFORTS_NAME, new_efforts_registry())
 
     (target / "README.md").write_text(workspace_readme(name))
     (target / "AGENTS.md").write_text(workspace_agents(name))
@@ -1782,6 +1801,472 @@ def skills_uninstall(args: argparse.Namespace) -> int:
     return 0
 
 
+# --------------------------------------------------------------------------
+# Efforts and session-file allocation
+#
+# An *effort* is a named body of work that may span several editable repos.
+# `sessions/efforts.json` is the registry: it owns effort identity (label,
+# description, status), the `current` pointer, and the per-repo branch/base
+# map. The filesystem owns slice numbering, so creating a slice never writes
+# the registry. See docs/design/next-slice-cli-helper.md.
+# --------------------------------------------------------------------------
+
+SESSIONS_DIR = "sessions"
+EFFORTS_NAME = "efforts.json"
+MAIN_EFFORT = "main"
+MAIN_EFFORT_DESCRIPTION = "Workspace-meta work: atlas, summaries, conventions."
+
+# Slice statuses that mean "no longer the active plan" (closeout-owned).
+CLOSED_SLICE_STATUSES = {"done", "superseded", "abandoned"}
+
+# Curated themed wordlist — well-known Japanese words an English speaker knows.
+# Only a *suggestion* fallback for `effort new` when the agent passes no label;
+# walked in order, first unused word wins (deterministic, not random).
+THEMED_LABELS = (
+    "sushi",
+    "tempura",
+    "katana",
+    "dojo",
+    "sensei",
+    "ninja",
+    "samurai",
+    "sumo",
+    "origami",
+    "bonsai",
+    "haiku",
+    "karaoke",
+    "tsunami",
+    "ramen",
+    "wasabi",
+    "sake",
+    "kimono",
+    "shogun",
+    "tofu",
+    "miso",
+    "udon",
+    "sashimi",
+    "teriyaki",
+    "matcha",
+    "koi",
+    "zen",
+    "manga",
+    "anime",
+    "futon",
+    "tatami",
+    "karate",
+    "judo",
+    "aikido",
+    "kabuki",
+    "sakura",
+    "kaizen",
+    "bento",
+    "edamame",
+    "mochi",
+    "yakitori",
+    "soba",
+    "nori",
+    "daimyo",
+    "ronin",
+    "kanji",
+    "sumi",
+    "geta",
+    "obi",
+    "tanuki",
+    "kappa",
+)
+
+
+def normalize_slug(value: str | None, *, kind: str = "slug") -> str:
+    """Normalize a slug/label to a path-safe token, or raise CliError (exit 1).
+
+    One pinned rule (not best-effort, because it lands in a path the tool
+    writes): lowercase to ASCII; collapse every run of non-``[a-z0-9]`` to a
+    single ``-``; strip leading/trailing ``-``. Reject (usage error) an empty
+    result, or an *original* containing a path separator, ``..``, or a leading
+    ``.`` — caught before normalization can mask traversal/dotfiles.
+    """
+    if value is None:
+        raise CliError(f"missing {kind}", 1)
+    original = value
+    if "/" in original or "\\" in original or ".." in original or original.startswith("."):
+        raise CliError(f"invalid {kind} {original!r}: no path separators, '..', or leading '.'", 1)
+    parts = re.findall(r"[a-z0-9]+", original.lower())
+    result = "-".join(parts)
+    if not result:
+        raise CliError(f"invalid {kind} {original!r}: empty after normalization", 1)
+    return result
+
+
+def read_frontmatter(path: pathlib.Path) -> dict:
+    """Minimal YAML-frontmatter reader: the leading ``---`` … ``---`` block.
+
+    No YAML dependency — splits ``key: value`` and strips one layer of quotes.
+    Returns ``{}`` if the file has no frontmatter or cannot be read.
+    """
+    fm: dict[str, str] = {}
+    try:
+        with path.open(encoding="utf-8", errors="replace") as handle:
+            if handle.readline().strip() != "---":
+                return fm
+            for line in handle:
+                if line.strip() == "---":
+                    break
+                key, sep, val = line.partition(":")
+                if sep:
+                    fm[key.strip()] = val.strip().strip('"').strip("'")
+    except OSError:
+        return fm
+    return fm
+
+
+def _slice_pattern(label: str) -> re.Pattern[str]:
+    # The ``-\d{4}-`` structure means labels never cross-match
+    # (``do`` matches ``do-0001-…`` only, never ``dojo-0001-…``).
+    return re.compile(rf"^{re.escape(label)}-(\d{{4}})-")
+
+
+def scan_slice_files(workspace: pathlib.Path, label: str) -> list[tuple[int, pathlib.Path]]:
+    """Return (counter, path) for ``<label>-NNNN-*`` across changes/+debugging/."""
+    pattern = _slice_pattern(label)
+    found: list[tuple[int, pathlib.Path]] = []
+    for sub in ("changes", "debugging"):
+        directory = workspace / SESSIONS_DIR / sub
+        if not directory.is_dir():
+            continue
+        for path in directory.iterdir():
+            match = pattern.match(path.name)
+            if match and path.is_file():
+                found.append((int(match.group(1)), path))
+    return found
+
+
+def label_in_use_on_disk(workspace: pathlib.Path, label: str) -> bool:
+    """True if any session file already uses ``label`` (slices or handoffs)."""
+    if scan_slice_files(workspace, label):
+        return True
+    handoffs = workspace / SESSIONS_DIR / "handoffs"
+    if handoffs.is_dir():
+        prefix = re.compile(rf"^{re.escape(label)}-(\d{{4}})[a-z]")
+        for path in handoffs.iterdir():
+            if prefix.match(path.name) and path.is_file():
+                return True
+    return False
+
+
+def sessions_root(workspace: pathlib.Path) -> pathlib.Path:
+    """Return ``<workspace>/sessions``, or raise if this isn't a workspace."""
+    root = workspace / SESSIONS_DIR
+    if not root.is_dir():
+        raise CliError(
+            f"Not a Zentaizo workspace (no {SESSIONS_DIR}/ at {workspace}). "
+            "Run `zentaizo create` first.",
+            1,
+        )
+    return root
+
+
+def efforts_path(workspace: pathlib.Path) -> pathlib.Path:
+    return workspace / SESSIONS_DIR / EFFORTS_NAME
+
+
+def _main_effort() -> dict:
+    now = utc_now()
+    return {
+        "label": MAIN_EFFORT,
+        "description": MAIN_EFFORT_DESCRIPTION,
+        "status": "open",
+        "repos": {},
+        "created": now,
+        "updated": now,
+    }
+
+
+def new_efforts_registry() -> dict:
+    return {"version": 1, "current": MAIN_EFFORT, "efforts": [_main_effort()]}
+
+
+def load_efforts(workspace: pathlib.Path) -> dict:
+    """Load the registry, synthesizing a fresh one for a pre-CLI workspace.
+
+    A workspace without ``sessions/efforts.json`` is handled leniently: an
+    in-memory registry with just the reserved ``main`` effort is returned (the
+    proper migration of existing ``<prefix>-NNNN-*`` files is the
+    ``upgrade-zentaizo`` skill's job). Nothing is written here.
+    """
+    path = efforts_path(workspace)
+    if not path.exists():
+        return new_efforts_registry()
+    data = read_json(path)
+    data.setdefault("version", 1)
+    data.setdefault("efforts", [])
+    if not any(e.get("label") == MAIN_EFFORT for e in data["efforts"]):
+        data["efforts"].insert(0, _main_effort())
+    data.setdefault("current", MAIN_EFFORT)
+    return data
+
+
+def save_efforts(workspace: pathlib.Path, data: dict) -> None:
+    write_json(efforts_path(workspace), data)
+
+
+def find_effort(data: dict, label: str) -> dict | None:
+    for effort in data["efforts"]:
+        if effort.get("label") == label:
+            return effort
+    return None
+
+
+def resolve_effort(workspace: pathlib.Path, data: dict, label: str | None) -> dict:
+    """Resolve the effort for ``label`` (or the current pointer), or raise.
+
+    A label that is absent from the registry but already present on disk
+    (legacy workspace) resolves to a synthetic open effort so reads/creates
+    still work; an unknown label with no on-disk files, or a closed effort, is
+    an error (exit 2).
+    """
+    target = label or data.get("current") or MAIN_EFFORT
+    effort = find_effort(data, target)
+    if effort is None:
+        if label_in_use_on_disk(workspace, target):
+            return {"label": target, "status": "open", "repos": {}, "_synthetic": True}
+        known = ", ".join(e["label"] for e in data["efforts"]) or "(none)"
+        raise CliError(f"Unknown effort {target!r}. Known efforts: {known}.")
+    if effort.get("status") == "closed":
+        raise CliError(
+            f"Effort {target!r} is closed. Run `zentaizo effort switch <label>` "
+            "or `zentaizo effort new <label>` first."
+        )
+    return effort
+
+
+def _atlas_repo(workspace: pathlib.Path, repo_name: str) -> dict | None:
+    atlas = find_atlas(workspace)
+    if atlas is None:
+        return None
+    config = read_json(atlas)
+    for repo in source_groups(config).get("repos", []):
+        if repo.get("name") == repo_name:
+            return repo
+    return None
+
+
+def validate_effort_repo(workspace: pathlib.Path, repo_name: str) -> None:
+    """If an atlas exists, the repo must be present and ``role: edit``.
+
+    Before an atlas exists nothing can be checked, so the repo is accepted as-is
+    (these commands are usable in a freshly created workspace).
+    """
+    if find_atlas(workspace) is None:
+        return
+    repo = _atlas_repo(workspace, repo_name)
+    if repo is None:
+        raise CliError(f"Repo {repo_name!r} is not in {ATLAS_NAME}.")
+    if repo_role(repo) != "edit":
+        raise CliError(
+            f"Repo {repo_name!r} is role: {repo_role(repo)!r}; an effort references "
+            "editable repos only. Change its role to 'edit' in the atlas first."
+        )
+
+
+def compute_base(workspace: pathlib.Path, repo_name: str, branch: str) -> str | None:
+    """Short merge-base sha of ``branch`` against the repo's pinned atlas ref.
+
+    Returns ``None`` (never guesses) when the repo isn't fetched, has no atlas
+    ref, or git can't resolve a merge base.
+    """
+    repo_dir = workspace / "repos" / repo_name
+    repo = _atlas_repo(workspace, repo_name)
+    ref = repo.get("ref") if repo else None
+    if not repo_dir.is_dir() or not ref:
+        return None
+    base = try_run_git(["merge-base", branch, ref], cwd=repo_dir) or try_run_git(
+        ["merge-base", branch, f"origin/{ref}"], cwd=repo_dir
+    )
+    return base[:12] if base else None
+
+
+def allocate_themed_label(workspace: pathlib.Path, data: dict) -> str:
+    """First themed word not already a registered label or used on disk."""
+    taken = {e.get("label") for e in data["efforts"]}
+    for word in THEMED_LABELS:
+        if word not in taken and not label_in_use_on_disk(workspace, word):
+            return word
+    raise CliError("Themed wordlist exhausted; pass an explicit label to `zentaizo effort new`.", 1)
+
+
+def parse_repo_spec(spec: str) -> tuple[str, str | None]:
+    """Parse a ``--repo NAME`` or ``--repo NAME=BRANCH`` value."""
+    name, sep, branch = spec.partition("=")
+    name = name.strip()
+    if not name:
+        raise CliError(f"invalid --repo value {spec!r}: expected NAME or NAME=BRANCH", 1)
+    return name, (branch.strip() or None) if sep else None
+
+
+def _repo_entry(workspace: pathlib.Path, name: str, branch: str | None) -> dict:
+    validate_effort_repo(workspace, name)
+    entry: dict = {"branch": branch, "base": None}
+    if branch:
+        entry["base"] = compute_base(workspace, name, branch)
+    return entry
+
+
+def _effort_summary_line(effort: dict) -> str:
+    repos = effort.get("repos", {})
+    repo_part = f"{len(repos)} repo(s)" if repos else "no repos"
+    desc = effort.get("description") or ""
+    tail = f" — {desc}" if desc else ""
+    return f"{effort['label']} ({effort.get('status', 'open')}, {repo_part}){tail}"
+
+
+def _print_effort_detail(workspace: pathlib.Path, effort: dict) -> None:
+    label = effort["label"]
+    desc = effort.get("description") or ""
+    print(f"{label} ({effort.get('status', 'open')})" + (f" — {desc}" if desc else ""))
+    repos = effort.get("repos", {})
+    for name in sorted(repos):
+        info = repos[name] or {}
+        branch = info.get("branch") or "(no branch)"
+        base = info.get("base")
+        base_part = f" @ {base}" if base else ""
+        print(f"  {name}  {branch}{base_part}")
+    slices = sorted(scan_slice_files(workspace, label))
+    if slices:
+        parts = []
+        for counter, path in slices:
+            status = read_frontmatter(path).get("status", "?")
+            where = path.parent.name
+            stem = f"{label}-{counter:04d}"
+            parts.append(f"{stem} ({status}, {where})")
+        print("  slices: " + ", ".join(parts))
+    else:
+        print("  slices: (none yet)")
+
+
+def effort_new(args: argparse.Namespace) -> int:
+    workspace = pathlib.Path(args.workspace).resolve()
+    sessions_root(workspace)
+    data = load_efforts(workspace)
+
+    if args.label is None:
+        label = allocate_themed_label(workspace, data)
+    else:
+        label = normalize_slug(args.label, kind="label")
+
+    if find_effort(data, label) is not None or label_in_use_on_disk(workspace, label):
+        raise CliError(
+            f"Effort/label {label!r} is already in use (registry or existing files); "
+            "pick another word."
+        )
+
+    now = utc_now()
+    repos: dict[str, dict] = {}
+    for spec in args.repo or []:
+        name, branch = parse_repo_spec(spec)
+        repos[name] = _repo_entry(workspace, name, branch)
+
+    effort = {
+        "label": label,
+        "description": args.describe or "",
+        "status": "open",
+        "repos": repos,
+        "created": now,
+        "updated": now,
+    }
+    data["efforts"].append(effort)
+    data["current"] = label
+    save_efforts(workspace, data)
+
+    if args.json:
+        print(json.dumps(effort))
+    else:
+        print(f"Effort {label!r} created and set as current.")
+        _print_effort_detail(workspace, effort)
+    return 0
+
+
+def effort_switch(args: argparse.Namespace) -> int:
+    workspace = pathlib.Path(args.workspace).resolve()
+    sessions_root(workspace)
+    data = load_efforts(workspace)
+    if find_effort(data, args.label) is None:
+        known = ", ".join(e["label"] for e in data["efforts"]) or "(none)"
+        raise CliError(f"Unknown effort {args.label!r}. Known efforts: {known}.")
+    data["current"] = args.label
+    save_efforts(workspace, data)
+    if args.json:
+        print(json.dumps({"current": args.label}))
+    else:
+        print(f"Current effort is now {args.label!r}.")
+    return 0
+
+
+def effort_show(args: argparse.Namespace) -> int:
+    workspace = pathlib.Path(args.workspace).resolve()
+    sessions_root(workspace)
+    data = load_efforts(workspace)
+    effort = resolve_effort(workspace, data, args.label)
+    if args.json:
+        print(json.dumps(effort))
+    else:
+        _print_effort_detail(workspace, effort)
+    return 0
+
+
+def effort_list(args: argparse.Namespace) -> int:
+    workspace = pathlib.Path(args.workspace).resolve()
+    sessions_root(workspace)
+    data = load_efforts(workspace)
+    if args.json:
+        print(json.dumps({"current": data.get("current"), "efforts": data["efforts"]}))
+        return 0
+    current = data.get("current")
+    for effort in data["efforts"]:
+        marker = "* " if effort["label"] == current else "  "
+        print(marker + _effort_summary_line(effort))
+    return 0
+
+
+def effort_set_branch(args: argparse.Namespace) -> int:
+    workspace = pathlib.Path(args.workspace).resolve()
+    sessions_root(workspace)
+    data = load_efforts(workspace)
+    effort = find_effort(data, args.label)
+    if effort is None:
+        raise CliError(f"Unknown effort {args.label!r}.")
+    name, branch = parse_repo_spec(args.repo)
+    if branch is None:
+        raise CliError(f"--repo {args.repo!r} must be NAME=BRANCH for set-branch", 1)
+    validate_effort_repo(workspace, name)
+    base = args.base or compute_base(workspace, name, branch)
+    effort.setdefault("repos", {})[name] = {"branch": branch, "base": base}
+    effort["updated"] = utc_now()
+    save_efforts(workspace, data)
+    if args.json:
+        print(json.dumps(effort["repos"][name] | {"repo": name}))
+    else:
+        base_part = f" (base {base})" if base else ""
+        print(f"Recorded {name}={branch}{base_part} on effort {args.label!r}.")
+    return 0
+
+
+def effort_close(args: argparse.Namespace) -> int:
+    workspace = pathlib.Path(args.workspace).resolve()
+    sessions_root(workspace)
+    data = load_efforts(workspace)
+    effort = find_effort(data, args.label)
+    if effort is None:
+        raise CliError(f"Unknown effort {args.label!r}.")
+    effort["status"] = "closed"
+    effort["updated"] = utc_now()
+    save_efforts(workspace, data)
+    if args.json:
+        print(json.dumps(effort))
+    else:
+        print(f"Effort {args.label!r} closed.")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="zentaizo",
@@ -1901,13 +2386,85 @@ def build_parser() -> argparse.ArgumentParser:
     skills_uninstall_p.add_argument("--target", choices=target_choices, default="all")
     skills_uninstall_p.set_defaults(func=skills_uninstall)
 
+    _add_effort_parser(sub)
+
     return parser
+
+
+def _add_workspace_arg(parser: argparse.ArgumentParser) -> None:
+    # A flag, not a positional: the effort/path/next-* commands often already
+    # take an optional leading positional (label), and two optional positionals
+    # are ambiguous. ``-C`` mirrors git's working-directory flag.
+    parser.add_argument(
+        "-C",
+        "--workspace",
+        default=".",
+        help="workspace directory (default: current directory)",
+    )
+
+
+def _add_effort_parser(sub: argparse._SubParsersAction) -> None:
+    effort = sub.add_parser(
+        "effort",
+        help="manage and read efforts (named bodies of work spanning editable repos)",
+    )
+    effort_sub = effort.add_subparsers(dest="effort_command", required=True)
+
+    new = effort_sub.add_parser("new", help="reserve a new effort and make it current")
+    new.add_argument("label", nargs="?", help="effort label (a word); omit for a themed suggestion")
+    new.add_argument("--describe", help="one-line description of the effort")
+    new.add_argument(
+        "--repo",
+        action="append",
+        metavar="NAME[=BRANCH]",
+        help="register an editable repo (and its branch) for this effort; repeatable",
+    )
+    new.add_argument("--json", action="store_true", help="emit JSON")
+    _add_workspace_arg(new)
+    new.set_defaults(func=effort_new)
+
+    switch = effort_sub.add_parser("switch", help="set the current effort")
+    switch.add_argument("label", help="effort label to make current")
+    switch.add_argument("--json", action="store_true", help="emit JSON")
+    _add_workspace_arg(switch)
+    switch.set_defaults(func=effort_switch)
+
+    show = effort_sub.add_parser("show", help="show an effort's repos/branches and slices")
+    show.add_argument("label", nargs="?", help="effort label (default: current)")
+    show.add_argument("--json", action="store_true", help="emit JSON")
+    _add_workspace_arg(show)
+    show.set_defaults(func=effort_show)
+
+    list_p = effort_sub.add_parser("list", help="list all efforts (current is marked)")
+    list_p.add_argument("--json", action="store_true", help="emit JSON")
+    _add_workspace_arg(list_p)
+    list_p.set_defaults(func=effort_list)
+
+    set_branch = effort_sub.add_parser(
+        "set-branch", help="record a repo's branch on an effort (computes base)"
+    )
+    set_branch.add_argument("label", help="effort label")
+    set_branch.add_argument("--repo", required=True, metavar="NAME=BRANCH", help="repo and branch")
+    set_branch.add_argument("--base", help="override the computed merge-base short sha")
+    set_branch.add_argument("--json", action="store_true", help="emit JSON")
+    _add_workspace_arg(set_branch)
+    set_branch.set_defaults(func=effort_set_branch)
+
+    close = effort_sub.add_parser("close", help="mark an effort closed")
+    close.add_argument("label", help="effort label to close")
+    close.add_argument("--json", action="store_true", help="emit JSON")
+    _add_workspace_arg(close)
+    close.set_defaults(func=effort_close)
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    return args.func(args)
+    try:
+        return args.func(args)
+    except CliError as exc:
+        print(str(exc), file=sys.stderr)
+        return exc.code
 
 
 if __name__ == "__main__":
