@@ -2016,13 +2016,16 @@ def find_effort(data: dict, label: str) -> dict | None:
     return None
 
 
-def resolve_effort(workspace: pathlib.Path, data: dict, label: str | None) -> dict:
+def resolve_effort(
+    workspace: pathlib.Path, data: dict, label: str | None, *, for_write: bool = False
+) -> dict:
     """Resolve the effort for ``label`` (or the current pointer), or raise.
 
     A label that is absent from the registry but already present on disk
     (legacy workspace) resolves to a synthetic open effort so reads/creates
-    still work; an unknown label with no on-disk files, or a closed effort, is
-    an error (exit 2).
+    still work; an unknown label with no on-disk files is an error (exit 2).
+    A *closed* effort is refused only for writes (``for_write=True``) — reads
+    (``path``/``effort show``) can still resolve a closed effort.
     """
     target = label or data.get("current") or MAIN_EFFORT
     effort = find_effort(data, target)
@@ -2031,7 +2034,7 @@ def resolve_effort(workspace: pathlib.Path, data: dict, label: str | None) -> di
             return {"label": target, "status": "open", "repos": {}, "_synthetic": True}
         known = ", ".join(e["label"] for e in data["efforts"]) or "(none)"
         raise CliError(f"Unknown effort {target!r}. Known efforts: {known}.")
-    if effort.get("status") == "closed":
+    if for_write and effort.get("status") == "closed":
         raise CliError(
             f"Effort {target!r} is closed. Run `zentaizo effort switch <label>` "
             "or `zentaizo effort new <label>` first."
@@ -2267,6 +2270,289 @@ def effort_close(args: argparse.Namespace) -> int:
     return 0
 
 
+# --------------------------------------------------------------------------
+# Resolver core (read) + creators (write) over the effort registry
+# --------------------------------------------------------------------------
+
+
+def utc_date() -> str:
+    return datetime.now(UTC).date().isoformat()
+
+
+def padded_id(value: str) -> str:
+    """Normalize a slice id to 4-digit zero-padded form, or raise (exit 1)."""
+    if not re.fullmatch(r"\d{1,4}", value or ""):
+        raise CliError(f"invalid slice id {value!r}: 1-4 decimal digits, 0-9999", 1)
+    return f"{int(value):04d}"
+
+
+def next_counter(workspace: pathlib.Path, label: str) -> int:
+    counters = [counter for counter, _ in scan_slice_files(workspace, label)]
+    return max(counters) + 1 if counters else 1
+
+
+def find_slice_paths(workspace: pathlib.Path, label: str, padded: str) -> list[pathlib.Path]:
+    target = int(padded)
+    return sorted(p for counter, p in scan_slice_files(workspace, label) if counter == target)
+
+
+def find_active_plan(workspace: pathlib.Path, label: str) -> pathlib.Path | None:
+    """Highest-counter changes/ plan for ``label`` whose status is still open."""
+    changes = workspace / SESSIONS_DIR / "changes"
+    pattern = _slice_pattern(label)
+    best: tuple[int, pathlib.Path] | None = None
+    if changes.is_dir():
+        for path in changes.iterdir():
+            match = pattern.match(path.name)
+            if not match or not path.is_file():
+                continue
+            if read_frontmatter(path).get("status", "") in CLOSED_SLICE_STATUSES:
+                continue
+            counter = int(match.group(1))
+            if best is None or counter > best[0]:
+                best = (counter, path)
+    return best[1] if best else None
+
+
+def next_handoff_letter(workspace: pathlib.Path, label: str, padded: str) -> str:
+    directory = workspace / SESSIONS_DIR / "handoffs"
+    pattern = re.compile(rf"^{re.escape(label)}-{padded}([a-z]+)")
+    letters: list[str] = []
+    if directory.is_dir():
+        for path in directory.iterdir():
+            match = pattern.match(path.name)
+            if match and path.is_file():
+                letters.append(match.group(1))
+    singles = sorted(letter for letter in letters if len(letter) == 1)
+    if not singles:
+        return "a"
+    nxt = chr(ord(singles[-1]) + 1)
+    return nxt if nxt <= "z" else "aa"  # overflow past 'z' is effectively unreachable
+
+
+def _rel(workspace: pathlib.Path, path: pathlib.Path) -> str:
+    return str(path.relative_to(workspace))
+
+
+def _read_template(workspace: pathlib.Path, name: str) -> str:
+    """Read a skill template, preferring the workspace copy over the package."""
+    local = workspace / "skills" / name
+    if local.is_file():
+        return local.read_text()
+    return resources.files("zentaizo").joinpath(f"templates/skills/{name}").read_text()
+
+
+def _set_frontmatter_field(text: str, key: str, value: str) -> str:
+    return re.sub(rf"^{re.escape(key)}:.*$", f"{key}: {value}", text, count=1, flags=re.M)
+
+
+def scaffold_plan(template: str, label: str, now: str) -> str:
+    text = _set_frontmatter_field(template, "created", f'"{now}"')
+    text = _set_frontmatter_field(text, "updated", f'"{now}"')
+    return _set_frontmatter_field(text, "label", label)
+
+
+def scaffold_report(template: str, slug: str, now: str) -> str:
+    title = slug.replace("-", " ").title()
+    text = _set_frontmatter_field(template, "title", title)
+    text = _set_frontmatter_field(text, "created", f'"{now}"')
+    return _set_frontmatter_field(text, "updated", f'"{now}"')
+
+
+def _write_exclusive(path: pathlib.Path, text: str) -> None:
+    """Create ``path`` with ``text``, refusing to clobber an existing file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with path.open("x", encoding="utf-8") as handle:
+            handle.write(text)
+    except FileExistsError:
+        raise CliError(
+            f"refusing to overwrite existing {_rel(path.parent.parent.parent, path)}"
+        ) from None
+
+
+def _emit_created(
+    args: argparse.Namespace,
+    workspace: pathlib.Path,
+    target: pathlib.Path,
+    *,
+    kind: str,
+    label: str | None,
+    counter: int | None,
+    created: str,
+) -> int:
+    rel = _rel(workspace, target)
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "path": rel,
+                    "kind": kind,
+                    "label": label,
+                    "counter": counter,
+                    "created": created,
+                    "wrote": True,
+                }
+            )
+        )
+    else:
+        print(rel)
+        if label is not None and getattr(args, "label", None) is None:
+            print(f"(current effort: {label})", file=sys.stderr)
+    return 0
+
+
+def _emit_path(
+    args: argparse.Namespace,
+    workspace: pathlib.Path,
+    path: pathlib.Path,
+    *,
+    kind: str,
+    label: str | None,
+    counter: int | None,
+) -> int:
+    rel = _rel(workspace, path)
+    if args.json:
+        print(json.dumps({"path": rel, "kind": kind, "label": label, "counter": counter}))
+    else:
+        print(rel)
+    return 0
+
+
+def _resolve_read_effort(args: argparse.Namespace) -> tuple[pathlib.Path, str]:
+    workspace = pathlib.Path(args.workspace).resolve()
+    sessions_root(workspace)
+    data = load_efforts(workspace)
+    effort = resolve_effort(workspace, data, args.label)
+    return workspace, effort["label"]
+
+
+def path_slice(args: argparse.Namespace) -> int:
+    workspace, label = _resolve_read_effort(args)
+    if args.next:
+        print(f"{label}-{next_counter(workspace, label):04d}")
+        return 0
+    if args.id is None:
+        raise CliError("path slice requires <id> or --next", 1)
+    padded = padded_id(args.id)
+    matches = find_slice_paths(workspace, label, padded)
+    if not matches:
+        raise CliError(f"No slice {label}-{padded}-* in changes/ or debugging/.")
+    if len(matches) > 1:
+        listing = ", ".join(_rel(workspace, m) for m in matches)
+        raise CliError(f"Ambiguous slice id {label}-{padded}: {listing}")
+    return _emit_path(args, workspace, matches[0], kind="slice", label=label, counter=int(padded))
+
+
+def path_active(args: argparse.Namespace) -> int:
+    workspace, label = _resolve_read_effort(args)
+    plan = find_active_plan(workspace, label)
+    if plan is None:
+        raise CliError(f"No active (open) plan for effort {label!r}.")
+    return _emit_path(args, workspace, plan, kind="active", label=label, counter=None)
+
+
+def path_handoff(args: argparse.Namespace) -> int:
+    workspace, label = _resolve_read_effort(args)
+    padded = padded_id(args.id)
+    directory = workspace / SESSIONS_DIR / "handoffs"
+    pattern = re.compile(rf"^{re.escape(label)}-{padded}[a-z]")
+    matches = (
+        sorted(p for p in directory.iterdir() if pattern.match(p.name) and p.is_file())
+        if directory.is_dir()
+        else []
+    )
+    if not matches:
+        raise CliError(f"No handoffs for {label}-{padded}.")
+    if args.json:
+        print(json.dumps([_rel(workspace, p) for p in matches]))
+    else:
+        for path in matches:
+            print(_rel(workspace, path))
+    return 0
+
+
+def _next_slice(args: argparse.Namespace, subdir: str) -> int:
+    workspace = pathlib.Path(args.workspace).resolve()
+    sessions_root(workspace)
+    slug = normalize_slug(args.slug)
+    data = load_efforts(workspace)
+    label = resolve_effort(workspace, data, args.label, for_write=True)["label"]
+    counter = next_counter(workspace, label)
+    now = utc_now()
+    text = scaffold_plan(_read_template(workspace, "plan-template.md"), label, now)
+    target = workspace / SESSIONS_DIR / subdir / f"{label}-{counter:04d}-{slug}.md"
+    _write_exclusive(target, text)
+    return _emit_created(
+        args, workspace, target, kind=subdir, label=label, counter=counter, created=now
+    )
+
+
+def next_change(args: argparse.Namespace) -> int:
+    return _next_slice(args, "changes")
+
+
+def next_debugging(args: argparse.Namespace) -> int:
+    return _next_slice(args, "debugging")
+
+
+def next_handoff(args: argparse.Namespace) -> int:
+    workspace = pathlib.Path(args.workspace).resolve()
+    sessions_root(workspace)
+    data = load_efforts(workspace)
+    label = resolve_effort(workspace, data, args.label, for_write=True)["label"]
+    padded = padded_id(args.id)
+    spec: pathlib.Path | None = None
+    if padded != "0000":
+        paired = find_slice_paths(workspace, label, padded)
+        if not paired:
+            raise CliError(
+                f"No paired plan {label}-{padded}-* in changes/ or debugging/; "
+                "refusing to create an orphan handoff (use id 0000 for an untied handoff)."
+            )
+        spec = paired[0]
+    letter = next_handoff_letter(workspace, label, padded)
+    topic = normalize_slug(args.topic, kind="topic") if args.topic else None
+    name = f"{label}-{padded}{letter}" + (f"-{topic}" if topic else "") + ".md"
+    now = utc_now()
+    heading = f"# {label}-{padded}{letter} handoff" + (f" — {topic}" if topic else "")
+    lines = [heading, "", f"Date: {now}", ""]
+    if spec is not None:
+        lines += [f"Spec: {_rel(workspace, spec)}", ""]
+    lines += ["<!-- Paste-ready execution prompt below. -->", ""]
+    target = workspace / SESSIONS_DIR / "handoffs" / name
+    _write_exclusive(target, "\n".join(lines))
+    return _emit_created(
+        args, workspace, target, kind="handoff", label=label, counter=int(padded), created=now
+    )
+
+
+def next_note(args: argparse.Namespace) -> int:
+    workspace = pathlib.Path(args.workspace).resolve()
+    sessions_root(workspace)
+    slug = normalize_slug(args.slug)
+    now = utc_now()
+    target = workspace / SESSIONS_DIR / "questions" / f"{utc_date()}-{slug}.md"
+    stub = f"# {slug}\n\nDate: {now}\n\n## Question\n\n## Answer\n\n## Sources\n"
+    _write_exclusive(target, stub)
+    return _emit_created(
+        args, workspace, target, kind="questions", label=None, counter=None, created=now
+    )
+
+
+def next_report(args: argparse.Namespace) -> int:
+    workspace = pathlib.Path(args.workspace).resolve()
+    sessions_root(workspace)
+    slug = normalize_slug(args.slug)
+    now = utc_now()
+    text = scaffold_report(_read_template(workspace, "report-template.md"), slug, now)
+    target = workspace / SESSIONS_DIR / "reports" / f"{slug}.md"
+    _write_exclusive(target, text)
+    return _emit_created(
+        args, workspace, target, kind="reports", label=None, counter=None, created=now
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="zentaizo",
@@ -2387,6 +2673,8 @@ def build_parser() -> argparse.ArgumentParser:
     skills_uninstall_p.set_defaults(func=skills_uninstall)
 
     _add_effort_parser(sub)
+    _add_path_parser(sub)
+    _add_next_parsers(sub)
 
     return parser
 
@@ -2455,6 +2743,66 @@ def _add_effort_parser(sub: argparse._SubParsersAction) -> None:
     close.add_argument("--json", action="store_true", help="emit JSON")
     _add_workspace_arg(close)
     close.set_defaults(func=effort_close)
+
+
+def _add_label_arg(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--label", help="effort label (default: the current effort)")
+
+
+def _add_path_parser(sub: argparse._SubParsersAction) -> None:
+    path = sub.add_parser("path", help="resolve an existing session file path (read-only)")
+    path_sub = path.add_subparsers(dest="path_command", required=True)
+
+    slice_p = path_sub.add_parser(
+        "slice", help="resolve a slice file by id, or --next for the next id stem"
+    )
+    slice_p.add_argument("id", nargs="?", help="slice id (1-4 digits); omit with --next")
+    slice_p.add_argument(
+        "--next", action="store_true", help="print the next id stem (e.g. katana-0044); no write"
+    )
+    _add_label_arg(slice_p)
+    slice_p.add_argument("--json", action="store_true", help="emit JSON")
+    _add_workspace_arg(slice_p)
+    slice_p.set_defaults(func=path_slice)
+
+    active_p = path_sub.add_parser("active", help="resolve the active (highest open) plan")
+    _add_label_arg(active_p)
+    active_p.add_argument("--json", action="store_true", help="emit JSON")
+    _add_workspace_arg(active_p)
+    active_p.set_defaults(func=path_active)
+
+    handoff_p = path_sub.add_parser("handoff", help="list all handoffs for a slice id")
+    handoff_p.add_argument("id", help="slice id (1-4 digits; 0000 for untied handoffs)")
+    _add_label_arg(handoff_p)
+    handoff_p.add_argument("--json", action="store_true", help="emit JSON")
+    _add_workspace_arg(handoff_p)
+    handoff_p.set_defaults(func=path_handoff)
+
+
+def _add_next_parsers(sub: argparse._SubParsersAction) -> None:
+    for verb, func, slug_help in (
+        ("next-change", next_change, "short hyphenated slug for the plan"),
+        ("next-debugging", next_debugging, "short hyphenated slug for the investigation"),
+        ("next-note", next_note, "short hyphenated slug for the question"),
+        ("next-report", next_report, "short hyphenated slug for the report topic"),
+    ):
+        parser = sub.add_parser(verb, help=f"create a {verb.split('-', 1)[1]} session file")
+        parser.add_argument("slug", help=slug_help)
+        if verb in ("next-change", "next-debugging"):
+            _add_label_arg(parser)
+        parser.add_argument("--json", action="store_true", help="emit JSON")
+        _add_workspace_arg(parser)
+        parser.set_defaults(func=func)
+
+    handoff = sub.add_parser("next-handoff", help="create a handoff for a slice")
+    handoff.add_argument("id", help="paired slice id (1-4 digits; 0000 for an untied handoff)")
+    handoff.add_argument(
+        "topic", nargs="?", help="optional descriptive slug (free; not load-bearing)"
+    )
+    _add_label_arg(handoff)
+    handoff.add_argument("--json", action="store_true", help="emit JSON")
+    _add_workspace_arg(handoff)
+    handoff.set_defaults(func=next_handoff)
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -2,14 +2,19 @@
 status: planned
 created: "YYYY-MM-DDTHH:MM:SSZ"
 updated: "YYYY-MM-DDTHH:MM:SSZ"
+label: main
 editable_repos: []
-branch_prefix: main
-# Optional, for non-default-branch work:
-# implementation_branch: <branch-name>
-# implementation_base: <short-sha>
-# implementation_outdir: <path>
 # related: [<path>, ...]
 ---
+
+<!--
+  CLI-consumed contract: `zentaizo next-change` / `next-debugging` scaffold this
+  file by string-replacing the `status`, `created`, `updated`, and `label`
+  frontmatter lines above. Keep those keys present, at the start of their line,
+  and the frontmatter as the very first thing in the file (a reader scans the
+  leading `---` … `---` block). The effort's per-repo branch and base sha live
+  in the registry (`sessions/efforts.json`), not here.
+-->
 
 # <Concise plan title>
 

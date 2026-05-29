@@ -1008,7 +1008,7 @@ def _init_repo_with_feature_branch(repo_dir: Path) -> str:
     return base
 
 
-class EffortTests(unittest.TestCase):
+class WorkspaceCliCase(unittest.TestCase):
     def _make_workspace(self, tmp: str) -> Path:
         workspace = Path(tmp) / "ws"
         with contextlib.redirect_stdout(io.StringIO()):
@@ -1024,6 +1024,8 @@ class EffortTests(unittest.TestCase):
     def _registry(self, workspace: Path) -> dict:
         return json.loads((workspace / "sessions" / "efforts.json").read_text())
 
+
+class EffortTests(WorkspaceCliCase):
     def test_create_seeds_main_effort(self):
         with tempfile.TemporaryDirectory() as tmp:
             workspace = self._make_workspace(tmp)
@@ -1135,6 +1137,177 @@ class EffortTests(unittest.TestCase):
             self.assertEqual(self._run(["effort", "close", "katana", "-C", str(workspace)])[0], 0)
             effort = next(e for e in self._registry(workspace)["efforts"] if e["label"] == "katana")
             self.assertEqual(effort["status"], "closed")
+
+
+class SessionPathTests(WorkspaceCliCase):
+    def _new_effort(self, workspace: Path, label: str = "katana") -> None:
+        self.assertEqual(self._run(["effort", "new", label, "-C", str(workspace)])[0], 0)
+
+    def _out(self, argv: list[str]) -> str:
+        code, out, _ = self._run(argv)
+        self.assertEqual(code, 0, argv)
+        return out.strip()
+
+    def test_shared_counter_and_round_trip(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._new_effort(workspace, "dojo")
+            ws = str(workspace)
+            self.assertEqual(self._out(["path", "slice", "--next", "-C", ws]), "dojo-0001")
+            self._out(["next-change", "first", "-C", ws])
+            self.assertEqual(self._out(["path", "slice", "--next", "-C", ws]), "dojo-0002")
+            # The debugging counter is shared with changes: next is 0002, not 0001.
+            created = self._out(["next-debugging", "trace", "-C", ws])
+            self.assertEqual(created, "sessions/debugging/dojo-0002-trace.md")
+            # path slice 2 resolves the debugging file just created (bare == padded).
+            self.assertEqual(
+                self._out(["path", "slice", "2", "-C", ws]),
+                "sessions/debugging/dojo-0002-trace.md",
+            )
+            self.assertEqual(
+                self._out(["path", "slice", "0002", "-C", ws]),
+                "sessions/debugging/dojo-0002-trace.md",
+            )
+
+    def test_path_slice_next_writes_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._new_effort(workspace)
+            changes = workspace / "sessions" / "changes"
+            before = set(changes.iterdir())
+            self._out(["path", "slice", "--next", "-C", str(workspace)])
+            self.assertEqual(set(changes.iterdir()), before)
+
+    def test_path_slice_not_found_and_bad_id(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._new_effort(workspace)
+            ws = str(workspace)
+            self.assertEqual(self._run(["path", "slice", "7", "-C", ws])[0], 2)
+            self.assertEqual(self._run(["path", "slice", "12345", "-C", ws])[0], 1)
+            self.assertEqual(self._run(["path", "slice", "abc", "-C", ws])[0], 1)
+
+    def test_path_slice_ambiguous_across_dirs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._new_effort(workspace)
+            # Corrupt workspace: same id in both changes/ and debugging/.
+            (workspace / "sessions" / "changes" / "katana-0005-a.md").write_text("---\n---\n")
+            (workspace / "sessions" / "debugging" / "katana-0005-b.md").write_text("---\n---\n")
+            code, _, err = self._run(["path", "slice", "5", "-C", str(workspace)])
+            self.assertEqual(code, 2)
+            self.assertIn("Ambiguous", err)
+
+    def test_path_active_skips_closed_status(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._new_effort(workspace)
+            ws = str(workspace)
+            self._out(["next-change", "one", "-C", ws])
+            self._out(["next-change", "two", "-C", ws])
+            self.assertEqual(
+                self._out(["path", "active", "-C", ws]),
+                "sessions/changes/katana-0002-two.md",
+            )
+            # Closing the top plan falls back to the next-highest open one.
+            top = workspace / "sessions" / "changes" / "katana-0002-two.md"
+            top.write_text(top.read_text().replace("status: planned", "status: done", 1))
+            self.assertEqual(
+                self._out(["path", "active", "-C", ws]),
+                "sessions/changes/katana-0001-one.md",
+            )
+
+    def test_path_active_exits_2_when_all_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._new_effort(workspace)
+            ws = str(workspace)
+            self._out(["next-change", "one", "-C", ws])
+            p = workspace / "sessions" / "changes" / "katana-0001-one.md"
+            p.write_text(p.read_text().replace("status: planned", "status: abandoned", 1))
+            self.assertEqual(self._run(["path", "active", "-C", ws])[0], 2)
+
+    def test_handoff_letters_and_orphan_refusal(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._new_effort(workspace)
+            ws = str(workspace)
+            self._out(["next-change", "feature", "-C", ws])  # katana-0001
+            self.assertEqual(
+                self._out(["next-handoff", "1", "codex", "-C", ws]),
+                "sessions/handoffs/katana-0001a-codex.md",
+            )
+            self.assertEqual(
+                self._out(["next-handoff", "1", "resume", "-C", ws]),
+                "sessions/handoffs/katana-0001b-resume.md",
+            )
+            # id without a paired plan is refused; id 0000 is always allowed.
+            self.assertEqual(self._run(["next-handoff", "8", "-C", ws])[0], 2)
+            self.assertEqual(
+                self._out(["next-handoff", "0000", "kickoff", "-C", ws]),
+                "sessions/handoffs/katana-0000a-kickoff.md",
+            )
+            self.assertEqual(
+                self._out(["path", "handoff", "1", "-C", ws]),
+                "sessions/handoffs/katana-0001a-codex.md\nsessions/handoffs/katana-0001b-resume.md",
+            )
+
+    def test_note_and_report_naming(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            note = self._out(["next-note", "Why The Cache?", "-C", str(workspace)])
+            self.assertRegex(note, r"^sessions/questions/\d{4}-\d{2}-\d{2}-why-the-cache\.md$")
+            report = self._out(["next-report", "auth-findings", "-C", str(workspace)])
+            self.assertEqual(report, "sessions/reports/auth-findings.md")
+            body = (workspace / report).read_text()
+            self.assertIn("title: Auth Findings", body)
+            self.assertIn("status: living", body)
+
+    def test_scaffold_frontmatter_and_default_effort(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._new_effort(workspace)  # sets current = katana
+            # No --label: uses the current effort.
+            rel = self._out(["next-change", "token-rotation", "-C", str(workspace)])
+            self.assertTrue(rel.startswith("sessions/changes/katana-0001-"))
+            body = (workspace / rel).read_text()
+            self.assertTrue(body.startswith("---\n"))
+            self.assertIn("label: katana", body)
+            self.assertIn("status: planned", body)
+            self.assertRegex(body, r'created: "\d{4}-\d{2}-\d{2}T')
+
+    def test_json_output_shape(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._new_effort(workspace)
+            payload = json.loads(self._out(["next-change", "x", "--json", "-C", str(workspace)]))
+            self.assertEqual(payload["label"], "katana")
+            self.assertEqual(payload["counter"], 1)
+            self.assertEqual(payload["kind"], "changes")
+            self.assertTrue(payload["wrote"])
+
+    def test_refuse_to_overwrite(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            ws = str(workspace)
+            # Two notes with the same slug on the same day compose the same path;
+            # the second must refuse rather than clobber the first.
+            first = self._out(["next-note", "same-day", "-C", ws])
+            original = (workspace / first).read_text()
+            code, _, err = self._run(["next-note", "same-day", "-C", ws])
+            self.assertEqual(code, 2)
+            self.assertIn("refusing to overwrite", err)
+            self.assertEqual((workspace / first).read_text(), original)
+
+    def test_next_change_refuses_closed_current_effort(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._new_effort(workspace)
+            ws = str(workspace)
+            self._out(["effort", "close", "katana", "-C", ws])
+            code, _, err = self._run(["next-change", "x", "-C", ws])
+            self.assertEqual(code, 2)
+            self.assertIn("closed", err)
 
 
 if __name__ == "__main__":
