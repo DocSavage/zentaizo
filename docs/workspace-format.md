@@ -15,8 +15,12 @@ my-system-atlas/
   notes/
   summaries/
   sessions/
+    efforts.json            # effort registry (seeded with a `main` effort)
   skills/
     curate-atlas.md         # model-agnostic interview procedure
+    plan-and-implement.md   # the plan -> execute -> close-out lifecycle
+    plan-template.md        # scaffold for changes/ and debugging/ files
+    report-template.md      # scaffold for reports/ files
 ```
 
 New workspaces intentionally start without `zentaizo.atlas.json`. Its absence is a setup prompt: start an AI session in the workspace, use the generated `AGENTS.md` instructions, and create the atlas after identifying the relevant source material.
@@ -129,14 +133,26 @@ The assistant should read summaries before scanning source code.
 
 ## Sessions
 
-Sessions are scratchpads for task-specific analysis:
+Sessions are the durable trail of how the workspace has been used:
 
 ```text
 sessions/
-  questions/
-  debugging/
-  changes/
+  efforts.json     # registry: effort labels, the current pointer, per-repo branch/base
+  brainstorming/   # pre-decision input (no schema)
+  changes/         # implementation plans (slices)
+  debugging/       # plan-shaped bug investigations (shares the changes/ counter)
+  questions/       # dated Q&A logs
+  handoffs/        # paste-ready execution prompts for the implementing agent
+  reports/         # living evidence-backed syntheses
 ```
+
+Work is grouped into **efforts** — named bodies of work that may span several
+editable repos. The effort label, not a git branch, prefixes a slice's filename
+(`<label>-NNNN-<slug>.md`); `sessions/efforts.json` maps each effort to the
+repos and branches it touches. The CLI allocates every session file — `zentaizo
+effort new`, then `zentaizo next-change` / `next-debugging` / `next-handoff` /
+`next-note` / `next-report` — so names and counters are never hand-derived. See
+the generated `AGENTS.md` § Filename Convention for the full convention.
 
 These are useful for preserving the reasoning behind an answer or implementation plan.
 

@@ -138,11 +138,15 @@ zen-link-shortener/
   papers/                   # PDFs and specs
   notes/                    # issue reports, traces, design notes
   summaries/                # generated hierarchical summaries
+  skills/                   # model-agnostic procedures (curate-atlas, plan-*, report-template)
   sessions/
-    brainstorming/          # results of AI discussions that can help authoring context atlas
-    changes/                # dated implementation plans, amended with results of changes
+    efforts.json            # effort registry: labels, current pointer, repo/branch map
+    brainstorming/          # pre-decision input: AI discussions, sketches, source inventories
+    changes/                # implementation plans (slices), amended with outcomes
+    debugging/              # bug investigations: traces, hypotheses, root cause
     questions/              # dated Q&A logs with researched answers and citations
-    debugging/              # dated bug investigations: traces, hypotheses, root cause
+    handoffs/               # paste-ready execution prompts for the implementing agent
+    reports/                # living evidence-backed syntheses (must-read deliverables)
 ```
 
 ## Safety

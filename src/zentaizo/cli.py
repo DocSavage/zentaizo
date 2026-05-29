@@ -150,7 +150,9 @@ A workspace organizes knowledge as a level-of-detail spine — start at `summari
   papers/                   # PDFs and specs (design rationale)
   notes/                    # issue reports, traces, local design notes
   summaries/                # generated hierarchical summaries (start here)
+  skills/                   # model-agnostic procedures (curate-atlas, plan-*, report-template)
   sessions/
+    efforts.json            # effort registry: labels, current pointer, repo/branch map
     brainstorming/          # pre-decision input: transcripts, sketches, surveys
     changes/                # implementation plans (slices), amended with outcomes
     debugging/              # bug investigations: traces, hypotheses, root cause
@@ -159,7 +161,7 @@ A workspace organizes knowledge as a level-of-detail spine — start at `summari
     reports/                # living evidence-backed syntheses (must-read deliverables)
 ```
 
-`{ATLAS_NAME}` and `{LOCK_NAME}` do not exist yet in a freshly created workspace — the atlas is the first thing you author (see below), and the lock is written by `zentaizo fetch`.
+`{ATLAS_NAME}` and `{LOCK_NAME}` do not exist yet in a freshly created workspace — the atlas is the first thing you author (see below), and the lock is written by `zentaizo fetch`. `sessions/efforts.json` is seeded with a reserved `main` effort.
 
 ## First Step
 
