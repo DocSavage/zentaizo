@@ -326,7 +326,7 @@ Session files are allocated by the CLI — you never hand-compose a name or hand
 - `zentaizo next-change <slug>` — a plan in `changes/`. `zentaizo next-debugging <slug>` — a debugging note in `debugging/`. `zentaizo next-handoff <id> [topic]` — a handoff (omit the id, or use `0000`, for one not tied to a numbered slice). `zentaizo next-note <slug>` / `zentaizo next-report <slug>` — a Q&A log / a living report. All default to the current effort; pass `--label <effort>` to target another.
 - To read, `zentaizo path slice <id>` (recovers the slug from the id) or `zentaizo path active` (the highest open plan); `zentaizo effort show` for an effort's repos/branches/slices.
 
-The commands derive the per-effort prefix, allocate the shared `changes/`+`debugging/` counter, and scaffold correct frontmatter (`status`/`created`/`updated`/`label`).
+The commands apply the per-effort label (prefixed), allocate the shared `changes/`+`debugging/` counter, and scaffold correct frontmatter (`status`/`created`/`updated`/`label`).
 
 | Subdirectory | Shape (for reading at a glance) |
 |---|---|
