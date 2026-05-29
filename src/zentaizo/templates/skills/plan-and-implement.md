@@ -16,26 +16,25 @@ Do NOT run it for:
 
 - One-line bug fixes that can be made and committed without staging a plan. Describe the change in chat and make it; no plan file needed.
 - Open Q&A — use `sessions/questions/` directly.
-- Bug investigation that hasn't yet produced a fix-in-scope — use `sessions/debugging/` directly. If the debug session resolves into a planned change, then run this procedure.
+- Bug investigation that hasn't yet produced a fix-in-scope — run `zentaizo next-debugging <slug>` directly (a debugging note is plan-shaped: a plan for an investigation). If it resolves into a planned change, then run this procedure.
 
 ## Pre-flight
 
 Before drafting the plan:
 
-1. Read `AGENTS.md` for workspace rules — especially "Editable vs Reference Repos", "Active Implementation Branches", and "Recording Work in `sessions/`".
+1. Read `AGENTS.md` for workspace rules — especially "Editable vs Reference Repos", "Active Efforts", and "Recording Work in `sessions/`".
 2. Read `zentaizo.atlas.json`. List the repos with `role: "edit"`. These are the only repos you may modify in this plan. Reference repos can be read and cited but never written to.
-3. If the user pointed at a doc in `sessions/brainstorming/`, read it in full. Otherwise skim recent files there for relevant context — design conversations often contain the constraints the plan needs.
-4. Read `summaries/overview.md` and any source summary covering the components you expect to touch.
-5. Check `sessions/changes/` for related prior plans. If a related plan is `planned` or `in-progress`, ask whether to extend it rather than start a new one. If a related plan is `done`, read its `## Outcome` for surprises and follow-ups that apply.
+3. Identify the **effort** this work belongs to. Run `zentaizo effort list` to see open efforts and which is current. If the work fits an existing effort, `zentaizo effort switch <label>` to it (or pass `--label` per command); if it is a new body of work — possibly spanning several editable repos — start one with `zentaizo effort new <word> --describe "…" --repo <name>=<branch>`. Workspace-meta work (atlas, summaries, conventions) uses the reserved `main` effort.
+4. If the user pointed at a doc in `sessions/brainstorming/`, read it in full. Otherwise skim recent files there for relevant context — design conversations often contain the constraints the plan needs.
+5. Read `summaries/overview.md` and any source summary covering the components you expect to touch.
+6. Check for related prior plans: `zentaizo effort show` lists the current effort's slices, and `zentaizo path active` resolves its active plan. If a related plan is `planned` or `in-progress`, ask whether to extend it rather than start a new one. If a related plan is `done`, read its `## Outcome` for surprises and follow-ups that apply.
 
 ## Drafting the plan
 
-1. Create `sessions/changes/<branch_prefix>-NNNN-<slug>.md` using `skills/plan-template.md` as the scaffold. The full convention is in `AGENTS.md` § Filename Convention — read it before choosing a filename, especially the derivation rule for the branch prefix, the discovery procedure for the next available counter value, and the plan-creation collision check. Example for the first plan on a branch with prefix `featauth`: `featauth-0001-token-rotation.md`.
-2. Fill in the frontmatter:
-   - `status: planned`
-   - `created` and `updated`: the current UTC time as a quoted full ISO 8601 timestamp, for example `"2026-05-13T22:37:00Z"`
-   - `editable_repos`: only the subset of `role: "edit"` repos this plan will actually modify
-   - `branch_prefix`: the derived prefix that matches the filename. For non-default-branch work, add `implementation_branch:` and `implementation_base:` as shown in the `skills/plan-template.md` scaffold.
+1. Run `zentaizo next-change <slug>` to allocate and scaffold the plan in `sessions/changes/` (defaults to the current effort; pass `--label <effort>` to target another). It composes the name `<label>-NNNN-<slug>.md`, allocates the per-effort counter, and writes the scaffold from `skills/plan-template.md` — you never derive the name, counter, or prefix by hand. Capture the printed path; `zentaizo path slice --next` previews the next id without writing.
+2. The CLI has already filled the deterministic frontmatter (`status: planned`; quoted UTC `created`/`updated`; `label`). You fill:
+   - `editable_repos`: only the subset of the effort's `role: "edit"` repos this plan will actually modify.
+   - Each repo's branch and divergence base are **not** in the plan — they live in the effort registry. Register a branch with `zentaizo effort set-branch <label> --repo <name>=<branch>` when you open one (it computes the base sha).
 3. Fill in the `## Plan` section:
    - **Problem** — one short paragraph. Cite system context from the atlas/summaries rather than restating it.
    - **Scope** — what's in, what's explicitly out.
@@ -54,9 +53,9 @@ If the agent that drafted the plan will also implement it, skip this section and
 
 If a *different* agent will implement (e.g. one model plans, an implementing agent such as Codex, Claude, or Gemini executes):
 
-1. After the user approves the plan (while `status:` is still `planned`), write a paste-ready execution prompt to `sessions/handoffs/<branch_prefix>-NNNN-<agent>.md`, where `<agent>` is the implementing agent (`codex`/`claude`/`gemini`/…). It should name the plan file as the authoritative spec, the editable repos, the environment/preflight steps, and any standing guardrails; keep generated context (commit SHAs, paths, HEAD) current so the implementor doesn't act on stale state.
+1. After the user approves the plan (while `status:` is still `planned`), run `zentaizo next-handoff <id> [agent]` — where `<id>` is the paired plan's slice number and the optional `[agent]` topic is `codex`/`claude`/`gemini`/… — to scaffold `sessions/handoffs/<label>-NNNN<letter>[-<agent>].md`. Fill the prompt body: name the plan file as the authoritative spec, the editable repos, the environment/preflight steps, and any standing guardrails; keep generated context (commit SHAs, paths, HEAD) current so the implementor doesn't act on stale state.
 2. Hand off. The implementing agent reads `AGENTS.md` + the plan + the handoff, flips the plan to `status: in-progress`, and resumes at *Executing the plan* below.
-3. Handoffs are execution glue, not part of the plan's lifecycle: write a fresh `-resume`/`-restart` (or `-diagnosis`) variant per restart, and remember they do **not** consume the `changes/`/`debugging/` sequential counter (see `AGENTS.md` § Recording Work in `sessions/`).
+3. Handoffs are execution glue, not part of the plan's lifecycle: run `zentaizo next-handoff <id> resume` (or `restart`/`diagnosis`) for each restart — it auto-assigns the next per-slice letter, so repeated handoffs never collide — and remember they do **not** consume the `changes/`/`debugging/` counter (see `AGENTS.md` § Recording Work in `sessions/`).
 
 ## Executing the plan
 
@@ -65,7 +64,7 @@ Once the user approves (and, for a split, once the handoff has been written):
 1. Update the plan's frontmatter: `status: in-progress`, refresh `updated` to the current quoted UTC ISO timestamp. Treat the `## Plan` section as frozen from this point, except for marking acceptance criteria checkboxes during closeout. If scope changes mid-flight, capture it as a deviation in the upcoming `## Outcome` rather than rewriting the plan.
 2. Work step by step through the approach. Modify files only in repos with `role: "edit"` in the atlas. Read reference repos freely but do not write to them.
 3. Run the verification steps as you go, not just at the end.
-4. If a substantive cross-repo question comes up that the user answers, save it as `sessions/questions/YYYY-MM-DD-<slug>.md` (questions use the topical date-prefixed convention, not the sequential one). If a bug investigation is needed mid-implementation, save the trace as `sessions/debugging/<branch_prefix>-NNNN-<slug>.md` (debugging uses the same sequential convention as `changes/`). Link these back from the plan if they were load-bearing.
+4. If a substantive cross-repo question comes up that the user answers, run `zentaizo next-note <slug>` and fill in the Q&A (date-prefixed; no effort/counter). If a bug investigation is needed mid-implementation, run `zentaizo next-debugging <slug>` — it scaffolds the **same plan shape** as a change (Context / Hypotheses / Investigation / Acceptance criteria / Outcome) and draws the same per-effort counter as `changes/`, so a debugging note is "a plan for an investigation," not a loose trace. Link these back from the plan if they were load-bearing.
 
 ## Closing out
 

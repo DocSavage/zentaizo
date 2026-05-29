@@ -63,10 +63,12 @@ files Zentaizo owns are:
 - `CLAUDE.md`, `GEMINI.md` — the workspace pointer stub.
 - `.gitignore` — created by `zentaizo create`.
 - `skills/curate-atlas.md`, `skills/plan-and-implement.md`,
-  `skills/plan-template.md` — copied verbatim from
+  `skills/plan-template.md`, `skills/report-template.md` — copied verbatim from
   `src/zentaizo/templates/skills/`.
 - The six `sessions/` subdirectory shells: `brainstorming/`, `changes/`,
   `questions/`, `debugging/`, `handoffs/`, `reports/`.
+- `sessions/efforts.json` — the effort registry (seeded with a `main` effort by
+  a current `zentaizo create`). A pre-effort workspace will not have it.
 
 Read both sides. Capture each delta. Do not edit yet.
 
@@ -85,9 +87,23 @@ For every difference, decide which category it belongs to:
 - **Both diverged.** Template and workspace both moved in the same area but in
   different directions. Action: ask the user. Do not guess.
 - **Convention rename.** A frontmatter field, filename pattern, or directory
-  layout changed shape (e.g. `prototype_base_commit:` → `implementation_base:`,
-  or `YYYY-MM-DD-<slug>.md` → `<branch_prefix>-NNNN-<slug>.md`). Action: this
-  is the most expensive case — it cascades into the next phase.
+  layout changed shape (e.g. `YYYY-MM-DD-<slug>.md` → `<label>-NNNN-<slug>.md`,
+  or the `branch_prefix:` frontmatter field → `label:`). Action: this is the
+  most expensive case — it cascades into the next phase.
+- **Branch-prefix → effort label (the current big rename).** Older workspaces
+  named slices by a git-branch-derived prefix (`<branch_prefix>-NNNN-<slug>.md`,
+  with `branch_prefix:`/`implementation_branch:`/`implementation_base:` in
+  frontmatter). The current convention names slices by a CLI-allocated **effort
+  label** recorded in `sessions/efforts.json`. Migrating means: (a) treat each
+  distinct existing prefix as an effort; (b) build `sessions/efforts.json` with
+  one entry per prefix — carry `implementation_branch:`/`implementation_base:`
+  into that effort's per-repo `repos: {name: {branch, base}}` map; (c) rewrite
+  each plan's frontmatter `branch_prefix:` → `label:` and drop the
+  `implementation_*` fields; (d) rename existing handoffs from the old
+  `<prefix>-NNNN-<role>.md` scheme to the per-slice-letter scheme
+  `<label>-NNNN<letter>[-<role>].md`. Filenames themselves keep `<prefix>-NNNN-`
+  as `<label>-NNNN-`, so `changes/`/`debugging/` files usually need a
+  frontmatter rewrite but **not** a rename.
 
 Output a written classification for the user before going further. The user's
 sign-off here is what authorizes the migration phase.
@@ -112,12 +128,14 @@ For every **convention rename** identified above, walk the existing
   are higher-risk than session-file changes because they cascade through
   `zentaizo.lock.json` and `zentaizo fetch`.
 
-Bundle the full migration list into a `sessions/changes/` plan using the
-current workspace's filename convention (or, if that convention is itself being
-upgraded, use the *new* convention so the plan file itself documents the new
-shape). Title it something like `<branch_prefix>-NNNN-upgrade-zentaizo-<date>.md`.
-The plan's `## Plan` section lays out every file affected and the verification
-the user will use to confirm correctness.
+Bundle the full migration list into a `sessions/changes/` plan. If the effort
+registry already exists, allocate the plan with `zentaizo next-change
+upgrade-zentaizo --label main` (workspace-meta work). If you are migrating *into*
+the effort convention, the registry won't exist yet — create it first
+(`zentaizo effort new` on the `main` effort, or write the seed `efforts.json`
+by hand) so the plan file itself is named under the new shape. The plan's
+`## Plan` section lays out every file affected and the verification the user
+will use to confirm correctness.
 
 ### 4. Execute on approval
 
