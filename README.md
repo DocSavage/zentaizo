@@ -21,11 +21,16 @@ Aside from external information, zentaizo provides a shared skill for where to s
 
 ## Core Ideas
 
-- Big picture: facilitate human-guided documentation of the whole landscape of a system.
+- Big picture first: facilitate human-guided documentation of the whole landscape of a system, so an agent understands it before diving into source.
 - Level of detail: keep summaries at different scales, from system overview to source files, drilling into specifics only when necessary.
 - Heterogeneous sources: include repos, docs, papers, notes, issue reports, and generated analysis.
-- Pinning associated repos: the LLM sandbox is not just one repo but associated repos, similar to a monorepo's utility for coherent, cross-system development.
-- Edit vs reference: each repo declares whether it is editable in this workspace (`role: "edit"`) or read-only context (`role: "reference"`). `zentaizo fetch` honors the split — edit repos keep their working tree across fetches, reference repos re-resolve their pins. The split also drives sandbox isolation: editable repos can be mounted read-write into an AI-friendly container, reference repos read-only.
+- Multi-repo sandbox: the agent's working set is not one repo but associated repos, similar to a monorepo's utility for coherent, cross-system development.
+  - Edit vs reference: each repo declares whether it is editable in this workspace (`role: "edit"`) or read-only context (`role: "reference"`). `zentaizo fetch` honors the split — edit repos keep their working tree across fetches, reference repos re-resolve their pins. The split also drives sandbox isolation: editable repos can be mounted read-write into an AI-friendly container, reference repos read-only.
+- Reproducibility and determinism as a first-class value: AI-assisted work should be auditable and repeatable, not a one-off that the next session — or a different model — can't reconstruct. Implemented two ways:
+  - Pinned sources: repos and document snapshots resolve to exact commits and content hashes (recorded in `zentaizo.lock.json`), so the context behind an answer or change can be reproduced later.
+  - Deterministic tooling over model instructions: mechanical, single-correct-answer work (session-file allocation, counter and path resolution, frontmatter) lives in the CLI, not in prose the model re-derives each session. Minimizing model-side instructions removes a class of behavior that drifts and rots with context.
+- Model-agnostic: the workspace is the source of truth, not any one assistant. `AGENTS.md` holds the model-neutral instructions, `CLAUDE.md`/`GEMINI.md` stay thin pointers to it, and the shared skill installs across Claude, Codex, and Gemini.
+- Human-curated context: the atlas (`zentaizo.atlas.json`) is human-authored intent — the curated engine of the workspace — while lock files record machine-resolved state. Zentaizo builds scaffolding for human + AI collaboration, not an autonomous agent.
 
 ## A Small Example
 
