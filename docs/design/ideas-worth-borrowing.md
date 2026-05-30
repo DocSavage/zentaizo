@@ -112,6 +112,34 @@ ideas worth taking are the ones that survive that translation.
 
 ---
 
+## Seed: Agent-harness sandboxes
+
+From comparing how the coding harnesses confine themselves — Claude Code's
+`permissions` config + devcontainer, Codex's OS sandbox (Landlock/seccomp on
+Linux, Seatbelt on macOS) with `read-only`/`workspace-write` modes, and Gemini
+CLI's Docker/Podman `--sandbox`.
+
+### 6. Atlas-driven least-privilege execution
+
+- **Source.** The per-harness sandbox/permission models above.
+- **The idea.** Confine an agent to least-privilege access — write only where it
+  should, read the rest, escape nothing — enforced either by harness config or by
+  an OS-level container.
+- **Maps onto.** The `role: "edit"` / `role: "reference"` split, which *already*
+  encodes the policy (writable = `sessions/` + editable repos; read-only =
+  reference repos; deny outside the workspace). Zentaizo can render that one
+  policy into each harness's config, or into container mount permissions.
+- **Why it might help / cost.** Recovers the "edit/reference drives sandbox
+  isolation" idea, and lets the maintainer run agents at the workspace level with
+  the reference repos genuinely read-only. Cost: harness-config enforcement is
+  best-effort (a shell redirect escapes file-tool denies); only a container is
+  airtight, and containers add a runtime dependency + per-harness ergonomics.
+  Resolved by keeping `zentaizo sandbox` (config) in the thin core and
+  `zentaizo-containers` (OS-level) as an opt-in allied repo.
+- **Status.** promoted to `sandboxing.md`.
+
+---
+
 ## Adding to this doc
 
 When a new tool comparison surfaces ideas, add a `## Seed: <tool>` section with
