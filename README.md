@@ -21,19 +21,26 @@ Aside from external information, zentaizo provides a shared skill for where to s
 
 ## Core Ideas
 
-- **Big picture first**: facilitate human-guided documentation of the whole landscape of a system, so an agent understands it before diving into source.
-  - The atlas (`zentaizo.atlas.json`) is human-authored intent — the curated knowledge context of the workspace.
-  - Hierarchical knowledge base keeps context acrosss different scales, from system overview to APIs to source files, drilling into lower levels and finally source code only when necessary.
-  - Supports heterogeneous sources like repos, docs, papers, notes, issue reports, and generated analysis.
-  - Multi-repo sandbox is similar to a monorepo's utility for coherent, cross-system development though each repo can be marked as static (`role: "reference"`) or writable (`role: "edit"`) .
-- **Persistant substrate for human+agents collaboration**: git-controlled files provide versioned records.
-  - Lock files record machine-resolved state.
-  - Scaffolding facilitates human + AI collaboration while recording aspects of the process.
-- **Reproducibility and determinism as a first-class**: AI-assisted work should be auditable and repeatable, not a one-off that the next session — or a different model — can't reconstruct. Implemented two ways:
-  - Pinned repos and document snapshots resolve to exact commits and content hashes (recorded in `zentaizo.lock.json`), so the context behind an answer or change can be reproduced later.
-  - Deterministic tooling (session-file allocation, counter and path resolution, frontmatter) lives in the CLI, not in prose each model re-interprets every session, reducing variability.
-- **Model-agnostic**: the workspace is the source of truth, not any one assistant.
-  - `AGENTS.md` and skills hold the model-neutral instructions, `CLAUDE.md`/`GEMINI.md` stay thin pointers to it, and the shared skill installs across Claude, Codex, and Gemini.
+The goals the workspace format serves. The **Mechanisms** below each note which idea(s) they advance.
+
+1. **Big picture first** — an agent answers better and changes more safely when it understands the whole landscape of a system before diving into any one source.
+2. **Persistent, auditable substrate** — work and its rationale live in versioned, git-controlled files, so a later session, a different model, or the human can look back at what was decided and done, and resume from it.
+3. **Reproducibility and determinism** — the context behind an answer should be repeatable, and any task with a single correct answer belongs in deterministic tooling rather than model prose. (An aspiration, not a guarantee: the models themselves evolve, so an identical prompt won't reproduce across versions — we pin the inputs and determinize the mechanics we *can* control.)
+4. **Context is precious** — the agent's attention is the scarce resource; spend it on the problem, not on boilerplate, lookup, or re-deriving rules a tool could enforce.
+5. **Model-agnostic** — the workspace is the source of truth, not any one assistant.
+
+## Mechanisms
+
+How the workspace realizes those ideas; each tag points back to the Core Idea(s) it serves.
+
+- **Curated atlas** (`zentaizo.atlas.json`) — human-authored intent: the curated knowledge context, distinct from the machine-resolved lock state (`zentaizo.lock.json`). *(1, 2)*
+- **Hierarchical knowledge base** — summaries at different scales, from system overview to APIs to source, drilling down only when needed. *(1, 4)*
+- **Heterogeneous sources** — repos, docs, papers, notes, issue reports, and generated analysis in one place. *(1)*
+- **Multi-repo sandbox** — all associated repos available locally for agentic work, like a monorepo for coherent cross-system development; each repo marked read-only (`role: "reference"`) or editable (`role: "edit"`). It brings the full picture of code to bear (1), provides that code as persistent, version-pinned context (2), and removes failable web searches against drifting versions by making the exact source local (3). *(1, 2, 3)*
+- **Pinned sources** — repos and document snapshots resolve to exact commits and content hashes (`zentaizo.lock.json`). *(2, 3)*
+- **Deterministic tooling over model instructions** — mechanical, single-answer work (session-file allocation, counter and path resolution, frontmatter) lives in the CLI, not in prose each model re-interprets each session. This frees context (4) and reduces run-to-run variability (3). *(3, 4)*
+- **Git-versioned `sessions/` trail** — plans, debugging notes, handoffs, reports, and the effort registry accumulate as the durable, auditable record a later session reads instead of re-deriving. *(2)*
+- **Model-neutral instructions** — `AGENTS.md` carries the model-agnostic guidance, and the `skills/` procedures are plain-markdown and tool-neutral (they name Claude, Codex, Gemini, and Aider as interchangeable). `CLAUDE.md`/`GEMINI.md` stay thin pointers, and the shared skill installs across Claude, Codex, and Gemini. *(5)*
 
 ## A Small Example
 
