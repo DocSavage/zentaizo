@@ -23,9 +23,9 @@ Aside from external information, zentaizo provides a shared skill for where to s
 
 The goals the workspace format serves. The **Mechanisms** below each note which idea(s) they advance.
 
-1. **Big picture first** — an agent answers better and changes more safely when it understands the whole landscape of a system before diving into any one source.
-2. **Persistent, auditable substrate** — work and its rationale live in versioned, git-controlled files, so a later session, a different model, or the human can look back at what was decided and done, and resume from it.
-3. **Reproducibility and determinism** — the context behind an answer should be repeatable, and any task with a single correct answer belongs in deterministic tooling rather than model prose. (An aspiration, not a guarantee: the models themselves evolve, so an identical prompt won't reproduce across versions — we pin the inputs and determinize the mechanics we *can* control.)
+1. **Big picture first** — an agent answers better and changes more safely when it understands the whole landscape of a system before making plans and diving into any source code.
+2. **Persistent, auditable substrate** — work and its rationale live in versioned, git-controlled files, so a later session, a different model, or the human can look at what was decided and done before contributing.
+3. **Reproducibility and determinism** — the context behind an answer should be repeatable, and any task with a single correct answer belongs in deterministic tooling rather than model instructions.
 4. **Context is precious** — the agent's attention is the scarce resource; spend it on the problem, not on boilerplate, lookup, or re-deriving rules a tool could enforce.
 5. **Model-agnostic** — the workspace is the source of truth, not any one assistant.
 
