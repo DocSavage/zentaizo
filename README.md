@@ -21,16 +21,19 @@ Aside from external information, zentaizo provides a shared skill for where to s
 
 ## Core Ideas
 
-- Big picture first: facilitate human-guided documentation of the whole landscape of a system, so an agent understands it before diving into source.
-- Level of detail: keep summaries at different scales, from system overview to source files, drilling into specifics only when necessary.
-- Heterogeneous sources: include repos, docs, papers, notes, issue reports, and generated analysis.
-- Multi-repo sandbox: the agent's working set is not one repo but associated repos, similar to a monorepo's utility for coherent, cross-system development.
-  - Edit vs reference: each repo declares whether it is editable in this workspace (`role: "edit"`) or read-only context (`role: "reference"`). `zentaizo fetch` honors the split — edit repos keep their working tree across fetches, reference repos re-resolve their pins. The split also drives sandbox isolation: editable repos can be mounted read-write into an AI-friendly container, reference repos read-only.
-- Reproducibility and determinism as a first-class value: AI-assisted work should be auditable and repeatable, not a one-off that the next session — or a different model — can't reconstruct. Implemented two ways:
-  - Pinned sources: repos and document snapshots resolve to exact commits and content hashes (recorded in `zentaizo.lock.json`), so the context behind an answer or change can be reproduced later.
-  - Deterministic tooling over model instructions: mechanical, single-correct-answer work (session-file allocation, counter and path resolution, frontmatter) lives in the CLI, not in prose the model re-derives each session. Minimizing model-side instructions removes a class of behavior that drifts and rots with context.
-- Model-agnostic: the workspace is the source of truth, not any one assistant. `AGENTS.md` holds the model-neutral instructions, `CLAUDE.md`/`GEMINI.md` stay thin pointers to it, and the shared skill installs across Claude, Codex, and Gemini.
-- Human-curated context: the atlas (`zentaizo.atlas.json`) is human-authored intent — the curated engine of the workspace — while lock files record machine-resolved state. Zentaizo builds scaffolding for human + AI collaboration, not an autonomous agent.
+- **Big picture first**: facilitate human-guided documentation of the whole landscape of a system, so an agent understands it before diving into source.
+  - The atlas (`zentaizo.atlas.json`) is human-authored intent — the curated knowledge context of the workspace.
+  - Hierarchical knowledge base keeps context acrosss different scales, from system overview to APIs to source files, drilling into lower levels and finally source code only when necessary.
+  - Supports heterogeneous sources like repos, docs, papers, notes, issue reports, and generated analysis.
+  - Multi-repo sandbox is similar to a monorepo's utility for coherent, cross-system development though each repo can be marked as static (`role: "reference"`) or writable (`role: "edit"`) .
+- **Persistant substrate for human+agents collaboration**: git-controlled files provide versioned records.
+  - Lock files record machine-resolved state.
+  - Scaffolding facilitates human + AI collaboration while recording aspects of the process.
+- **Reproducibility and determinism as a first-class**: AI-assisted work should be auditable and repeatable, not a one-off that the next session — or a different model — can't reconstruct. Implemented two ways:
+  - Pinned repos and document snapshots resolve to exact commits and content hashes (recorded in `zentaizo.lock.json`), so the context behind an answer or change can be reproduced later.
+  - Deterministic tooling (session-file allocation, counter and path resolution, frontmatter) lives in the CLI, not in prose each model re-interprets every session, reducing variability.
+- **Model-agnostic**: the workspace is the source of truth, not any one assistant.
+  - `AGENTS.md` and skills hold the model-neutral instructions, `CLAUDE.md`/`GEMINI.md` stay thin pointers to it, and the shared skill installs across Claude, Codex, and Gemini.
 
 ## A Small Example
 
