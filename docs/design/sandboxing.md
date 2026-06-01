@@ -1,6 +1,8 @@
 # Sandboxing agentic execution in a Zentaizo workspace
 
-_Design doc. Drafted 2026-05-30; revised 2026-05-31 after a Codex review (path-hardening, mode-based writable set, threat model split by enforcement class, concrete renderer contracts, a neutral `policy` output). Status: in implementation — build-order steps 1–4 (`compute_policy`, `--target policy`, `--target claude`, README promotion) are landing; `--target codex`/`gemini` and `zentaizo-containers` follow._
+_Design doc. Drafted 2026-05-30; revised 2026-05-31 after a Codex review (path-hardening, mode-based writable set, threat model split by enforcement class, concrete renderer contracts, a neutral `policy` output)._
+
+_**Status (2026-05-31): build-order steps 1–4 are implemented and committed** — `compute_policy` (hardened), `zentaizo sandbox --target policy`, `--target claude` (merge + `--check`), and the README Core-Idea promotion, with 21 unit tests. **Steps 5–6 remain**: `--target codex` / `--target gemini` (need each harness's exact sandbox-config schema pinned first) and the separate `zentaizo-containers` repo. The per-step status is marked inline in [Build order](#build-order)._
 
 ## Problem
 
@@ -116,11 +118,11 @@ Containers are the strong option but change the *ergonomics*: the harness runs i
 
 ## Relation to Core Ideas
 
-This realizes the **least-privilege, sandboxable execution** idea — the "edit/reference drives sandbox isolation" point from the original README Core Ideas that was lost in a compression pass. It is intended to become a sixth Core Idea once a mechanism exists to support it:
+This realizes the **least-privilege, sandboxable execution** idea — the "edit/reference drives sandbox isolation" point from the original README Core Ideas that was lost in a compression pass. It is now the sixth README Core Idea (promoted once `zentaizo sandbox` existed to support it):
 
 > **Least-privilege, sandboxable execution** — an agent gets the narrowest access that lets it work: write its own `sessions/` and the editable repos, read everything else, touch nothing outside the workspace.
 
-with **edit/reference**, **`zentaizo sandbox`**, and **`zentaizo-containers`** tagged as its mechanisms. Per the build order, the Core Idea is promoted to the README in step 4 — right after `zentaizo sandbox` lands — so the principle ships together with at least one concrete mechanism that serves it rather than as an aspiration.
+with **edit/reference**, **`zentaizo sandbox`**, and **`zentaizo-containers`** tagged as its mechanisms (the first two shipped; the container is pending). The principle ships together with a concrete mechanism that serves it rather than as an aspiration.
 
 ## Non-goals
 
@@ -131,14 +133,14 @@ with **edit/reference**, **`zentaizo sandbox`**, and **`zentaizo-containers`** t
 
 ## Build order
 
-Revised after review so the hardened policy and a neutral golden output land before any harness renderer:
+Revised after review so the hardened policy and a neutral golden output land before any harness renderer. Steps 1–4 are done (committed 2026-05-31); 5–6 remain.
 
-1. **Hardened `compute_policy(workspace, mode)`** over the atlas — path-safety *first* (reject absolute / `..` / separator / dotfile / symlink-escape repo names and duplicate names), then the writable / read-only / deny-outside sets per mode. Unit-test it heavily *before* any renderer: explicit and omitted roles (omitted ⇒ reference), invalid role, missing atlas, not-yet-fetched repos, a symlinked repo dir that escapes the workspace, path-traversal names, duplicate names, both modes, and that the output is sorted and stable.
-2. **`zentaizo sandbox --target policy`** — the neutral JSON backend. Lands with (1) as the golden output the tests assert against and the contract `zentaizo-containers` will read.
-3. **`zentaizo sandbox --target claude`** — render/merge `.claude/settings.json` deny rules (merge with an existing file, recognize and replace only zentaizo-managed entries, `--check` for drift). The highest-value target — it solves the auto-mode confinement need today — and the simplest to validate against (2).
-4. **Promote *Least-privilege, sandboxable execution* to a README Core Idea**, now that a mechanism (`zentaizo sandbox`) supports it.
-5. **`zentaizo sandbox --target codex` / `--target gemini`** — render the OS-sandbox writable roots / Gemini equivalent from the same policy.
-6. **`zentaizo-containers`** (separate repo): per-harness images + a launcher that mounts the workspace per `compute_policy()`.
+1. **✅ Done — Hardened `compute_policy(workspace, mode)`** over the atlas — path-safety *first* (reject absolute / `..` / separator / dotfile / symlink-escape repo names and duplicate names), then the writable / read-only / deny-outside sets per mode. Unit-tested heavily *before* any renderer: explicit and omitted roles (omitted ⇒ reference), invalid role, missing atlas, not-yet-fetched repos, a symlinked repo dir that escapes the workspace, path-traversal names, duplicate names, both modes, and that the output is sorted and stable. *(in `src/zentaizo/cli.py`; tests in `tests/test_cli.py::SandboxPolicyTests`.)*
+2. **✅ Done — `zentaizo sandbox --target policy`** — the neutral JSON backend, the golden output the tests assert against and the contract `zentaizo-containers` will read. *(the default target; no side effects.)*
+3. **✅ Done — `zentaizo sandbox --target claude`** — render/merge `.claude/settings.json` deny rules (merge with an existing file, recognize and replace only zentaizo-managed entries, `--check` for drift). The highest-value target — it solves the auto-mode confinement need today — and the simplest to validate against (2). *(tests in `SandboxRenderTests`.)*
+4. **✅ Done — Promoted *Least-privilege, sandboxable execution* to a README Core Idea**, now that a mechanism (`zentaizo sandbox`) supports it.
+5. **⬜ Pending — `zentaizo sandbox --target codex` / `--target gemini`** — render the OS-sandbox writable roots / Gemini equivalent from the same policy. Blocked on pinning each harness's exact sandbox-config schema (Codex `config.toml` `workspace-write` writable roots; the Gemini equivalent) before rendering.
+6. **⬜ Pending — `zentaizo-containers`** (separate repo): per-harness images + a launcher that mounts the workspace per `compute_policy()`.
 
 ## Related
 
