@@ -8,7 +8,7 @@ import urllib.error
 from pathlib import Path
 from unittest import mock
 
-from zentaizo.cli import _HttpResult, default_atlas, main
+from zentaizo.cli import CliError, _HttpResult, compute_policy, default_atlas, main
 
 
 def write_example_atlas(workspace: Path, name: str = "example-atlas") -> None:
@@ -1308,6 +1308,276 @@ class SessionPathTests(WorkspaceCliCase):
             code, _, err = self._run(["next-change", "x", "-C", ws])
             self.assertEqual(code, 2)
             self.assertIn("closed", err)
+
+
+class SandboxPolicyTests(WorkspaceCliCase):
+    """Direct unit tests of compute_policy() — the hardened core, tested before
+    any renderer (sandboxing.md build-order step 1)."""
+
+    def _atlas(self, workspace: Path, repos: list) -> None:
+        entries = [
+            {"name": n, "url": "u", "ref": "main", "role": role}
+            if role is not None
+            else {"name": n, "url": "u", "ref": "main"}
+            for (n, role) in repos
+        ]
+        (workspace / "zentaizo.atlas.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "name": "demo",
+                    "sources": {"repos": entries, "docs": [], "papers": [], "notes": []},
+                }
+            )
+        )
+
+    def test_implement_mode_splits_edit_reference_and_meta(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._atlas(workspace, [("api", "edit"), ("libref", "reference")])
+            policy = compute_policy(workspace)
+            self.assertEqual(policy["mode"], "implement")
+            self.assertTrue(policy["deny_outside"])
+            self.assertIn("repos/api", policy["writable"])
+            self.assertEqual(set(["sessions", "summaries", "tmp"]) - set(policy["writable"]), set())
+            self.assertIn("repos/libref", policy["readonly"])
+            self.assertNotIn("repos/api", policy["readonly"])
+            # Owned meta is read-only in implement mode.
+            for meta in ("zentaizo.atlas.json", "zentaizo.lock.json", "skills", "AGENTS.md"):
+                self.assertIn(meta, policy["readonly"])
+
+    def test_curate_mode_opens_owned_meta(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._atlas(workspace, [("api", "edit"), ("libref", "reference")])
+            policy = compute_policy(workspace, mode="curate")
+            self.assertEqual(policy["mode"], "curate")
+            for meta in ("zentaizo.atlas.json", "skills", "AGENTS.md"):
+                self.assertIn(meta, policy["writable"])
+                self.assertNotIn(meta, policy["readonly"])
+            # Reference repos are still read-only when curating.
+            self.assertEqual(policy["readonly"], ["repos/libref"])
+
+    def test_omitted_role_defaults_to_reference(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._atlas(workspace, [("norole", None)])
+            policy = compute_policy(workspace)
+            self.assertIn("repos/norole", policy["readonly"])
+            self.assertNotIn("repos/norole", policy["writable"])
+
+    def test_invalid_role_treated_as_reference(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._atlas(workspace, [("weird", "wat")])
+            policy = compute_policy(workspace)
+            self.assertIn("repos/weird", policy["readonly"])
+
+    def test_bad_mode_raises_usage_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._atlas(workspace, [("api", "edit")])
+            with self.assertRaises(CliError) as ctx:
+                compute_policy(workspace, mode="nope")
+            self.assertEqual(ctx.exception.code, 1)
+
+    def test_missing_atlas_raises_systemexit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)  # created without an atlas
+            with self.assertRaises(SystemExit):
+                compute_policy(workspace)
+
+    def test_unfetched_repos_still_in_policy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._atlas(workspace, [("api", "edit"), ("libref", "reference")])
+            # Nothing fetched: repos/ has no api/ or libref/ subdirs.
+            self.assertFalse((workspace / "repos" / "api").exists())
+            policy = compute_policy(workspace)
+            self.assertIn("repos/api", policy["writable"])
+            self.assertIn("repos/libref", policy["readonly"])
+
+    def test_path_traversal_names_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            for bad in ("../escape", "a/b", ".hidden", "/abs", "..", "a\\b"):
+                self._atlas(workspace, [(bad, "reference")])
+                with self.assertRaises(CliError, msg=bad) as ctx:
+                    compute_policy(workspace)
+                self.assertEqual(ctx.exception.code, 1, bad)
+
+    def test_symlinked_repo_escape_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            outside = Path(tmp) / "outside-target"
+            outside.mkdir()
+            (workspace / "repos" / "evil").symlink_to(outside, target_is_directory=True)
+            self._atlas(workspace, [("evil", "reference")])
+            with self.assertRaises(CliError) as ctx:
+                compute_policy(workspace)
+            self.assertEqual(ctx.exception.code, 1)
+            self.assertIn("outside the workspace", str(ctx.exception))
+
+    def test_in_workspace_symlink_allowed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            (workspace / "repos" / "real").mkdir()
+            (workspace / "repos" / "alias").symlink_to(
+                workspace / "repos" / "real", target_is_directory=True
+            )
+            self._atlas(workspace, [("alias", "reference")])
+            policy = compute_policy(workspace)
+            self.assertIn("repos/alias", policy["readonly"])
+
+    def test_duplicate_repo_name_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._atlas(workspace, [("dup", "edit"), ("dup", "reference")])
+            with self.assertRaises(CliError) as ctx:
+                compute_policy(workspace)
+            self.assertEqual(ctx.exception.code, 1)
+            self.assertIn("duplicate", str(ctx.exception))
+
+    def test_output_is_sorted_and_stable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._atlas(workspace, [("zeta", "reference"), ("alpha", "edit"), ("mid", "reference")])
+            policy = compute_policy(workspace)
+            self.assertEqual(policy["writable"], sorted(policy["writable"]))
+            self.assertEqual(policy["readonly"], sorted(policy["readonly"]))
+            self.assertEqual(policy, compute_policy(workspace))  # deterministic
+
+    def test_workspace_path_is_absolute(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._atlas(workspace, [("api", "edit")])
+            policy = compute_policy(workspace)
+            self.assertTrue(os.path.isabs(policy["workspace"]))
+
+
+class SandboxRenderTests(WorkspaceCliCase):
+    """CLI-level tests of `zentaizo sandbox` (policy + claude targets)."""
+
+    def _example(self, workspace: Path) -> None:
+        # default_atlas: shortener-api (edit) + shortener-web/-client (reference).
+        write_example_atlas(workspace)
+
+    def _settings(self, workspace: Path) -> dict:
+        return json.loads((workspace / ".claude" / "settings.json").read_text())
+
+    def _deny(self, workspace: Path) -> list:
+        return self._settings(workspace)["permissions"]["deny"]
+
+    def test_policy_target_prints_json(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._example(workspace)
+            code, out, _ = self._run(["sandbox", "--target", "policy", str(workspace)])
+            self.assertEqual(code, 0)
+            payload = json.loads(out)
+            self.assertEqual(payload["version"], 1)
+            self.assertIn("repos/shortener-api", payload["writable"])
+            self.assertIn("repos/shortener-web", payload["readonly"])
+            # No .claude file is written by the neutral target.
+            self.assertFalse((workspace / ".claude").exists())
+
+    def test_policy_is_the_default_target(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._example(workspace)
+            code, out, _ = self._run(["sandbox", str(workspace)])
+            self.assertEqual(code, 0)
+            self.assertEqual(json.loads(out)["mode"], "implement")
+
+    def test_claude_target_writes_deny_rules(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._example(workspace)
+            code, out, _ = self._run(["sandbox", "--target", "claude", str(workspace)])
+            self.assertEqual(code, 0)
+            self.assertIn("wrote", out)
+            deny = self._deny(workspace)
+            self.assertIn("Edit(repos/shortener-web/**)", deny)
+            self.assertIn("Write(repos/shortener-client/**)", deny)
+            # Editable repo is not denied; self-protection on .claude is.
+            self.assertNotIn("Edit(repos/shortener-api/**)", deny)
+            self.assertIn("Edit(.claude/**)", deny)
+
+    def test_claude_target_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._example(workspace)
+            self._run(["sandbox", "--target", "claude", str(workspace)])
+            first = (workspace / ".claude" / "settings.json").read_text()
+            code, out, _ = self._run(["sandbox", "--target", "claude", str(workspace)])
+            self.assertEqual(code, 0)
+            self.assertIn("unchanged", out)
+            self.assertEqual((workspace / ".claude" / "settings.json").read_text(), first)
+
+    def test_claude_target_merges_existing_config(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._example(workspace)
+            (workspace / ".claude").mkdir()
+            (workspace / ".claude" / "settings.json").write_text(
+                json.dumps(
+                    {
+                        "model": "opus",
+                        "permissions": {
+                            "allow": ["Bash(pytest:*)"],
+                            "ask": ["Bash(git push:*)"],
+                            "deny": ["Read(secrets/**)", "Edit(repos/ghost/**)"],
+                        },
+                    }
+                )
+            )
+            self._run(["sandbox", "--target", "claude", str(workspace)])
+            data = self._settings(workspace)
+            # User-owned keys/rules preserved.
+            self.assertEqual(data["model"], "opus")
+            self.assertEqual(data["permissions"]["allow"], ["Bash(pytest:*)"])
+            self.assertEqual(data["permissions"]["ask"], ["Bash(git push:*)"])
+            self.assertIn("Read(secrets/**)", data["permissions"]["deny"])
+            # A stale managed entry (ghost repo no longer in atlas) is dropped.
+            self.assertNotIn("Edit(repos/ghost/**)", data["permissions"]["deny"])
+            self.assertIn("Edit(repos/shortener-web/**)", data["permissions"]["deny"])
+
+    def test_claude_check_detects_drift(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._example(workspace)
+            # No file yet -> drift.
+            code, out, _ = self._run(["sandbox", "--target", "claude", "--check", str(workspace)])
+            self.assertEqual(code, 1)
+            self.assertIn("drift", out)
+            # After writing, --check is clean.
+            self._run(["sandbox", "--target", "claude", str(workspace)])
+            code, out, _ = self._run(["sandbox", "--target", "claude", "--check", str(workspace)])
+            self.assertEqual(code, 0)
+            self.assertIn("up to date", out)
+
+    def test_claude_curate_mode_does_not_deny_meta(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._example(workspace)
+            self._run(["sandbox", "--target", "claude", "--mode", "curate", str(workspace)])
+            deny = self._deny(workspace)
+            self.assertNotIn("Edit(zentaizo.atlas.json)", deny)
+            self.assertNotIn("Edit(AGENTS.md)", deny)
+            # Reference repos are still denied even when curating.
+            self.assertIn("Edit(repos/shortener-web/**)", deny)
+
+    def test_claude_refuses_non_object_settings(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._example(workspace)
+            (workspace / ".claude").mkdir()
+            (workspace / ".claude" / "settings.json").write_text(
+                json.dumps(["not", "an", "object"])
+            )
+            code, _, err = self._run(["sandbox", "--target", "claude", str(workspace)])
+            self.assertEqual(code, 1)
+            self.assertIn("not a JSON object", err)
 
 
 if __name__ == "__main__":

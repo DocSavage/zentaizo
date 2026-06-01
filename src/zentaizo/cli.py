@@ -2502,6 +2502,222 @@ def next_report(args: argparse.Namespace) -> int:
     )
 
 
+# --------------------------------------------------------------------------
+# Sandbox policy (compute_policy) + harness renderers
+#
+# One pure function turns the atlas `role: edit`/`role: reference` split into a
+# least-privilege access policy; thin renderers project that policy into each
+# harness's native config. See docs/design/sandboxing.md.
+# --------------------------------------------------------------------------
+
+SANDBOX_VERSION = 1
+SANDBOX_MODES = ("implement", "curate")
+
+# Workspace dirs an agent always writes: the durable trail + local scratch.
+SANDBOX_ALWAYS_WRITABLE = ("sessions", "summaries", "tmp")
+
+# The workspace's own owned files/dirs: the source of truth and Zentaizo-managed
+# conventions. An *implementing* agent must not rewrite them (read-only); a
+# *curation* agent (curate-atlas / upgrade-zentaizo) may (writable).
+SANDBOX_OWNED_META = (
+    ATLAS_NAME,
+    LOCK_NAME,
+    "skills",
+    "AGENTS.md",
+    "README.md",
+    "CLAUDE.md",
+    "GEMINI.md",
+)
+
+# Deny entries `zentaizo sandbox --target claude` recognizes as its own, so a
+# re-render replaces them (dropping stale rules for removed/role-flipped repos)
+# while leaving the user's own allow/ask/deny rules untouched. Matches every
+# `repos/*` and owned-meta Edit/Write deny regardless of the current atlas.
+_MANAGED_DENY_RE = re.compile(
+    r"^(?:Edit|Write)\((?:"
+    r"repos/[^/()]+/\*\*"
+    r"|\.claude/\*\*"
+    r"|skills/\*\*"
+    r"|zentaizo\.atlas\.json"
+    r"|zentaizo\.lock\.json"
+    r"|AGENTS\.md|README\.md|CLAUDE\.md|GEMINI\.md"
+    r")\)$"
+)
+
+
+def _safe_repo_relpath(workspace: pathlib.Path, name: object) -> str:
+    """Return the workspace-relative ``repos/<name>`` for a repo, or raise (exit 1).
+
+    Path-hardening (sandboxing.md "step zero"): an atlas-supplied repo ``name``
+    becomes a path the sandbox grants or denies, so reject anything that is not
+    a single safe path segment — empty/non-string, absolute, containing a
+    separator or ``..``, or starting with ``.`` — and reject a name whose
+    on-disk directory (followed through symlinks) escapes the ``repos/`` root.
+    """
+    if not isinstance(name, str) or not name:
+        raise CliError(f"sandbox: repo entry has an empty or non-string name {name!r}", 1)
+    if (
+        name in (".", "..")
+        or name.startswith(".")
+        or "/" in name
+        or "\\" in name
+        or ".." in name
+        or os.path.isabs(name)
+    ):
+        raise CliError(
+            f"sandbox: unsafe repo name {name!r}: must be a single path segment with "
+            "no separators, no '..', no leading '.', and not absolute",
+            1,
+        )
+    repos_root = (workspace / "repos").resolve()
+    resolved = (workspace / "repos" / name).resolve()
+    if not resolved.is_relative_to(repos_root):
+        raise CliError(
+            f"sandbox: repo {name!r} resolves outside the workspace ({resolved}); "
+            "refusing to emit a policy that escapes the workspace root",
+            1,
+        )
+    return f"repos/{name}"
+
+
+def compute_policy(workspace: pathlib.Path, mode: str = "implement") -> dict:
+    """Derive the least-privilege access policy from the atlas (pure over disk).
+
+    Returns ``{version, mode, workspace (absolute str), writable[], readonly[],
+    deny_outside}`` with each path list workspace-relative POSIX and sorted.
+    Raises ``CliError`` (exit 1) on a bad mode, an unsafe/duplicate repo name,
+    and ``SystemExit`` if the workspace has no atlas.
+    """
+    if mode not in SANDBOX_MODES:
+        raise CliError(
+            f"sandbox: unknown mode {mode!r}; expected one of {', '.join(SANDBOX_MODES)}", 1
+        )
+    workspace = workspace.resolve()
+    atlas = find_atlas(workspace)
+    if atlas is None:
+        raise SystemExit(missing_atlas_message(workspace))
+    repos = source_groups(read_json(atlas)).get("repos", [])
+
+    writable: set[str] = set(SANDBOX_ALWAYS_WRITABLE)
+    readonly: set[str] = set()
+    seen: set[str] = set()
+    for repo in repos:
+        name = repo.get("name")
+        relpath = _safe_repo_relpath(workspace, name)
+        if name in seen:
+            raise CliError(
+                f"sandbox: duplicate repo name {name!r} in atlas; one name cannot be "
+                "both writable and read-only",
+                1,
+            )
+        seen.add(name)
+        (writable if repo_role(repo) == "edit" else readonly).add(relpath)
+
+    if mode == "implement":
+        readonly.update(SANDBOX_OWNED_META)
+    else:  # curate
+        writable.update(SANDBOX_OWNED_META)
+
+    return {
+        "version": SANDBOX_VERSION,
+        "mode": mode,
+        "workspace": str(workspace),
+        "writable": sorted(writable),
+        "readonly": sorted(readonly),
+        "deny_outside": True,
+    }
+
+
+def _claude_deny_globs(relpath: str) -> list[str]:
+    """Edit/Write deny globs for a read-only path: exact for files, ``/**`` for dirs."""
+    target = relpath if relpath.endswith((".md", ".json")) else f"{relpath}/**"
+    return [f"Edit({target})", f"Write({target})"]
+
+
+def _managed_deny_entries(policy: dict) -> list[str]:
+    """The sorted, de-duplicated deny entries the claude target owns for ``policy``."""
+    entries: list[str] = []
+    for relpath in policy["readonly"]:
+        entries.extend(_claude_deny_globs(relpath))
+    # Self-protection: the agent must not edit away its own guardrails.
+    entries.extend(["Edit(.claude/**)", "Write(.claude/**)"])
+    return sorted(set(entries))
+
+
+def _render_claude_settings(existing: dict, policy: dict) -> dict:
+    """Merge zentaizo's managed deny entries into an existing settings dict.
+
+    User ``allow``/``ask`` rules and non-managed ``deny`` entries are preserved
+    in order; the previous managed set (matched by ``_MANAGED_DENY_RE``) is
+    dropped and the freshly computed one appended, so the result is stable.
+    """
+    data = json.loads(json.dumps(existing))  # deep copy; never mutate caller's dict
+    perms = data.setdefault("permissions", {})
+    if not isinstance(perms, dict):
+        raise CliError(
+            "sandbox: .claude/settings.json 'permissions' is not an object; refusing to overwrite",
+            1,
+        )
+    deny = perms.get("deny", [])
+    if not isinstance(deny, list):
+        raise CliError(
+            "sandbox: .claude/settings.json permissions.deny is not a list; refusing to overwrite",
+            1,
+        )
+    kept = [d for d in deny if not (isinstance(d, str) and _MANAGED_DENY_RE.match(d))]
+    perms["deny"] = kept + _managed_deny_entries(policy)
+    return data
+
+
+def _sandbox_render_claude(args: argparse.Namespace, workspace: pathlib.Path, policy: dict) -> int:
+    settings_path = workspace / ".claude" / "settings.json"
+    current_text = settings_path.read_text() if settings_path.exists() else None
+    if current_text is not None:
+        existing = json.loads(current_text)
+        if not isinstance(existing, dict):
+            raise CliError(
+                f"sandbox: {_rel(workspace, settings_path)} is not a JSON object; "
+                "refusing to overwrite",
+                1,
+            )
+    else:
+        existing = {}
+
+    new_text = json.dumps(_render_claude_settings(existing, policy), indent=2) + "\n"
+    rel = _rel(workspace, settings_path)
+    n = len(policy["readonly"])
+    changed = new_text != current_text
+
+    if args.check:
+        if changed:
+            print(
+                f"drift: {rel} is out of sync with the atlas ({policy['mode']} mode); "
+                "run `zentaizo sandbox --target claude` to update."
+            )
+            return 1
+        print(f"up to date: {rel} ({policy['mode']} mode)")
+        return 0
+    if not changed:
+        print(f"unchanged: {rel} ({n} read-only path(s), {policy['mode']} mode)")
+        return 0
+
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    settings_path.write_text(new_text)
+    print(f"wrote {rel}: denied {n} read-only path(s) in {policy['mode']} mode")
+    return 0
+
+
+def sandbox_command(args: argparse.Namespace) -> int:
+    workspace = pathlib.Path(args.workspace).resolve()
+    policy = compute_policy(workspace, mode=args.mode)
+    if args.target == "policy":
+        print(json.dumps(policy, indent=2))
+        return 0
+    if args.target == "claude":
+        return _sandbox_render_claude(args, workspace, policy)
+    raise CliError(f"sandbox: target {args.target!r} is not implemented yet", 1)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="zentaizo",
@@ -2624,8 +2840,36 @@ def build_parser() -> argparse.ArgumentParser:
     _add_effort_parser(sub)
     _add_path_parser(sub)
     _add_next_parsers(sub)
+    _add_sandbox_parser(sub)
 
     return parser
+
+
+def _add_sandbox_parser(sub: argparse._SubParsersAction) -> None:
+    sandbox = sub.add_parser(
+        "sandbox",
+        help="render the workspace's least-privilege access policy (atlas-derived)",
+    )
+    sandbox.add_argument(
+        "--target",
+        choices=["policy", "claude"],
+        default="policy",
+        help="policy: print the policy as JSON (default, no side effects); "
+        "claude: write .claude/settings.json deny rules",
+    )
+    sandbox.add_argument(
+        "--mode",
+        choices=list(SANDBOX_MODES),
+        default="implement",
+        help="implement (default): atlas/lock/owned-meta read-only; curate: those become writable",
+    )
+    sandbox.add_argument(
+        "--check",
+        action="store_true",
+        help="(claude) report drift against the atlas without writing; exit nonzero if out of sync",
+    )
+    sandbox.add_argument("workspace", nargs="?", default=".", help="workspace directory")
+    sandbox.set_defaults(func=sandbox_command)
 
 
 def _add_workspace_arg(parser: argparse.ArgumentParser) -> None:
