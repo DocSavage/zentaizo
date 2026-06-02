@@ -2,13 +2,23 @@ import contextlib
 import io
 import json
 import os
+import shutil
+import subprocess
 import tempfile
 import unittest
 import urllib.error
 from pathlib import Path
 from unittest import mock
 
-from zentaizo.cli import CliError, _HttpResult, compute_policy, default_atlas, main
+from zentaizo.cli import (
+    HOOK_MARKER,
+    CliError,
+    _HttpResult,
+    compute_policy,
+    default_atlas,
+    install_commit_attribution_hook,
+    main,
+)
 
 
 def write_example_atlas(workspace: Path, name: str = "example-atlas") -> None:
@@ -1578,6 +1588,248 @@ class SandboxRenderTests(WorkspaceCliCase):
             code, _, err = self._run(["sandbox", "--target", "claude", str(workspace)])
             self.assertEqual(code, 1)
             self.assertIn("not a JSON object", err)
+
+
+_NEED_JQ_GIT = bool(shutil.which("jq") and shutil.which("git"))
+
+
+class CommitAttributionHookTests(unittest.TestCase):
+    """The shared zentaizo-commit-attribution hook and its installer."""
+
+    def _git_repo(self, tmp: str) -> Path:
+        repo = Path(tmp) / "repo"
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        return repo
+
+    def _hook_path(self) -> str:
+        from zentaizo.cli import _commit_hook_source
+
+        return str(_commit_hook_source())
+
+    def _run_hook(self, repo: Path, msg: Path, source: str = "message", env=None):
+        clean = dict(os.environ)
+        for key in (
+            "CLAUDECODE",
+            "CLAUDE_CODE_SESSION_ID",
+            "CLAUDE_EFFORT",
+            "CODEX_THREAD_ID",
+        ):
+            clean.pop(key, None)
+        if env:
+            clean.update(env)
+        return subprocess.run(
+            ["bash", self._hook_path(), str(msg), source], cwd=str(repo), env=clean
+        )
+
+    # --- installer -----------------------------------------------------------
+
+    def test_installer_installs_and_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._git_repo(tmp)
+            hook = repo / ".git" / "hooks" / "prepare-commit-msg"
+            self.assertIsNotNone(install_commit_attribution_hook(repo))
+            self.assertTrue(hook.exists() and os.access(hook, os.X_OK))
+            self.assertIn(HOOK_MARKER, hook.read_text())
+            self.assertIsNone(install_commit_attribution_hook(repo))  # unchanged -> no-op
+
+    def test_installer_upgrades_legacy_marker(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._git_repo(tmp)
+            hook = repo / ".git" / "hooks" / "prepare-commit-msg"
+            hook.write_text(
+                "#!/usr/bin/env bash\n"
+                "# managed-hook-id: claude-commit-attribution\n"
+                "echo legacy\n"
+            )
+            self.assertIsNotNone(install_commit_attribution_hook(repo))
+            text = hook.read_text()
+            self.assertIn(HOOK_MARKER, text)
+            self.assertNotIn("echo legacy", text)
+
+    def test_installer_refuses_unrelated_hook(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._git_repo(tmp)
+            hook = repo / ".git" / "hooks" / "prepare-commit-msg"
+            hook.write_text("#!/bin/sh\necho project-own-hook\n")
+            self.assertIsNone(install_commit_attribution_hook(repo))
+            self.assertIn("project-own-hook", hook.read_text())
+
+    def test_installer_skips_non_git_dir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertIsNone(install_commit_attribution_hook(Path(tmp)))
+
+    # --- hook behavior (needs jq + git) -------------------------------------
+
+    @unittest.skipUnless(_NEED_JQ_GIT, "hook needs jq and git")
+    def test_hook_inserts_claude_trailer(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._git_repo(tmp)
+            cache = Path(tmp) / "cache" / "claude" / "commit-trailer"
+            cache.mkdir(parents=True)
+            (cache / "sid.json").write_text(
+                json.dumps({"model": "Opus 4.8 (1M context)", "effort": "xhigh"})
+            )
+            msg = Path(tmp) / "MSG"
+            msg.write_text("subject\n")
+            res = self._run_hook(
+                repo,
+                msg,
+                env={
+                    "XDG_CACHE_HOME": str(Path(tmp) / "cache"),
+                    "CLAUDECODE": "1",
+                    "CLAUDE_CODE_SESSION_ID": "sid",
+                    "CLAUDE_EFFORT": "xhigh",
+                },
+            )
+            self.assertEqual(res.returncode, 0)
+            self.assertIn(
+                "Co-authored-by: Claude Opus 4.8 (1M context, reasoning xhigh) "
+                "<noreply@anthropic.com>",
+                msg.read_text(),
+            )
+
+    @unittest.skipUnless(_NEED_JQ_GIT, "hook needs jq and git")
+    def test_hook_inserts_codex_trailer(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._git_repo(tmp)
+            cache = Path(tmp) / "cache" / "codex" / "commit-trailer"
+            cache.mkdir(parents=True)
+            (cache / "tid.json").write_text(
+                json.dumps({"provider": "codex", "model": "gpt-5.5", "effort": "xhigh"})
+            )
+            msg = Path(tmp) / "MSG"
+            msg.write_text("subject\n")
+            res = self._run_hook(
+                repo,
+                msg,
+                env={
+                    "XDG_CACHE_HOME": str(Path(tmp) / "cache"),
+                    "CODEX_THREAD_ID": "tid",
+                },
+            )
+            self.assertEqual(res.returncode, 0)
+            self.assertIn(
+                "Co-authored-by: Codex gpt-5.5 (reasoning xhigh) <noreply@openai.com>",
+                msg.read_text(),
+            )
+
+    @unittest.skipUnless(_NEED_JQ_GIT, "hook needs jq and git")
+    def test_hook_does_not_duplicate_trailer(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._git_repo(tmp)
+            cache = Path(tmp) / "cache" / "claude" / "commit-trailer"
+            cache.mkdir(parents=True)
+            (cache / "sid.json").write_text(
+                json.dumps({"model": "Opus 4.8 (1M context)", "effort": "xhigh"})
+            )
+            msg = Path(tmp) / "MSG"
+            msg.write_text(
+                "subject\n\n"
+                "Co-authored-by: Claude Opus 4.8 (1M context, reasoning xhigh) "
+                "<noreply@anthropic.com>\n"
+            )
+            self._run_hook(
+                repo,
+                msg,
+                env={
+                    "XDG_CACHE_HOME": str(Path(tmp) / "cache"),
+                    "CLAUDECODE": "1",
+                    "CLAUDE_CODE_SESSION_ID": "sid",
+                },
+            )
+            self.assertEqual(msg.read_text().lower().count("co-authored-by: claude"), 1)
+
+    @unittest.skipUnless(_NEED_JQ_GIT, "hook needs jq and git")
+    def test_hook_skips_merge_source(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._git_repo(tmp)
+            cache = Path(tmp) / "cache" / "claude" / "commit-trailer"
+            cache.mkdir(parents=True)
+            (cache / "sid.json").write_text(
+                json.dumps({"model": "Opus 4.8 (1M context)", "effort": "xhigh"})
+            )
+            msg = Path(tmp) / "MSG"
+            msg.write_text("merge subject\n")
+            res = self._run_hook(
+                repo,
+                msg,
+                source="merge",
+                env={
+                    "XDG_CACHE_HOME": str(Path(tmp) / "cache"),
+                    "CLAUDECODE": "1",
+                    "CLAUDE_CODE_SESSION_ID": "sid",
+                },
+            )
+            self.assertEqual(res.returncode, 0)
+            self.assertNotIn("co-authored-by", msg.read_text().lower())
+
+    @unittest.skipUnless(_NEED_JQ_GIT, "hook needs jq and git")
+    def test_hook_noop_when_cache_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._git_repo(tmp)
+            msg = Path(tmp) / "MSG"
+            msg.write_text("subject\n")
+            res = self._run_hook(
+                repo,
+                msg,
+                env={
+                    "XDG_CACHE_HOME": str(Path(tmp) / "empty-cache"),
+                    "CLAUDECODE": "1",
+                    "CLAUDE_CODE_SESSION_ID": "sid",
+                },
+            )
+            self.assertEqual(res.returncode, 0)
+            self.assertNotIn("co-authored-by", msg.read_text().lower())
+
+    @unittest.skipUnless(_NEED_JQ_GIT, "hook needs jq and git")
+    def test_hook_noop_for_non_assistant_commit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._git_repo(tmp)
+            msg = Path(tmp) / "MSG"
+            msg.write_text("human subject\n")
+            res = self._run_hook(repo, msg)  # no assistant env -> fail-open no-op
+            self.assertEqual(res.returncode, 0)
+            self.assertNotIn("co-authored-by", msg.read_text().lower())
+
+    # --- producer: `cache-commit-trailer` -----------------------------------
+
+    def test_cache_commit_trailer_claude_writes_cache(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = json.dumps(
+                {
+                    "session_id": "abc",
+                    "model": {"display_name": "Opus 4.8 (1M context)"},
+                    "effort": {"level": "xhigh"},
+                }
+            )
+            with (
+                mock.patch("sys.stdin", io.StringIO(payload)),
+                mock.patch.dict(os.environ, {"XDG_CACHE_HOME": tmp}, clear=False),
+            ):
+                self.assertEqual(main(["cache-commit-trailer", "--claude"]), 0)
+            keyed = Path(tmp) / "claude" / "commit-trailer" / "abc.json"
+            latest = Path(tmp) / "claude" / "commit-trailer" / "latest.json"
+            self.assertTrue(keyed.exists() and latest.exists())
+            data = json.loads(keyed.read_text())
+            self.assertEqual(data["model"], "Opus 4.8 (1M context)")
+            self.assertEqual(data["effort"], "xhigh")
+
+    def test_cache_commit_trailer_claude_ignores_blank_input(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with (
+                mock.patch("sys.stdin", io.StringIO("")),
+                mock.patch.dict(os.environ, {"XDG_CACHE_HOME": tmp}, clear=False),
+            ):
+                self.assertEqual(main(["cache-commit-trailer", "--claude"]), 0)
+            self.assertFalse((Path(tmp) / "claude").exists())
+
+    def test_cache_commit_trailer_codex_is_reserved(self):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            code = main(["cache-commit-trailer", "--codex"])
+        self.assertEqual(code, 2)
+        self.assertIn("not implemented", err.getvalue().lower())
 
 
 if __name__ == "__main__":

@@ -35,6 +35,7 @@ zentaizo = [
   "templates/skills/*.md",
   "templates/global-skills/zentaizo/*.md",
   "templates/global-skills/zentaizo/agents/*.yaml",
+  "templates/hooks/*",
 ]
 
 [tool.ruff]

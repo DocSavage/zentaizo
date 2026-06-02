@@ -390,6 +390,115 @@ def install_skills_into_workspace(target: pathlib.Path) -> list[str]:
     return installed
 
 
+# Neutral marker for the shared, tool-agnostic attribution hook (one hook,
+# one installer, provider branches inside). Markers from earlier versions are
+# upgraded in place; anything else is treated as a user/project hook and left
+# untouched.
+HOOK_MARKER = "managed-hook-id: zentaizo-commit-attribution"
+LEGACY_HOOK_MARKERS = ("managed-hook-id: claude-commit-attribution",)
+
+
+def _commit_hook_source() -> pathlib.Path:
+    """Path to the bundled prepare-commit-msg commit-attribution hook."""
+    traversable = resources.files("zentaizo").joinpath("templates/hooks/prepare-commit-msg")
+    return pathlib.Path(str(traversable))
+
+
+def install_commit_attribution_hook(repo_dir: pathlib.Path) -> pathlib.Path | None:
+    """Install or refresh the shared commit-attribution prepare-commit-msg hook
+    in the git repo at ``repo_dir``.
+
+    Best-effort: never raises (must not break create/clone/fetch). Returns the
+    installed hook path when it writes, or None when skipped, unchanged, or on
+    any error. Idempotent and safe: it refreshes a hook this tool installed
+    (current ``HOOK_MARKER`` or a recognized legacy marker, upgrading it in
+    place) but never overwrites a repo's own prepare-commit-msg.
+    """
+    try:
+        src = _commit_hook_source()
+        if not src.is_file():
+            return None
+        git_dir = repo_dir / ".git"
+        if git_dir.is_file():  # worktree/submodule: ".git" is a "gitdir:" pointer
+            text = git_dir.read_text(errors="ignore")
+            if text.startswith("gitdir:"):
+                git_dir = (repo_dir / text.split(":", 1)[1].strip()).resolve()
+        if not git_dir.is_dir():
+            return None
+        hooks_dir = git_dir / "hooks"
+        hooks_dir.mkdir(parents=True, exist_ok=True)
+        dst = hooks_dir / "prepare-commit-msg"
+        new_text = src.read_text()
+        if dst.exists():
+            existing = dst.read_text(errors="ignore")
+            recognized = HOOK_MARKER in existing or any(m in existing for m in LEGACY_HOOK_MARKERS)
+            if not recognized:
+                return None  # unrelated user/project hook — never clobber it
+            if existing == new_text:
+                return None  # already current — stay quiet on refresh
+        dst.write_text(new_text)
+        os.chmod(dst, 0o755)
+        return dst
+    except Exception:
+        return None
+
+
+def _write_trailer_cache(provider: str, model: str, effort: str, key: str | None) -> None:
+    """Write a commit-trailer cache entry the prepare-commit-msg hook consumes.
+
+    Keyed by session/thread id so concurrent sessions do not clobber each other,
+    plus a ``latest.json`` fallback. Same schema shape for every provider.
+    """
+    base = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
+    cache_dir = pathlib.Path(base) / provider / "commit-trailer"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps(
+        {"provider": provider, "model": model, "effort": effort, "captured_at": utc_now()}
+    )
+    if key:
+        (cache_dir / f"{key}.json").write_text(payload + "\n")
+    (cache_dir / "latest.json").write_text(payload + "\n")
+
+
+def cache_commit_trailer(args: argparse.Namespace) -> int:
+    """Producer for the commit-attribution hook: capture the current assistant's
+    model + reasoning effort into a cache the hook reads at commit time.
+
+    One provider branch each; each reads a source it can trust. Keeping the
+    producer here (rather than relying on a machine-local helper) is what makes
+    the hook work on any install of Zentaizo.
+    """
+    if getattr(args, "codex", False):
+        # Reserved for Codex's own producer (e.g. reading ~/.codex/config.toml
+        # and keying by CODEX_THREAD_ID). Contract: write
+        # ~/.cache/codex/commit-trailer/<thread>.json (+ latest.json) as
+        # {"model": ..., "effort": ...}.
+        raise CliError(
+            "cache-commit-trailer --codex is not implemented yet "
+            "(the Codex producer is added separately).",
+            code=2,
+        )
+
+    # --claude: the Claude Code statusline JSON arrives on stdin and is the only
+    # place the friendly model name (model.display_name) is exposed. Stay quiet
+    # and non-fatal on bad/empty input so a status line never breaks.
+    raw = sys.stdin.read()
+    try:
+        data = json.loads(raw) if raw.strip() else {}
+    except (ValueError, TypeError):
+        return 0
+    if not isinstance(data, dict):
+        return 0
+    model_obj = data.get("model")
+    model = model_obj.get("display_name", "") if isinstance(model_obj, dict) else ""
+    effort_obj = data.get("effort")
+    effort = effort_obj.get("level", "") if isinstance(effort_obj, dict) else ""
+    session_id = data.get("session_id") or os.environ.get("CLAUDE_CODE_SESSION_ID") or ""
+    if model or effort:
+        _write_trailer_cache("claude", model, effort, session_id or None)
+    return 0
+
+
 def create_workspace(args: argparse.Namespace) -> int:
     target = pathlib.Path(args.path).resolve()
     name = args.name or target.name
@@ -436,6 +545,21 @@ def create_workspace(args: argparse.Namespace) -> int:
         installed = install_skills_into_workspace(target)
         if installed:
             print(f"Installed skills: {', '.join(sorted(installed))}")
+
+    # Make the workspace a git repo and install the commit-attribution hook so
+    # its own context commits (summaries/notes/sessions) are attributed. The
+    # editable repos under repos/ get the same hook when fetched. Best-effort:
+    # a missing git binary or init failure must not fail workspace creation.
+    if not getattr(args, "no_git", False):
+        try:
+            already_git = try_run_git(["rev-parse", "--git-dir"], cwd=target) is not None
+            if not already_git and try_run_git(["init"], cwd=target) is not None:
+                if install_commit_attribution_hook(target):
+                    print("Initialized git repo and installed commit-attribution hook")
+                else:
+                    print("Initialized git repo")
+        except Exception:
+            pass
 
     print(f"Created Zentaizo workspace: {target}")
     print(f"Next: start an AI session in {target} to create {ATLAS_NAME}")
@@ -845,6 +969,8 @@ def fetch_edit_repo(workspace: pathlib.Path, repo: dict, do_rebase: bool) -> dic
         clone_repo(repo["url"], dst)
         run_git(["checkout", repo["ref"]], cwd=dst)
         commit = run_git(["rev-parse", "HEAD"], cwd=dst)
+        if install_commit_attribution_hook(dst):
+            print(f"  installed commit-attribution hook in {name}")
         print(f"Locked {name} @ {commit[:12]} — create a branch before committing")
         return {
             "name": name,
@@ -858,6 +984,8 @@ def fetch_edit_repo(workspace: pathlib.Path, repo: dict, do_rebase: bool) -> dic
         }
 
     print(f"Fetching {name} (edit)...")
+    if install_commit_attribution_hook(dst):  # cover/refresh repos cloned before this existed
+        print(f"  installed commit-attribution hook in {name}")
     run_git(["fetch", "--tags", "--prune"], cwd=dst)
     upstream_sha = resolve_upstream_sha(dst, repo["ref"])
     head_sha = run_git(["rev-parse", "HEAD"], cwd=dst)
@@ -2734,7 +2862,30 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="skip copying bundled skills/ markdown into the workspace",
     )
+    create.add_argument(
+        "--no-git",
+        action="store_true",
+        help="do not git-init the workspace or install the commit-attribution hook",
+    )
     create.set_defaults(func=create_workspace)
+
+    cache_trailer = sub.add_parser(
+        "cache-commit-trailer",
+        help="cache the current assistant's model + reasoning effort for the "
+        "commit-attribution hook to read at commit time",
+    )
+    provider = cache_trailer.add_mutually_exclusive_group(required=True)
+    provider.add_argument(
+        "--claude",
+        action="store_true",
+        help="read the Claude Code statusline JSON on stdin and cache it",
+    )
+    provider.add_argument(
+        "--codex",
+        action="store_true",
+        help="cache Codex's model + reasoning effort (implemented by Codex)",
+    )
+    cache_trailer.set_defaults(func=cache_commit_trailer)
 
     validate = sub.add_parser("validate", help="validate a workspace atlas")
     validate.add_argument("workspace", nargs="?", default=".", help="workspace directory")
