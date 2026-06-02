@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tomllib
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -440,6 +441,14 @@ def install_commit_attribution_hook(repo_dir: pathlib.Path) -> pathlib.Path | No
         return None
 
 
+def _safe_trailer_cache_key(key: str | None) -> str | None:
+    """Path-safe filename stem for a session/thread cache key."""
+    if not key:
+        return None
+    safe = re.sub(r"[^A-Za-z0-9_-]+", "-", key.strip()).strip("-_")
+    return safe or None
+
+
 def _write_trailer_cache(provider: str, model: str, effort: str, key: str | None) -> None:
     """Write a commit-trailer cache entry the prepare-commit-msg hook consumes.
 
@@ -452,9 +461,29 @@ def _write_trailer_cache(provider: str, model: str, effort: str, key: str | None
     payload = json.dumps(
         {"provider": provider, "model": model, "effort": effort, "captured_at": utc_now()}
     )
-    if key:
-        (cache_dir / f"{key}.json").write_text(payload + "\n")
+    safe_key = _safe_trailer_cache_key(key)
+    if safe_key:
+        (cache_dir / f"{safe_key}.json").write_text(payload + "\n")
     (cache_dir / "latest.json").write_text(payload + "\n")
+
+
+def _codex_config_path() -> pathlib.Path:
+    base = os.environ.get("CODEX_HOME") or os.path.expanduser("~/.codex")
+    return pathlib.Path(base) / "config.toml"
+
+
+def _read_codex_commit_trailer_config() -> tuple[str, str]:
+    """Return (model, reasoning effort) from Codex config, or blanks if unavailable."""
+    try:
+        data = tomllib.loads(_codex_config_path().read_text())
+    except (OSError, tomllib.TOMLDecodeError):
+        return "", ""
+    model = data.get("model")
+    effort = data.get("model_reasoning_effort")
+    return (
+        model.strip() if isinstance(model, str) else "",
+        effort.strip() if isinstance(effort, str) else "",
+    )
 
 
 def cache_commit_trailer(args: argparse.Namespace) -> int:
@@ -466,15 +495,10 @@ def cache_commit_trailer(args: argparse.Namespace) -> int:
     the hook work on any install of Zentaizo.
     """
     if getattr(args, "codex", False):
-        # Reserved for Codex's own producer (e.g. reading ~/.codex/config.toml
-        # and keying by CODEX_THREAD_ID). Contract: write
-        # ~/.cache/codex/commit-trailer/<thread>.json (+ latest.json) as
-        # {"model": ..., "effort": ...}.
-        raise CliError(
-            "cache-commit-trailer --codex is not implemented yet "
-            "(the Codex producer is added separately).",
-            code=2,
-        )
+        model, effort = _read_codex_commit_trailer_config()
+        if model and effort:
+            _write_trailer_cache("codex", model, effort, os.environ.get("CODEX_THREAD_ID"))
+        return 0
 
     # --claude: the Claude Code statusline JSON arrives on stdin and is the only
     # place the friendly model name (model.display_name) is exposed. Stay quiet
@@ -2889,7 +2913,7 @@ def build_parser() -> argparse.ArgumentParser:
     provider.add_argument(
         "--codex",
         action="store_true",
-        help="cache Codex's model + reasoning effort (implemented by Codex)",
+        help="read Codex config and cache its model + reasoning effort",
     )
     cache_trailer.set_defaults(func=cache_commit_trailer)
 

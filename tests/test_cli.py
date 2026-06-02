@@ -1692,7 +1692,7 @@ class CommitAttributionHookTests(unittest.TestCase):
             repo = self._git_repo(tmp)
             cache = Path(tmp) / "cache" / "codex" / "commit-trailer"
             cache.mkdir(parents=True)
-            (cache / "tid.json").write_text(
+            (cache / "thread-abc.json").write_text(
                 json.dumps({"provider": "codex", "model": "gpt-5.5", "effort": "xhigh"})
             )
             msg = Path(tmp) / "MSG"
@@ -1702,7 +1702,7 @@ class CommitAttributionHookTests(unittest.TestCase):
                 msg,
                 env={
                     "XDG_CACHE_HOME": str(Path(tmp) / "cache"),
-                    "CODEX_THREAD_ID": "tid",
+                    "CODEX_THREAD_ID": "thread/../abc",
                 },
             )
             self.assertEqual(res.returncode, 0)
@@ -1851,12 +1851,46 @@ class CommitAttributionHookTests(unittest.TestCase):
                 self.assertEqual(main(["cache-commit-trailer", "--claude"]), 0)
             self.assertFalse((Path(tmp) / "claude").exists())
 
-    def test_cache_commit_trailer_codex_is_reserved(self):
-        err = io.StringIO()
-        with contextlib.redirect_stderr(err):
-            code = main(["cache-commit-trailer", "--codex"])
-        self.assertEqual(code, 2)
-        self.assertIn("not implemented", err.getvalue().lower())
+    def test_cache_commit_trailer_codex_writes_cache_from_config(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            codex_home = Path(tmp) / "codex-home"
+            codex_home.mkdir()
+            (codex_home / "config.toml").write_text(
+                'model = "gpt-5.5"\nmodel_reasoning_effort = "xhigh"\n'
+            )
+            cache_home = Path(tmp) / "cache"
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "CODEX_HOME": str(codex_home),
+                    "XDG_CACHE_HOME": str(cache_home),
+                    "CODEX_THREAD_ID": "thread/../abc",
+                },
+                clear=False,
+            ):
+                self.assertEqual(main(["cache-commit-trailer", "--codex"]), 0)
+
+            cache_dir = cache_home / "codex" / "commit-trailer"
+            keyed = cache_dir / "thread-abc.json"
+            latest = cache_dir / "latest.json"
+            self.assertTrue(keyed.exists() and latest.exists())
+            data = json.loads(keyed.read_text())
+            self.assertEqual(data["provider"], "codex")
+            self.assertEqual(data["model"], "gpt-5.5")
+            self.assertEqual(data["effort"], "xhigh")
+
+    def test_cache_commit_trailer_codex_noops_without_complete_config(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            codex_home = Path(tmp) / "codex-home"
+            codex_home.mkdir()
+            (codex_home / "config.toml").write_text('model = "gpt-5.5"\n')
+            with mock.patch.dict(
+                os.environ,
+                {"CODEX_HOME": str(codex_home), "XDG_CACHE_HOME": tmp},
+                clear=False,
+            ):
+                self.assertEqual(main(["cache-commit-trailer", "--codex"]), 0)
+            self.assertFalse((Path(tmp) / "codex").exists())
 
 
 if __name__ == "__main__":

@@ -28,12 +28,20 @@ import re
 import sys
 
 
+def _safe_cache_key(key: str | None) -> str | None:
+    if not key:
+        return None
+    safe = re.sub(r"[^A-Za-z0-9_-]+", "-", key.strip()).strip("-_")
+    return safe or None
+
+
 def _read_cache(provider: str, key: str | None) -> tuple[str, str]:
     base = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
     cache_dir = pathlib.Path(base) / provider / "commit-trailer"
     candidates = []
-    if key:
-        candidates.append(cache_dir / f"{key}.json")
+    safe_key = _safe_cache_key(key)
+    if safe_key:
+        candidates.append(cache_dir / f"{safe_key}.json")
     candidates.append(cache_dir / "latest.json")
     for path in candidates:
         try:
