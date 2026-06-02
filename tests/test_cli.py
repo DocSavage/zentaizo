@@ -1634,17 +1634,15 @@ class CommitAttributionHookTests(unittest.TestCase):
             self.assertIn(HOOK_MARKER, hook.read_text())
             self.assertIsNone(install_commit_attribution_hook(repo))  # unchanged -> no-op
 
-    def test_installer_upgrades_legacy_marker(self):
+    def test_installer_refreshes_stale_managed_hook(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = self._git_repo(tmp)
             hook = repo / ".git" / "hooks" / "prepare-commit-msg"
-            hook.write_text(
-                "#!/usr/bin/env bash\n# managed-hook-id: claude-commit-attribution\necho legacy\n"
-            )
+            hook.write_text(f"#!/usr/bin/env bash\n# {HOOK_MARKER}\necho stale\n")
             self.assertIsNotNone(install_commit_attribution_hook(repo))
             text = hook.read_text()
             self.assertIn(HOOK_MARKER, text)
-            self.assertNotIn("echo legacy", text)
+            self.assertNotIn("echo stale", text)
 
     def test_installer_refuses_unrelated_hook(self):
         with tempfile.TemporaryDirectory() as tmp:

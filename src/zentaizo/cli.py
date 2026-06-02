@@ -390,12 +390,10 @@ def install_skills_into_workspace(target: pathlib.Path) -> list[str]:
     return installed
 
 
-# Neutral marker for the shared, tool-agnostic attribution hook (one hook,
-# one installer, provider branches inside). Markers from earlier versions are
-# upgraded in place; anything else is treated as a user/project hook and left
-# untouched.
+# Neutral marker identifying the shared, tool-agnostic attribution hook (one
+# hook, one installer, provider branches inside). The installer refreshes a hook
+# carrying this marker and leaves anything else (a user/project hook) untouched.
 HOOK_MARKER = "managed-hook-id: zentaizo-commit-attribution"
-LEGACY_HOOK_MARKERS = ("managed-hook-id: claude-commit-attribution",)
 
 
 def _commit_hook_source() -> pathlib.Path:
@@ -411,8 +409,8 @@ def install_commit_attribution_hook(repo_dir: pathlib.Path) -> pathlib.Path | No
     Best-effort: never raises (must not break create/clone/fetch). Returns the
     installed hook path when it writes, or None when skipped, unchanged, or on
     any error. Idempotent and safe: it refreshes a hook this tool installed
-    (current ``HOOK_MARKER`` or a recognized legacy marker, upgrading it in
-    place) but never overwrites a repo's own prepare-commit-msg.
+    (identified by ``HOOK_MARKER``) but never overwrites a repo's own
+    prepare-commit-msg.
     """
     try:
         src = _commit_hook_source()
@@ -431,8 +429,7 @@ def install_commit_attribution_hook(repo_dir: pathlib.Path) -> pathlib.Path | No
         new_text = src.read_text()
         if dst.exists():
             existing = dst.read_text(errors="ignore")
-            recognized = HOOK_MARKER in existing or any(m in existing for m in LEGACY_HOOK_MARKERS)
-            if not recognized:
+            if HOOK_MARKER not in existing:
                 return None  # unrelated user/project hook — never clobber it
             if existing == new_text:
                 return None  # already current — stay quiet on refresh
