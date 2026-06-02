@@ -1,115 +1,122 @@
-#!/usr/bin/env bash
+#!/usr/bin/env python3
 # managed-hook-id: zentaizo-commit-attribution
-# prepare-commit-msg: append a deterministic Co-authored-by trailer recording the
-# AI model + reasoning effort behind the commit. One shared, tool-agnostic hook
-# with a provider branch per assistant; each branch consumes a cache its own
-# producer wrote, so attribution stays out of the model's per-commit reasoning.
-#
-#   - Claude: cache written by the statusline (see
-#     ai-instructions/claude/statusline-command.sh).
-#   - Codex:  cache written by Codex's own producer (keyed by CODEX_THREAD_ID).
-#
-# Design rules:
-#   - FAIL-OPEN: any internal problem must NEVER block a commit. We never
-#     `set -e`; the script always ends in `exit 0`.
-#   - Chain to a repo-local prepare-commit-msg first, so project hooks keep
-#     working if this is ever installed via a global core.hooksPath.
-#   - Only act inside a recognized assistant session; leave human commits and
-#     other tools untouched.
-#   - Idempotent: never add a second trailer for the same provider.
+"""prepare-commit-msg: append a deterministic ``Co-authored-by`` trailer recording
+the AI model + reasoning effort behind the commit.
 
-msg_file="$1"
-commit_source="${2:-}"
+One shared, tool-agnostic hook with a provider branch per assistant. Each branch
+reads a cache that its producer wrote -- ``zentaizo cache-commit-trailer
+--<provider>`` -- so attribution stays out of the model's per-commit reasoning:
 
-# --- chain to a repo-local hook first ---------------------------------------
-# Resolve the real .git/hooks dir regardless of core.hooksPath so we can defer
-# to a project's own prepare-commit-msg. Respect its exit code (a local veto
-# should still abort the commit).
-gitdir="$(git rev-parse --git-dir 2>/dev/null)"
-if [ -n "$gitdir" ]; then
-  local_hook="$gitdir/hooks/prepare-commit-msg"
-  self="$(cd "$(dirname "$0")" 2>/dev/null && pwd)/$(basename "$0")"
-  if [ -x "$local_hook" ]; then
-    lh="$(readlink -f "$local_hook" 2>/dev/null || echo "$local_hook")"
-    me="$(readlink -f "$self" 2>/dev/null || echo "$self")"
-    if [ "$lh" != "$me" ]; then
-      "$local_hook" "$@" || exit $?
-    fi
-  fi
-fi
+  - Claude: ``~/.cache/claude/commit-trailer/`` (producer reads the Claude Code
+    statusline JSON, the only place the friendly model name is exposed).
+  - Codex:  ``~/.cache/codex/commit-trailer/``.
 
-# --- shared preconditions ---------------------------------------------------
-case "$commit_source" in merge|squash) exit 0 ;; esac
-command -v jq >/dev/null 2>&1 || exit 0
+Operational model: installed repo-locally as ``.git/hooks/prepare-commit-msg``.
+The installer refuses to overwrite an unrelated project hook, so this never
+coexists with (or shadows) another prepare-commit-msg -- hence no chaining.
 
-# Insert a trailer line before the first comment line (the git template block)
-# so it lands in the message body, not after the comments. Falls back to append.
-append_trailer() {
-  _t="$1"
-  _cc="$(git config --get core.commentChar 2>/dev/null)"
-  case "${#_cc}" in 1) ;; *) _cc='#' ;; esac
-  _tmp="$(mktemp 2>/dev/null)" || return 0
-  awk -v t="$_t" -v cc="$_cc" '
-    !done && substr($0,1,length(cc))==cc { print ""; print t; done=1 }
-    { print }
-    END { if (!done) { print ""; print t } }
-  ' "$msg_file" > "$_tmp" 2>/dev/null && mv "$_tmp" "$msg_file" 2>/dev/null
-  rm -f "$_tmp" 2>/dev/null
-}
+Properties: FAIL-OPEN (never blocks a commit; any error just skips the trailer),
+idempotent per provider, and pure Python standard library (no external tools).
+"""
 
-# --- Claude branch ----------------------------------------------------------
-if [ -n "${CLAUDECODE:-}" ]; then
-  cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/claude/commit-trailer"
-  cache=""
-  if [ -n "${CLAUDE_CODE_SESSION_ID:-}" ] && [ -f "$cache_dir/$CLAUDE_CODE_SESSION_ID.json" ]; then
-    cache="$cache_dir/$CLAUDE_CODE_SESSION_ID.json"
-  elif [ -f "$cache_dir/latest.json" ]; then
-    cache="$cache_dir/latest.json"
-  fi
-  [ -n "$cache" ] || exit 0
+from __future__ import annotations
 
-  model="$(jq -r '.model // empty' "$cache" 2>/dev/null)"
-  effort="$(jq -r '.effort // empty' "$cache" 2>/dev/null)"
-  [ -n "$effort" ] || effort="${CLAUDE_EFFORT:-}"
-  [ -n "$model" ] || exit 0
+import json
+import os
+import pathlib
+import re
+import sys
 
-  grep -qiE '^Co-authored-by: Claude ' "$msg_file" 2>/dev/null && exit 0
 
-  # Place reasoning effort inside the model's trailing parens (e.g.
-  # "Opus 4.8 (1M context)" -> "Opus 4.8 (1M context, reasoning xhigh)"); if the
-  # model has no parens, append "(reasoning <effort>)".
-  attrib="$model"
-  if [ -n "$effort" ]; then
-    case "$model" in
-      *"("*")") attrib="$(printf '%s' "$model" | sed -E "s/\)[[:space:]]*\$/, reasoning ${effort})/")" ;;
-      *)        attrib="$model (reasoning $effort)" ;;
-    esac
-  fi
-  append_trailer "Co-authored-by: Claude ${attrib} <noreply@anthropic.com>"
-  exit 0
-fi
+def _read_cache(provider: str, key: str | None) -> tuple[str, str]:
+    base = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
+    cache_dir = pathlib.Path(base) / provider / "commit-trailer"
+    candidates = []
+    if key:
+        candidates.append(cache_dir / f"{key}.json")
+    candidates.append(cache_dir / "latest.json")
+    for path in candidates:
+        try:
+            data = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        if isinstance(data, dict):
+            return str(data.get("model") or ""), str(data.get("effort") or "")
+    return "", ""
 
-# --- Codex branch -----------------------------------------------------------
-if [ -n "${CODEX_THREAD_ID:-}" ]; then
-  cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/codex/commit-trailer"
-  cache=""
-  if [ -f "$cache_dir/$CODEX_THREAD_ID.json" ]; then
-    cache="$cache_dir/$CODEX_THREAD_ID.json"
-  elif [ -f "$cache_dir/latest.json" ]; then
-    cache="$cache_dir/latest.json"
-  fi
-  [ -n "$cache" ] || exit 0
 
-  model="$(jq -r '.model // empty' "$cache" 2>/dev/null)"
-  effort="$(jq -r '.effort // empty' "$cache" 2>/dev/null)"
-  # Codex self-knowledge is shakier: only attribute when BOTH come from the
-  # deterministic cache.
-  [ -n "$model" ] && [ -n "$effort" ] || exit 0
+def _claude_trailer() -> str | None:
+    model, effort = _read_cache("claude", os.environ.get("CLAUDE_CODE_SESSION_ID"))
+    if not effort:
+        effort = os.environ.get("CLAUDE_EFFORT", "")
+    if not model:
+        return None
+    attrib = model
+    if effort:
+        # Place the reasoning effort inside the model's trailing parens, e.g.
+        # "Opus 4.8 (1M context)" -> "Opus 4.8 (1M context, reasoning xhigh)";
+        # if there are no parens, append "(reasoning <effort>)".
+        if model.rstrip().endswith(")"):
+            attrib = re.sub(r"\)\s*$", f", reasoning {effort})", model)
+        else:
+            attrib = f"{model} (reasoning {effort})"
+    return f"Co-authored-by: Claude {attrib} <noreply@anthropic.com>"
 
-  grep -qiE '^Co-authored-by: Codex ' "$msg_file" 2>/dev/null && exit 0
 
-  append_trailer "Co-authored-by: Codex ${model} (reasoning ${effort}) <noreply@openai.com>"
-  exit 0
-fi
+def _codex_trailer() -> str | None:
+    model, effort = _read_cache("codex", os.environ.get("CODEX_THREAD_ID"))
+    if not (model and effort):  # Codex: only attribute when both are cached
+        return None
+    return f"Co-authored-by: Codex {model} (reasoning {effort}) <noreply@openai.com>"
 
-exit 0
+
+def _provider_trailer() -> tuple[str, str] | None:
+    """Return (provider_name, trailer_line) for the active assistant, or None."""
+    if os.environ.get("CLAUDECODE"):
+        trailer = _claude_trailer()
+        return ("Claude", trailer) if trailer else None
+    if os.environ.get("CODEX_THREAD_ID"):
+        trailer = _codex_trailer()
+        return ("Codex", trailer) if trailer else None
+    return None
+
+
+def _append_trailer(msg_path: pathlib.Path, trailer: str) -> None:
+    # Insert before the first comment line (the git template block) so the
+    # trailer lands in the message body; otherwise append at the end.
+    lines = msg_path.read_text().splitlines()
+    out: list[str] = []
+    inserted = False
+    for line in lines:
+        if not inserted and line.startswith("#"):
+            out.extend(("", trailer))
+            inserted = True
+        out.append(line)
+    if not inserted:
+        out.extend(("", trailer))
+    msg_path.write_text("\n".join(out) + "\n")
+
+
+def main(argv: list[str]) -> int:
+    if not argv:
+        return 0
+    msg_path = pathlib.Path(argv[0])
+    source = argv[1] if len(argv) > 1 else ""
+    if source in ("merge", "squash"):
+        return 0
+    resolved = _provider_trailer()
+    if resolved is None:
+        return 0
+    provider, trailer = resolved
+    existing = msg_path.read_text()
+    if re.search(rf"(?im)^Co-authored-by:\s+{re.escape(provider)}\b", existing):
+        return 0  # idempotent per provider (amend / rebase / message reuse)
+    _append_trailer(msg_path, trailer)
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except Exception:
+        sys.exit(0)  # FAIL-OPEN: a hook bug must never block a commit

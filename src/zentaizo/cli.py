@@ -553,8 +553,12 @@ def create_workspace(args: argparse.Namespace) -> int:
     if not getattr(args, "no_git", False):
         try:
             already_git = try_run_git(["rev-parse", "--git-dir"], cwd=target) is not None
-            if not already_git and try_run_git(["init"], cwd=target) is not None:
-                if install_commit_attribution_hook(target):
+            initialized = already_git or try_run_git(["init"], cwd=target) is not None
+            if initialized:
+                hooked = not getattr(args, "no_commit_hook", False) and (
+                    install_commit_attribution_hook(target) is not None
+                )
+                if hooked:
                     print("Initialized git repo and installed commit-attribution hook")
                 else:
                     print("Initialized git repo")
@@ -2865,7 +2869,12 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument(
         "--no-git",
         action="store_true",
-        help="do not git-init the workspace or install the commit-attribution hook",
+        help="do not git-init the workspace (implies --no-commit-hook)",
+    )
+    create.add_argument(
+        "--no-commit-hook",
+        action="store_true",
+        help="git-init the workspace but do not install the commit-attribution hook",
     )
     create.set_defaults(func=create_workspace)
 

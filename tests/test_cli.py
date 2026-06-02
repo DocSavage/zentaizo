@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 import urllib.error
@@ -1590,7 +1591,7 @@ class SandboxRenderTests(WorkspaceCliCase):
             self.assertIn("not a JSON object", err)
 
 
-_NEED_JQ_GIT = bool(shutil.which("jq") and shutil.which("git"))
+_HAVE_GIT = bool(shutil.which("git"))
 
 
 class CommitAttributionHookTests(unittest.TestCase):
@@ -1619,7 +1620,7 @@ class CommitAttributionHookTests(unittest.TestCase):
         if env:
             clean.update(env)
         return subprocess.run(
-            ["bash", self._hook_path(), str(msg), source], cwd=str(repo), env=clean
+            [sys.executable, self._hook_path(), str(msg), source], cwd=str(repo), env=clean
         )
 
     # --- installer -----------------------------------------------------------
@@ -1638,9 +1639,7 @@ class CommitAttributionHookTests(unittest.TestCase):
             repo = self._git_repo(tmp)
             hook = repo / ".git" / "hooks" / "prepare-commit-msg"
             hook.write_text(
-                "#!/usr/bin/env bash\n"
-                "# managed-hook-id: claude-commit-attribution\n"
-                "echo legacy\n"
+                "#!/usr/bin/env bash\n# managed-hook-id: claude-commit-attribution\necho legacy\n"
             )
             self.assertIsNotNone(install_commit_attribution_hook(repo))
             text = hook.read_text()
@@ -1661,7 +1660,7 @@ class CommitAttributionHookTests(unittest.TestCase):
 
     # --- hook behavior (needs jq + git) -------------------------------------
 
-    @unittest.skipUnless(_NEED_JQ_GIT, "hook needs jq and git")
+    @unittest.skipUnless(_HAVE_GIT, "test needs git")
     def test_hook_inserts_claude_trailer(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = self._git_repo(tmp)
@@ -1689,7 +1688,7 @@ class CommitAttributionHookTests(unittest.TestCase):
                 msg.read_text(),
             )
 
-    @unittest.skipUnless(_NEED_JQ_GIT, "hook needs jq and git")
+    @unittest.skipUnless(_HAVE_GIT, "test needs git")
     def test_hook_inserts_codex_trailer(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = self._git_repo(tmp)
@@ -1714,7 +1713,7 @@ class CommitAttributionHookTests(unittest.TestCase):
                 msg.read_text(),
             )
 
-    @unittest.skipUnless(_NEED_JQ_GIT, "hook needs jq and git")
+    @unittest.skipUnless(_HAVE_GIT, "test needs git")
     def test_hook_does_not_duplicate_trailer(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = self._git_repo(tmp)
@@ -1740,7 +1739,7 @@ class CommitAttributionHookTests(unittest.TestCase):
             )
             self.assertEqual(msg.read_text().lower().count("co-authored-by: claude"), 1)
 
-    @unittest.skipUnless(_NEED_JQ_GIT, "hook needs jq and git")
+    @unittest.skipUnless(_HAVE_GIT, "test needs git")
     def test_hook_skips_merge_source(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = self._git_repo(tmp)
@@ -1764,7 +1763,7 @@ class CommitAttributionHookTests(unittest.TestCase):
             self.assertEqual(res.returncode, 0)
             self.assertNotIn("co-authored-by", msg.read_text().lower())
 
-    @unittest.skipUnless(_NEED_JQ_GIT, "hook needs jq and git")
+    @unittest.skipUnless(_HAVE_GIT, "test needs git")
     def test_hook_noop_when_cache_missing(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = self._git_repo(tmp)
@@ -1782,7 +1781,7 @@ class CommitAttributionHookTests(unittest.TestCase):
             self.assertEqual(res.returncode, 0)
             self.assertNotIn("co-authored-by", msg.read_text().lower())
 
-    @unittest.skipUnless(_NEED_JQ_GIT, "hook needs jq and git")
+    @unittest.skipUnless(_HAVE_GIT, "test needs git")
     def test_hook_noop_for_non_assistant_commit(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = self._git_repo(tmp)
@@ -1791,6 +1790,36 @@ class CommitAttributionHookTests(unittest.TestCase):
             res = self._run_hook(repo, msg)  # no assistant env -> fail-open no-op
             self.assertEqual(res.returncode, 0)
             self.assertNotIn("co-authored-by", msg.read_text().lower())
+
+    # --- create: git init + hook wiring -------------------------------------
+
+    @unittest.skipUnless(_HAVE_GIT, "test needs git")
+    def test_create_git_inits_and_installs_hook(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Path(tmp) / "ws"
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(main(["create", str(ws)]), 0)
+            hook = ws / ".git" / "hooks" / "prepare-commit-msg"
+            self.assertTrue((ws / ".git").is_dir())
+            self.assertTrue(hook.exists())
+            self.assertIn(HOOK_MARKER, hook.read_text())
+
+    @unittest.skipUnless(_HAVE_GIT, "test needs git")
+    def test_create_no_git_skips_repo(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Path(tmp) / "ws"
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(main(["create", str(ws), "--no-git"]), 0)
+            self.assertFalse((ws / ".git").exists())
+
+    @unittest.skipUnless(_HAVE_GIT, "test needs git")
+    def test_create_no_commit_hook_inits_without_hook(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Path(tmp) / "ws"
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(main(["create", str(ws), "--no-commit-hook"]), 0)
+            self.assertTrue((ws / ".git").is_dir())
+            self.assertFalse((ws / ".git" / "hooks" / "prepare-commit-msg").exists())
 
     # --- producer: `cache-commit-trailer` -----------------------------------
 
