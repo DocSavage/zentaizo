@@ -512,6 +512,10 @@ def cache_commit_trailer(args: argparse.Namespace) -> int:
         return 0
     model_obj = data.get("model")
     model = model_obj.get("display_name", "") if isinstance(model_obj, dict) else ""
+    # display_name is e.g. "Claude Opus 4.8"; the hook already prepends the
+    # assistant label ("Co-authored-by: Claude ..."), so strip the redundant
+    # leading "Claude " here to avoid a doubled "Claude Claude Opus 4.8" trailer.
+    model = model.removeprefix("Claude ").strip()
     effort_obj = data.get("effort")
     effort = effort_obj.get("level", "") if isinstance(effort_obj, dict) else ""
     session_id = data.get("session_id") or os.environ.get("CLAUDE_CODE_SESSION_ID") or ""

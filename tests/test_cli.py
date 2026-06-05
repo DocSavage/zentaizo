@@ -1842,6 +1842,26 @@ class CommitAttributionHookTests(unittest.TestCase):
             self.assertEqual(data["model"], "Opus 4.8 (1M context)")
             self.assertEqual(data["effort"], "xhigh")
 
+    def test_cache_commit_trailer_claude_strips_claude_prefix(self):
+        # display_name carries the vendor prefix ("Claude Opus 4.8"); the hook
+        # prepends the "Claude" assistant label itself, so the producer caches the
+        # bare model name to avoid a doubled "Claude Claude ..." trailer.
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = json.dumps(
+                {
+                    "session_id": "abc",
+                    "model": {"display_name": "Claude Opus 4.8"},
+                    "effort": {"level": "xhigh"},
+                }
+            )
+            with (
+                mock.patch("sys.stdin", io.StringIO(payload)),
+                mock.patch.dict(os.environ, {"XDG_CACHE_HOME": tmp}, clear=False),
+            ):
+                self.assertEqual(main(["cache-commit-trailer", "--claude"]), 0)
+            data = json.loads((Path(tmp) / "claude" / "commit-trailer" / "abc.json").read_text())
+            self.assertEqual(data["model"], "Opus 4.8")
+
     def test_cache_commit_trailer_claude_ignores_blank_input(self):
         with tempfile.TemporaryDirectory() as tmp:
             with (
