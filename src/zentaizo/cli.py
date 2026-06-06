@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from importlib import resources
 
-from zentaizo import safety
+from zentaizo import __version__, safety
 
 
 class CliError(Exception):
@@ -3989,7 +3989,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="zentaizo",
         description="Build hierarchical context workspaces for AI assistants.",
     )
-    parser.add_argument("--version", action="version", version="zentaizo 0.1.0")
+    parser.add_argument("--version", action="version", version=f"zentaizo {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
     create = sub.add_parser("create", help="create a new Zentaizo workspace")
