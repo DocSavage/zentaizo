@@ -2037,6 +2037,40 @@ class EditedByCliTests(WorkspaceCliCase):
             self.assertEqual(code, 2)
             self.assertIn("frontmatter", err)
 
+    def test_next_handoff_scaffolds_frontmatter_and_spec(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._run(["effort", "new", "dojo", "-C", str(workspace)])
+            plan_rel = self._run(["next-change", "wire", "-C", str(workspace)])[1].strip()
+            ho_rel = self._run(["next-handoff", "1", "codex", "-C", str(workspace)])[1].strip()
+            ho_path = workspace / ho_rel
+            text = ho_path.read_text()
+            self.assertTrue(text.startswith("---\n"))  # frontmatter, not the old heading/Date stub
+            self.assertNotIn("Date:", text)
+            self.assertRegex(text, r'created: "\d{4}-\d{2}-\d{2}T')  # created filled
+            self.assertIn(f"`{plan_rel}`", text)  # spec placeholder resolved to the plan path
+            self.assertNotIn("<spec>", text)
+            self.assertEqual(len(self._entries(ho_path)), 1)  # author stamped in edited_by
+
+    def test_untied_handoff_drops_spec_line(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._run(["effort", "new", "dojo", "-C", str(workspace)])
+            ho_rel = self._run(["next-handoff", "0000", "kickoff", "-C", str(workspace)])[1].strip()
+            text = (workspace / ho_rel).read_text()
+            self.assertNotIn("<spec>", text)
+            self.assertNotIn("authoritative spec", text)  # the spec line is removed entirely
+            self.assertEqual(len(self._entries(workspace / ho_rel)), 1)
+
+    def test_edited_works_on_a_handoff(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._run(["effort", "new", "dojo", "-C", str(workspace)])
+            self._run(["next-change", "wire", "-C", str(workspace)])
+            ho_path = workspace / self._run(["next-handoff", "1", "-C", str(workspace)])[1].strip()
+            self.assertEqual(self._run(["edited", str(ho_path), "--as", "Ada Lovelace"])[0], 0)
+            self.assertTrue(self._entries(ho_path)[-1].endswith("Ada Lovelace"))
+
 
 if __name__ == "__main__":
     unittest.main()

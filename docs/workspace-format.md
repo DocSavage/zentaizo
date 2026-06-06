@@ -154,7 +154,7 @@ effort new`, then `zentaizo next-change` / `next-debugging` / `next-handoff` /
 `next-note` / `next-report` — so names and counters are never hand-derived. See
 the generated `AGENTS.md` § Filename Convention for the full convention.
 
-Frontmatter-bearing session files (`changes/`, `debugging/`, `reports/`) also carry an `edited_by:` ledger recording which model or human crafted, reviewed, or modified the file, in order. The scaffolding commands stamp the first entry, and `zentaizo edited <path>` appends or refreshes it on later edits — resolving the editor identity from the same commit-trailer cache the commit-attribution hook uses, so the recorded model + reasoning effort is never the model's own guess.
+Frontmatter-bearing session files (`changes/`, `debugging/`, `reports/`, `handoffs/`) also carry an `edited_by:` ledger recording which model or human crafted, reviewed, or modified the file, in order. The scaffolding commands stamp the first entry, and `zentaizo edited <path>` appends or refreshes it on later edits — resolving the editor identity from the same commit-trailer cache the commit-attribution hook uses, so the recorded model + reasoning effort is never the model's own guess.
 
 These are useful for preserving the reasoning behind an answer or implementation plan.
 

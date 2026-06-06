@@ -53,7 +53,17 @@ If the agent that drafted the plan will also implement it, skip this section and
 
 If a *different* agent will implement (e.g. one model plans, an implementing agent such as Codex, Claude, or Gemini executes):
 
-1. After the user approves the plan (while `status:` is still `planned`), run `zentaizo next-handoff <id> [agent]` — where `<id>` is the paired plan's slice number and the optional `[agent]` topic is `codex`/`claude`/`gemini`/… — to scaffold `sessions/handoffs/<label>-NNNN<letter>[-<agent>].md`. Fill the prompt body: name the plan file as the authoritative spec, the editable repos, the environment/preflight steps, and any standing guardrails; keep generated context (commit SHAs, paths, HEAD) current so the implementor doesn't act on stale state.
+1. After the user approves the plan (while `status:` is still `planned`), run `zentaizo next-handoff <id> [agent]` — where `<id>` is the paired plan's slice number and the optional `[agent]` topic is `codex`/`claude`/`gemini`/… — to scaffold `sessions/handoffs/<label>-NNNN<letter>[-<agent>].md` from `skills/handoff-template.md`. The handoff is handed to the implementing agent **by reference**, so everything below the frontmatter *is* the prompt: keep it self-contained, cut surrounding narration, and delete the scaffold comment once written. The CLI stamps `created`/`edited_by` (so it's clear which model wrote it) and names the plan as the spec; re-run `zentaizo edited <handoff>` after revising.
+
+   Write the body to name — and *only* what this slice needs (omit what doesn't apply; don't paste standing boilerplate):
+   - **Spec** — the plan file is authoritative; a contradiction with it is a STOP, not something to reinterpret.
+   - **Scope & guardrails** — which editable repo(s) to change, and the hard "do not touch" boundaries.
+   - **Branch state** — the branch, its base, and the expected HEAD, so the implementor doesn't act on stale state.
+   - **Inputs / preflight** — required inputs, cached-artifact locations, and the regenerate command when an artifact may be missing.
+   - **Verification** — the gates to pass, and what a valid negative/STOP result looks like (a measurement slice can legitimately conclude "no").
+   - **Environment quirks** — sandbox/network prefixes, exact branch-creation commands, code-map freshness — *only* when this slice needs them; they are slice-specific, not standing rules.
+
+   Closeout is not re-specified in the handoff: the implementor follows § Closing out below, and commit attribution follows the **implementing** agent's own rule, not the planner's.
 2. Hand off. The implementing agent reads `AGENTS.md` + the plan + the handoff, flips the plan to `status: in-progress`, and resumes at *Executing the plan* below.
 3. Handoffs are execution glue, not part of the plan's lifecycle: run `zentaizo next-handoff <id> resume` (or `restart`/`diagnosis`) for each restart — it auto-assigns the next per-slice letter, so repeated handoffs never collide — and remember they do **not** consume the `changes/`/`debugging/` counter (see `AGENTS.md` § Recording Work in `sessions/`).
 

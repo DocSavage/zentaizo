@@ -343,7 +343,7 @@ The judgment calls the table can't capture: `brainstorming/` is *input before* a
 
 ### Editor attribution (`edited_by`)
 
-Frontmatter-bearing session files (`changes/`, `debugging/`, `reports/`) carry an `edited_by:` list — an ordered ledger of which model or human crafted, reviewed, or modified the file. Each entry is a git-style local timestamp, two spaces, then the editor identity:
+Frontmatter-bearing session files (`changes/`, `debugging/`, `reports/`, `handoffs/`) carry an `edited_by:` list — an ordered ledger of which model or human crafted, reviewed, or modified the file. Each entry is a git-style local timestamp, two spaces, then the editor identity:
 
 ```text
 edited_by:
@@ -2642,6 +2642,17 @@ def scaffold_report(template: str, slug: str, now: str) -> str:
     return _set_frontmatter_field(text, "created", f'"{now}"')
 
 
+def scaffold_handoff(template: str, now: str, spec: str | None) -> str:
+    """Fill the handoff template's `created` and, when tied to a plan, the
+    `<spec>` placeholder. For an untied handoff (id 0000), drop the spec line so
+    the body stays purely the prompt."""
+    text = _set_frontmatter_field(template, "created", f'"{now}"')
+    if spec is not None:
+        return text.replace("<spec>", spec)
+    text = "\n".join(line for line in text.split("\n") if "<spec>" not in line)
+    return re.sub(r"\n{3,}", "\n\n", text)  # tidy the gap left by the dropped spec line
+
+
 def _write_exclusive(path: pathlib.Path, text: str) -> None:
     """Create ``path`` with ``text``, refusing to clobber an existing file."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -2799,13 +2810,14 @@ def next_handoff(args: argparse.Namespace) -> int:
     topic = normalize_slug(args.topic, kind="topic") if args.topic else None
     name = f"{label}-{padded}{letter}" + (f"-{topic}" if topic else "") + ".md"
     now = utc_now()
-    heading = f"# {label}-{padded}{letter} handoff" + (f" — {topic}" if topic else "")
-    lines = [heading, "", f"Date: {now}", ""]
-    if spec is not None:
-        lines += [f"Spec: {_rel(workspace, spec)}", ""]
-    lines += ["<!-- Paste-ready execution prompt below. -->", ""]
+    text = scaffold_handoff(
+        _read_template(workspace, "handoff-template.md"),
+        now,
+        _rel(workspace, spec) if spec is not None else None,
+    )
     target = workspace / SESSIONS_DIR / "handoffs" / name
-    _write_exclusive(target, "\n".join(lines))
+    _write_exclusive(target, text)
+    _record_edited_by(target, resolve_editor_identity(target.parent, None))
     return _emit_created(
         args, workspace, target, kind="handoff", label=label, counter=int(padded), created=now
     )
