@@ -3,16 +3,19 @@ title: <Report Title>
 status: living
 current_as_of: ""
 created: "YYYY-MM-DDTHH:MM:SSZ"
-updated: "YYYY-MM-DDTHH:MM:SSZ"
 related: []
+edited_by:
 # destined_for: <path in a production repo's docs/, once this is cut>
 ---
 
 <!--
   CLI-consumed contract: `zentaizo next-report` scaffolds this file by
-  string-replacing the `title`, `created`, and `updated` frontmatter lines
-  above. Keep those keys present, at the start of their line, and the
-  frontmatter as the very first thing in the file.
+  string-replacing the `title` and `created` frontmatter lines above, and
+  stamping the first `edited_by:` entry. Keep those keys present, at the start of
+  their line, and the frontmatter as the very first thing in the file. There is
+  no `updated:` field — run `zentaizo edited <this file>` after each substantive
+  revision to extend the `edited_by:` ledger (its latest entry is the effective
+  last-modified time); never hand-write the model name.
 -->
 
 # <Report title>

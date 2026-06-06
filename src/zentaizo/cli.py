@@ -52,6 +52,39 @@ def utc_now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat()
 
 
+# English, locale-independent abbreviations so a stamp reads identically anywhere
+# (git's DATE_NORMAL uses English names; `edited_by` mirrors that).
+_WEEKDAY_ABBR = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+_MONTH_ABBR = (
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+)
+
+
+def git_style_now() -> str:
+    """Local-time timestamp in git's default (DATE_NORMAL) shape, e.g.
+    ``Tue Jun 2 12:41:53 2026 -0400``.
+
+    Used for ``edited_by`` entries so they read like a commit's author/date line
+    (non-padded day, English names, trailing UTC offset).
+    """
+    dt = datetime.now().astimezone()
+    return (
+        f"{_WEEKDAY_ABBR[dt.weekday()]} {_MONTH_ABBR[dt.month - 1]} {dt.day} "
+        f"{dt:%H:%M:%S} {dt.year} {dt:%z}"
+    )
+
+
 def read_json(path: pathlib.Path) -> dict:
     try:
         return json.loads(path.read_text())
@@ -247,13 +280,7 @@ If `{ATLAS_NAME}` is missing, make creating it the first task. Interview the use
 
 Before interviewing from scratch, check `sessions/brainstorming/` — if the user has already dropped AI chat transcripts, source inventories, or design conversations there, read them first and use them to draft the atlas. The interview then fills gaps rather than starting cold.
 
-Read `skills/curate-atlas.md` for the full interview procedure and follow it. (If your host tool also exposes a `zentaizo` or `curate-atlas` skill, that skill loads the same file.) If `skills/curate-atlas.md` is missing, follow this workflow directly:
-
-1. Identify the system boundary: the product, service, research area, or ecosystem this workspace should explain.
-2. List core repositories, including services, frontends, clients, SDKs, shared libraries, schemas, deployment, tests, and examples. For each repo decide `role: "edit"` (user will modify) or `role: "reference"` (read-only context).
-3. List durable docs, papers, specs, design notes, issue reports, traces, and local notes that future assistants should consult.
-4. Separate core sources from useful background. Put unresolved relevance or version questions in `summaries/open-questions.md`.
-5. Write `{ATLAS_NAME}` with explicit JSON: `version`, `name`, `description`, grouped `sources`, and summarization settings.
+Read `skills/curate-atlas.md` for the full interview procedure and follow it. (If your host tool also exposes a `zentaizo` or `curate-atlas` skill, that skill loads the same file.) If it is missing, reinstall the bundled skills with `zentaizo skills install` rather than improvising.
 
 Do not write to Claude Memory, ChatGPT Memory, global Codex memory, IDE-wide rule stores, or other personal memory systems unless the user explicitly asks. Keep durable project context in this workspace as committed markdown, JSON, and lock files.
 
@@ -312,14 +339,21 @@ Work is grouped into **efforts** — named bodies of work that may span several 
 
 The clean mental model: **`brainstorming/` is *before* (input), `reports/` is *after* (synthesized output with evidence + a conclusion), `handoffs/` is the *execution* glue; `changes/`/`debugging/`/`questions/` are the work itself.**
 
-In detail:
+The judgment calls the table can't capture: `brainstorming/` is *input before* a decision (transcripts, sketches, surveys) — never a home for execution prompts or finished syntheses. `reports/` is *synthesized output* — keep **one living report per topic** and revise it in place rather than forking a second. A `debugging/` note is a plan-shaped investigation that shares the `changes/` counter. For the lifecycle (draft → execute → close out) and the plan/report body and frontmatter, follow `skills/plan-and-implement.md` and the templates it copies (`skills/plan-template.md`, `skills/report-template.md`) — don't reproduce the schema here. Allocate every file with the CLI (see § Filename Convention); the command for each dir is in the table above.
 
-- `sessions/brainstorming/` — freeform input *before* a decision. Drop AI chat transcripts, sketches, source inventories, surveys, hypotheses, roadmaps, and exploratory design conversations here. No required schema, no required filename pattern. This is the *pre-atlas* dumping ground used to inform `{ATLAS_NAME}` during curation; later it also holds open-ended design discussions that aren't yet executable plans. It is **not** a home for execution prompts (those are `handoffs/`) or finished syntheses (those are `reports/`).
-- `sessions/changes/` — implementation plans for multi-repo changes. Run `zentaizo next-change <slug>` to allocate and scaffold the file (see § Filename Convention); it fills the `status`/`created`/`updated`/`label` frontmatter. Before editing in earnest, save a plan covering problem, files involved, step-by-step approach, and verification. The status frontmatter convention (documented in `skills/plan-and-implement.md`, scaffolded by `skills/plan-template.md`) lets a single file track the work from planning through delivery. The full procedure (drafting -> executing -> closing out) is in `skills/plan-and-implement.md`.
-- `sessions/questions/` — Q&A logs. When the user asks a substantive cross-repo question and you produce a researched answer, run `zentaizo next-note <slug>` and fill in the question, the answer, and source citations. Named `YYYY-MM-DD-<slug>.md` (date-prefixed, topical; no effort/counter).
-- `sessions/debugging/` — plan-shaped bug investigations. Run `zentaizo next-debugging <slug>`; it scaffolds the same plan shape as `changes/` (Context / Hypotheses / Investigation / Acceptance criteria / Outcome) and draws the **same per-effort counter**, so a change and a debugging note never reuse a number.
-- `sessions/handoffs/` — paste-ready **execution prompts** for whichever agent implements the work (Codex, Claude, Gemini, … — the implementor is not assumed): the initial handoff to that agent, plus resume/restart and diagnosis prompts. These are *execution glue* tied to a slice, not brainstorming — keep them out of `brainstorming/`. Run `zentaizo next-handoff <id> [topic]`: it reuses the paired slice's id, auto-assigns the next per-slice letter (`a`, `b`, …) as the uniqueness key, and appends the optional free-text `topic` (a handoff type, an agent name, or nothing — not load-bearing). The result is `<label>-NNNN<letter>[-<topic>].md`, e.g. `katana-0007a-codex.md`, `katana-0007b-resume.md`. A handoff not tied to a numbered slice uses id `0000`. Handoffs do **not** consume the per-effort counter (only `changes/`/`debugging/` do).
-- `sessions/reports/` — evidence-backed **living syntheses with a conclusion**: cross-slice deliverables that are *must-reads* before architecture decisions, distinct from a one-shot `questions/` answer and from pre-decision `brainstorming/`. Run `zentaizo next-report <slug>` to scaffold one from `skills/report-template.md`; named by a **topical slug** (`<slug>.md`, e.g. `auth-rollout-findings.md`). Frontmatter carries `title`, `status: living|final`, `current_as_of:`, `created/updated`, `related:` (the slices that fed it), and optionally `destined_for:` (e.g. a production repo's `docs/` once cut). Keep **one living report per topic** and revise it in place as new results land — do not fork a second report for the same topic. `current_as_of` marks the latest state the report reflects (a slice id and/or date, e.g. `katana-0007 (2026-05-20)` — not a strict timestamp); bump it on each revision.
+### Editor attribution (`edited_by`)
+
+Frontmatter-bearing session files (`changes/`, `debugging/`, `reports/`) carry an `edited_by:` list — an ordered ledger of which model or human crafted, reviewed, or modified the file. Each entry is a git-style local timestamp, two spaces, then the editor identity:
+
+```text
+edited_by:
+  - Tue Jun 2 12:41:53 2026 -0400  Claude Opus 4.8 (1M context, reasoning xhigh)
+  - Thu Jun 4 23:33:15 2026 -0400  Codex gpt-5.5 (reasoning xhigh)
+```
+
+The scaffolding commands stamp the first entry. After **any** substantive edit to a session file, run `zentaizo edited <path>` to log it. **Do not hand-write the identity** — a model can't reliably name its own model id: the CLI resolves it from the same commit-trailer cache the attribution hook uses (falling back to `git config user.name` for a human shell; `--as "<identity>"` overrides).
+
+Consecutive edits by the same editor collapse into one entry whose timestamp advances; a different editor appends a new line, so hand-offs between models (or to a human) stay visible. There is no `updated:` field: the most recent `edited_by:` entry *is* the last-modified record (`created:` remains the stable creation timestamp). So at each status transition, run `zentaizo edited <path>` instead of hand-editing a timestamp.
 
 ### Filename Convention
 
@@ -329,7 +363,7 @@ Session files are allocated by the CLI — you never hand-compose a name or hand
 - `zentaizo next-change <slug>` — a plan in `changes/`. `zentaizo next-debugging <slug>` — a debugging note in `debugging/`. `zentaizo next-handoff <id> [topic]` — a handoff (omit the id, or use `0000`, for one not tied to a numbered slice). `zentaizo next-note <slug>` / `zentaizo next-report <slug>` — a Q&A log / a living report. All default to the current effort; pass `--label <effort>` to target another.
 - To read, `zentaizo path slice <id>` (recovers the slug from the id) or `zentaizo path active` (the highest open plan); `zentaizo effort show` for an effort's repos/branches/slices.
 
-The commands apply the per-effort label (prefixed), allocate the shared `changes/`+`debugging/` counter, and scaffold correct frontmatter (`status`/`created`/`updated`/`label`).
+The commands apply the per-effort label (prefixed), allocate the shared `changes/`+`debugging/` counter, and scaffold correct frontmatter (`status`/`created`/`label`).
 
 | Subdirectory | Shape (for reading at a glance) |
 |---|---|
@@ -339,30 +373,21 @@ The commands apply the per-effort label (prefixed), allocate the shared `changes
 | `reports/` | `<slug>.md` (topical, living) |
 | `brainstorming/` | freeform, no required schema |
 
-The date does not appear in `changes/`/`debugging/`/`handoffs/`/`reports/` names; it lives in frontmatter as `created:`/`updated:` (ISO 8601 UTC) and is canonical there. If `zentaizo` is not on your PATH, install it (see the README) rather than naming a file by hand.
+The date does not appear in `changes/`/`debugging/`/`handoffs/`/`reports/` names; the creation date lives in frontmatter as `created:` (ISO 8601 UTC) and is canonical there, while each later edit is recorded in `edited_by:` (see § Editor attribution). If `zentaizo` is not on your PATH, install it (see the README) rather than naming a file by hand.
 
 Use `tmp/` as a workspace-local scratch directory. It's under `.gitignore` and is only cleared by the user.
 
 ### Commits
 
-Commit changes at reasonable milestones. For editable repos, make focused commits after each coherent, verified implementation slice rather than mixing unrelated source, docs, and generated artifacts.
+Commit at verified milestones. The Zentaizo-specific rule: **commit workspace notes/plans separately from editable-repo code** — they live in different repositories, so keeping them apart preserves a clean lineage.
 
-Before each commit, run relevant verification, inspect git status, and commit only files belonging to that milestone. Do not commit generated build outputs, local fixtures, local environment directories such as `.pixi/`, or unrelated workspace changes. Commit messages should capture the breadth of the changes, not just one detail; use bullet items in the body for significant changes. When a commit needs both a subject and body, write one complete commit message and pass it with `git commit -F` rather than repeated `-m` flags (repeated `-m` inserts unwanted blank lines).
+If your harness emits a `Co-authored-by:` trailer, it should carry the real model + reasoning effort used, not a hardcoded value (the bundled commit-attribution hook does this automatically when installed — the same identity that lands in `edited_by`; see § Editor attribution).
 
-If your AI harness emits a `Co-authored-by:` trailer, include the actual model identifier and reasoning level used in the session rather than a hardcoded value. Determine these from the active session or local harness configuration before committing.
-
-Commit Zentaizo workspace notes/plans separately from edited repo code. Do not mix workspace session commits with editable-repo commits — they belong to different repositories anyway, and keeping them separate preserves a clean lineage.
-
-The status-frontmatter schema (`status`/`created`/`updated`/`label`/`editable_repos` plus the optional `related` field), the `## Plan`/`## Outcome` body sections, and the acceptance-checkbox closeout rule are documented in `skills/plan-and-implement.md` and scaffolded by `skills/plan-template.md`. The CLI fills `status`/`created`/`updated`/`label`; you fill `editable_repos` (the subset of the effort's repos this slice touches) and the body. Each repo's branch and divergence base live in the effort registry (`sessions/efforts.json`), not in the plan frontmatter. Follow the skill/template rather than reproducing the schema here.
+The status-frontmatter schema (`status`/`created`/`label`/`editable_repos`/`edited_by` plus the optional `related` field), the `## Plan`/`## Outcome` body sections, and the acceptance-checkbox closeout rule are documented in `skills/plan-and-implement.md` and scaffolded by `skills/plan-template.md`. The CLI fills `status`/`created`/`label` and stamps the first `edited_by:` entry (see § Editor attribution); you fill `editable_repos` (the subset of the effort's repos this slice touches) and the body. Each repo's branch and divergence base live in the effort registry (`sessions/efforts.json`), not in the plan frontmatter. Follow the skill/template rather than reproducing the schema here.
 
 ## From Brainstorming to Plan
 
-When the user shares a design conversation, source inventory, or freeform implementation sketch:
-
-1. Save the raw material under `sessions/brainstorming/` with a meaningful filename.
-2. Separate workspace-generic facts from project-specific constraints. Generic facts (which repos exist, which are editable, what the system is) belong in `{ATLAS_NAME}`. Project-specific constraints (hardware targets, phase exclusions, acceptance criteria, reporting format) belong in the eventual `sessions/changes/` plan.
-3. Run `skills/plan-and-implement.md` to distill the actionable parts into a plan: pick or start the effort (`zentaizo effort new` / `zentaizo effort list`), then `zentaizo next-change <slug>`. Link back to the brainstorming source(s) so the lineage is preserved.
-4. If a *different* agent will implement the plan than the one that wrote it — a **planner/implementor split** (e.g. one agent plans, an implementing agent such as Codex/Claude/Gemini executes) — capture a paste-ready execution prompt with `zentaizo next-handoff <id> [agent]` once the plan is approved. `skills/plan-and-implement.md` covers when to write it and what it holds; if the same agent plans and implements, no handoff is needed.
+When the user shares a design conversation, sketch, or source inventory, save it under `sessions/brainstorming/`, then follow `skills/plan-and-implement.md` to distill it into a plan. The one split to get right: workspace-generic facts (which repos exist, which are editable, what the system is) belong in `{ATLAS_NAME}`; project-specific constraints (targets, phase exclusions, acceptance criteria) belong in the `sessions/changes/` plan. The skill covers the rest, including when a planner/implementor split needs a handoff.
 """
 
 
@@ -522,6 +547,89 @@ def cache_commit_trailer(args: argparse.Namespace) -> int:
     if model or effort:
         _write_trailer_cache("claude", model, effort, session_id or None)
     return 0
+
+
+def _read_trailer_cache(provider: str, key: str | None) -> tuple[str, str]:
+    """Read a cached ``(model, effort)`` pair written by ``cache-commit-trailer``.
+
+    The reader counterpart of ``_write_trailer_cache``: keyed by session/thread
+    id with a ``latest.json`` fallback. This mirrors the standalone
+    prepare-commit-msg hook's own reader (which must stay self-contained, so the
+    two cannot share code) — both consume the same cache so ``edited_by`` and the
+    commit ``Co-authored-by`` trailer report the same model identity.
+    """
+    base = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
+    cache_dir = pathlib.Path(base) / provider / "commit-trailer"
+    candidates: list[pathlib.Path] = []
+    safe_key = _safe_trailer_cache_key(key)
+    if safe_key:
+        candidates.append(cache_dir / f"{safe_key}.json")
+    candidates.append(cache_dir / "latest.json")
+    for path in candidates:
+        try:
+            data = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        if isinstance(data, dict):
+            return str(data.get("model") or ""), str(data.get("effort") or "")
+    return "", ""
+
+
+def _with_effort(model: str, effort: str) -> str:
+    """Fold a reasoning effort into a model name's trailing parens (matching the
+    commit-attribution hook): ``Opus 4.8 (1M context)`` + ``xhigh`` ->
+    ``Opus 4.8 (1M context, reasoning xhigh)``; with no parens, append them.
+    """
+    if not effort:
+        return model
+    if model.rstrip().endswith(")"):
+        return re.sub(r"\)\s*$", f", reasoning {effort})", model)
+    return f"{model} (reasoning {effort})"
+
+
+def _claude_editor_identity() -> str:
+    model, effort = _read_trailer_cache("claude", os.environ.get("CLAUDE_CODE_SESSION_ID"))
+    if not effort:
+        effort = os.environ.get("CLAUDE_EFFORT", "")
+    if not model:
+        return "Claude (model unknown)"
+    return f"Claude {_with_effort(model, effort)}"
+
+
+def _codex_editor_identity() -> str:
+    model, effort = _read_trailer_cache("codex", os.environ.get("CODEX_THREAD_ID"))
+    if not model:
+        return "Codex (model unknown)"
+    return f"Codex {model} (reasoning {effort})" if effort else f"Codex {model}"
+
+
+def agent_editor_identity() -> str | None:
+    """The active AI assistant's human-readable identity, or None outside one.
+
+    Reuses the commit-trailer cache, so it carries the exact model + reasoning
+    effort rather than the model's own guess. When an assistant environment is
+    detected but nothing is cached yet (the statusline producer hasn't run), it
+    returns a ``<Provider> (model unknown)`` label rather than None — so an AI's
+    edit is never silently misattributed to the human git user.
+    """
+    if os.environ.get("CLAUDECODE"):
+        return _claude_editor_identity()
+    if os.environ.get("CODEX_THREAD_ID"):
+        return _codex_editor_identity()
+    return None
+
+
+def human_editor_identity(cwd: pathlib.Path) -> str:
+    """Best-effort human identity for an edit made outside an AI session."""
+    return try_run_git(["config", "user.name"], cwd=cwd) or os.environ.get("USER") or "unknown"
+
+
+def resolve_editor_identity(cwd: pathlib.Path, override: str | None) -> str:
+    """Who to record for an edit: an explicit override, else the active AI
+    assistant, else the human git user."""
+    if override and override.strip():
+        return override.strip()
+    return agent_editor_identity() or human_editor_identity(cwd)
 
 
 def create_workspace(args: argparse.Namespace) -> int:
@@ -2017,6 +2125,8 @@ def read_frontmatter(path: pathlib.Path) -> dict:
             for line in handle:
                 if line.strip() == "---":
                     break
+                if line[:1] in (" ", "\t"):
+                    continue  # indented continuation (e.g. an edited_by list item)
                 key, sep, val = line.partition(":")
                 if sep:
                     fm[key.strip()] = val.strip().strip('"').strip("'")
@@ -2452,17 +2562,84 @@ def _set_frontmatter_field(text: str, key: str, value: str) -> str:
     return re.sub(rf"^{re.escape(key)}:.*$", f"{key}: {value}", text, count=1, flags=re.M)
 
 
+EDITED_BY_KEY = "edited_by"
+# Two-space separator between the timestamp and the identity in an edited_by
+# item, so the identity is recoverable (the timestamp itself uses single spaces).
+_EDITED_BY_SEP = re.compile(r"\s{2,}")
+
+
+def _stamp_edited_by(text: str, identity: str, timestamp: str) -> str:
+    """Record one edit in ``text``'s YAML frontmatter ``edited_by`` ledger.
+
+    Each entry is ``  - <timestamp>  <identity>``. If the most recent entry's
+    identity matches ``identity``, its timestamp is refreshed in place (a run of
+    edits by the same editor collapses to one line); otherwise a new entry is
+    appended, so a hand-off to a different model or human stays visible. Inserts
+    the ``edited_by:`` block before the closing ``---`` when absent.
+    """
+    entry = f"  - {timestamp}  {identity}"
+    lines = text.split("\n")
+    if not lines or lines[0].strip() != "---":
+        raise CliError(
+            "no YAML frontmatter (expected a leading '---' block); cannot record edited_by"
+        )
+    try:
+        close = next(i for i in range(1, len(lines)) if lines[i].strip() == "---")
+    except StopIteration:
+        raise CliError("unterminated YAML frontmatter (no closing '---')") from None
+
+    key_idx = None
+    for i in range(1, close):
+        if lines[i].startswith((" ", "\t")):
+            continue
+        candidate, sep, _ = lines[i].partition(":")
+        if sep and candidate.strip() == EDITED_BY_KEY:
+            key_idx = i
+            break
+
+    if key_idx is None:
+        lines[close:close] = [f"{EDITED_BY_KEY}:", entry]
+        return "\n".join(lines)
+
+    # Collect the contiguous block-list items directly under the key.
+    last_item = None
+    item_end = key_idx + 1
+    for i in range(key_idx + 1, close):
+        stripped = lines[i].lstrip()
+        if lines[i].startswith((" ", "\t")) and stripped.startswith("-"):
+            last_item, item_end = i, i + 1
+        else:
+            break
+
+    if last_item is None:
+        lines[key_idx + 1 : key_idx + 1] = [entry]
+        return "\n".join(lines)
+
+    body = lines[last_item].lstrip()[1:].strip()  # drop the leading "-"
+    parts = _EDITED_BY_SEP.split(body, maxsplit=1)
+    prev_identity = parts[1].strip() if len(parts) == 2 else ""
+    if prev_identity == identity:
+        lines[last_item] = entry  # collapse: same editor, advance the timestamp
+    else:
+        lines[item_end:item_end] = [entry]
+    return "\n".join(lines)
+
+
+def _record_edited_by(path: pathlib.Path, identity: str) -> None:
+    """Stamp ``path``'s frontmatter with an ``edited_by`` entry for ``identity``."""
+    text = path.read_text(encoding="utf-8")
+    path.write_text(_stamp_edited_by(text, identity, git_style_now()), encoding="utf-8")
+
+
 def scaffold_plan(template: str, label: str, now: str) -> str:
     text = _set_frontmatter_field(template, "created", f'"{now}"')
-    text = _set_frontmatter_field(text, "updated", f'"{now}"')
     return _set_frontmatter_field(text, "label", label)
 
 
 def scaffold_report(template: str, slug: str, now: str) -> str:
     title = slug.replace("-", " ").title()
     text = _set_frontmatter_field(template, "title", title)
-    text = _set_frontmatter_field(text, "created", f'"{now}"')
-    return _set_frontmatter_field(text, "updated", f'"{now}"')
+    return _set_frontmatter_field(text, "created", f'"{now}"')
 
 
 def _write_exclusive(path: pathlib.Path, text: str) -> None:
@@ -2589,6 +2766,7 @@ def _next_slice(args: argparse.Namespace, subdir: str) -> int:
     text = scaffold_plan(_read_template(workspace, "plan-template.md"), label, now)
     target = workspace / SESSIONS_DIR / subdir / f"{label}-{counter:04d}-{slug}.md"
     _write_exclusive(target, text)
+    _record_edited_by(target, resolve_editor_identity(target.parent, None))
     return _emit_created(
         args, workspace, target, kind=subdir, label=label, counter=counter, created=now
     )
@@ -2654,9 +2832,25 @@ def next_report(args: argparse.Namespace) -> int:
     text = scaffold_report(_read_template(workspace, "report-template.md"), slug, now)
     target = workspace / SESSIONS_DIR / "reports" / f"{slug}.md"
     _write_exclusive(target, text)
+    _record_edited_by(target, resolve_editor_identity(target.parent, None))
     return _emit_created(
         args, workspace, target, kind="reports", label=None, counter=None, created=now
     )
+
+
+def edited_session(args: argparse.Namespace) -> int:
+    """Record that the current editor (AI assistant or human) touched a session
+    file, appending or refreshing its ``edited_by`` frontmatter ledger."""
+    path = pathlib.Path(args.path)
+    if not path.is_file():
+        raise CliError(f"No such file: {path}", 1)
+    identity = resolve_editor_identity(path.resolve().parent, getattr(args, "as_", None))
+    _record_edited_by(path, identity)
+    if args.json:
+        print(json.dumps({"path": str(path), "edited_by": identity, "wrote": True}))
+    else:
+        print(f"{path}: {identity}")
+    return 0
 
 
 # --------------------------------------------------------------------------
@@ -2920,6 +3114,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="read Codex config and cache its model + reasoning effort",
     )
     cache_trailer.set_defaults(func=cache_commit_trailer)
+
+    edited = sub.add_parser(
+        "edited",
+        help="record that the current editor (AI or human) touched a session "
+        "file (appends/refreshes its edited_by frontmatter)",
+    )
+    edited.add_argument("path", help="session file to stamp")
+    edited.add_argument(
+        "--as",
+        dest="as_",
+        metavar="IDENTITY",
+        help='override the recorded editor identity (e.g. a human: "Ada Lovelace")',
+    )
+    edited.add_argument("--json", action="store_true", help="emit JSON")
+    edited.set_defaults(func=edited_session)
 
     validate = sub.add_parser("validate", help="validate a workspace atlas")
     validate.add_argument("workspace", nargs="?", default=".", help="workspace directory")

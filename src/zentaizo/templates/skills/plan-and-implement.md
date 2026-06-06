@@ -32,7 +32,7 @@ Before drafting the plan:
 ## Drafting the plan
 
 1. Run `zentaizo next-change <slug>` to allocate and scaffold the plan in `sessions/changes/` (defaults to the current effort; pass `--label <effort>` to target another). It composes the name `<label>-NNNN-<slug>.md`, allocates the per-effort counter, and writes the scaffold from `skills/plan-template.md` — you never derive the name, counter, or prefix by hand. Capture the printed path; `zentaizo path slice --next` previews the next id without writing.
-2. The CLI has already filled the deterministic frontmatter (`status: planned`; quoted UTC `created`/`updated`; `label`). You fill:
+2. The CLI has already filled the deterministic frontmatter (`status: planned`; quoted UTC `created`; `label`) and stamped the first `edited_by:` entry crediting whoever ran the command. There is no `updated:` field — the latest `edited_by:` entry is the effective last-modified time. You fill:
    - `editable_repos`: only the subset of the effort's `role: "edit"` repos this plan will actually modify.
    - Each repo's branch and divergence base are **not** in the plan — they live in the effort registry. Register a branch with `zentaizo effort set-branch <label> --repo <name>=<branch>` when you open one (it computes the base sha).
 3. Fill in the `## Plan` section:
@@ -61,7 +61,7 @@ If a *different* agent will implement (e.g. one model plans, an implementing age
 
 Once the user approves (and, for a split, once the handoff has been written):
 
-1. Update the plan's frontmatter: `status: in-progress`, refresh `updated` to the current quoted UTC ISO timestamp. Treat the `## Plan` section as frozen from this point, except for marking acceptance criteria checkboxes during closeout. If scope changes mid-flight, capture it as a deviation in the upcoming `## Outcome` rather than rewriting the plan.
+1. Set the plan's frontmatter to `status: in-progress`, then run `zentaizo edited <plan>` to record your edit in the `edited_by:` ledger (the CLI fills in the model/effort or human identity — never hand-write it; see `AGENTS.md` § Editor attribution). Treat the `## Plan` section as frozen from this point, except for marking acceptance criteria checkboxes during closeout. If scope changes mid-flight, capture it as a deviation in the upcoming `## Outcome` rather than rewriting the plan.
 2. Work step by step through the approach. Modify files only in repos with `role: "edit"` in the atlas. Read reference repos freely but do not write to them.
 3. Run the verification steps as you go, not just at the end.
 4. If a substantive cross-repo question comes up that the user answers, run `zentaizo next-note <slug>` and fill in the Q&A (date-prefixed; no effort/counter). If a bug investigation is needed mid-implementation, run `zentaizo next-debugging <slug>` — it scaffolds the **same plan shape** as a change (Context / Hypotheses / Investigation / Acceptance criteria / Outcome) and draws the same per-effort counter as `changes/`, so a debugging note is "a plan for an investigation," not a loose trace. Link these back from the plan if they were load-bearing.
@@ -76,7 +76,7 @@ When the work ships (or is abandoned):
    - **Surprises and lessons** — load-bearing context that isn't obvious from the diff.
    - **Follow-up work** — deferred items; link to any new `sessions/changes/` entries you opened.
    - **Links** — PRs, generated artifacts, related debugging or Q&A files.
-2. Update the frontmatter: `status: done` (or `abandoned`), refresh `updated` to the current quoted UTC ISO timestamp.
+2. Set the frontmatter to `status: done` (or `abandoned`), and run `zentaizo edited <plan>` to log the closing edit.
 3. Review the `### Acceptance criteria` checklist. Mark each fulfilled item as `[x]`; leave unmet or only partially met items as `[ ]` and explain them under **Deviations from the plan** or **Follow-up work**.
 4. Show the user the final plan file. Ask whether to commit it alongside the code changes. Workspace plan commits and editable-repo code commits go to different repositories — see `AGENTS.md` § Commits.
 

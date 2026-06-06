@@ -1,19 +1,23 @@
 ---
 status: planned
 created: "YYYY-MM-DDTHH:MM:SSZ"
-updated: "YYYY-MM-DDTHH:MM:SSZ"
 label: main
 editable_repos: []
+edited_by:
 # related: [<path>, ...]
 ---
 
 <!--
   CLI-consumed contract: `zentaizo next-change` / `next-debugging` scaffold this
-  file by string-replacing the `status`, `created`, `updated`, and `label`
-  frontmatter lines above. Keep those keys present, at the start of their line,
-  and the frontmatter as the very first thing in the file (a reader scans the
-  leading `---` … `---` block). The effort's per-repo branch and base sha live
-  in the registry (`sessions/efforts.json`), not here.
+  file by string-replacing the `status`, `created`, and `label` frontmatter
+  lines above, and stamping the first `edited_by:` entry. Keep those keys
+  present, at the start of their line, and the frontmatter as the very first
+  thing in the file (a reader scans the leading `---` … `---` block). There is
+  no `updated:` field — run `zentaizo edited <this file>` after each substantive
+  edit to extend the `edited_by:` ledger (who crafted, reviewed, or modified the
+  plan, and when); the latest entry is the effective last-modified time. Never
+  hand-write the model name. The effort's per-repo branch and base sha live in
+  the registry (`sessions/efforts.json`), not here.
 -->
 
 # <Concise plan title>

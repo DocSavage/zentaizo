@@ -15,8 +15,10 @@ from zentaizo.cli import (
     HOOK_MARKER,
     CliError,
     _HttpResult,
+    _stamp_edited_by,
     compute_policy,
     default_atlas,
+    git_style_now,
     install_commit_attribution_hook,
     main,
 )
@@ -52,12 +54,16 @@ class CliTests(unittest.TestCase):
             self.assertIn("If `zentaizo.atlas.json` is missing", agents)
             self.assertIn("Do not write to Claude Memory", agents)
             self.assertIn("skills/curate-atlas.md", agents)
-            self.assertIn("sessions/brainstorming/", agents)
-            self.assertIn("sessions/changes/", agents)
-            self.assertIn("sessions/questions/", agents)
-            self.assertIn("sessions/debugging/", agents)
-            self.assertIn("sessions/handoffs/", agents)
-            self.assertIn("sessions/reports/", agents)
+            # All six session subdirs are documented (named in the summary table).
+            for subdir in (
+                "brainstorming",
+                "changes",
+                "questions",
+                "debugging",
+                "handoffs",
+                "reports",
+            ):
+                self.assertIn(f"{subdir}/", agents)
             self.assertIn("Editable vs Reference Repos", agents)
             # Consultation order puts upstream docs above raw repos.
             self.assertIn("the abbreviated, authoritative layer between summaries", agents)
@@ -66,7 +72,7 @@ class CliTests(unittest.TestCase):
                 agents.index("Use `repos/` for implementation details"),
             )
             # The status-frontmatter schema lives in the skill/template, not AGENTS.md.
-            self.assertIn("status frontmatter convention", agents)
+            self.assertIn("status-frontmatter schema", agents)
             self.assertIn("skills/plan-template.md", agents)
             self.assertIn("skills/plan-and-implement.md", agents)
 
@@ -1911,6 +1917,125 @@ class CommitAttributionHookTests(unittest.TestCase):
             ):
                 self.assertEqual(main(["cache-commit-trailer", "--codex"]), 0)
             self.assertFalse((Path(tmp) / "codex").exists())
+
+
+class EditedByUnitTests(unittest.TestCase):
+    """Pure-function behavior of the ``edited_by`` frontmatter ledger."""
+
+    BASE = "---\nstatus: planned\nlabel: dojo\nedited_by:\n---\nbody text\n"
+
+    def _items(self, text: str) -> list[str]:
+        return [ln for ln in text.splitlines() if ln.startswith("  - ")]
+
+    def test_first_entry_under_existing_key(self):
+        out = _stamp_edited_by(self.BASE, "Claude X", "TS1")
+        self.assertEqual(self._items(out), ["  - TS1  Claude X"])
+
+    def test_consecutive_same_editor_collapses(self):
+        out = _stamp_edited_by(self.BASE, "Claude X", "TS1")
+        out = _stamp_edited_by(out, "Claude X", "TS2")
+        self.assertEqual(self._items(out), ["  - TS2  Claude X"])
+
+    def test_different_editor_appends_and_keeps_handoffs_visible(self):
+        out = _stamp_edited_by(self.BASE, "Claude X", "TS1")
+        out = _stamp_edited_by(out, "Codex Y", "TS2")
+        out = _stamp_edited_by(out, "Claude X", "TS3")
+        self.assertEqual(
+            self._items(out),
+            ["  - TS1  Claude X", "  - TS2  Codex Y", "  - TS3  Claude X"],
+        )
+
+    def test_block_inserted_when_key_absent(self):
+        text = "---\nstatus: planned\n---\nbody\n"
+        out = _stamp_edited_by(text, "Claude X", "TS1")
+        self.assertIn("edited_by:\n  - TS1  Claude X\n", out)
+        # inserted inside the frontmatter, before the closing fence
+        self.assertLess(out.index("edited_by:"), out.index("---", 4))
+
+    def test_body_is_preserved(self):
+        out = _stamp_edited_by(self.BASE, "Claude X", "TS1")
+        self.assertTrue(out.endswith("body text\n"))
+
+    def test_no_frontmatter_raises(self):
+        with self.assertRaises(CliError):
+            _stamp_edited_by("# just a heading\n", "Claude X", "TS1")
+
+    def test_git_style_now_format(self):
+        self.assertRegex(
+            git_style_now(),
+            r"^[A-Z][a-z]{2} [A-Z][a-z]{2} \d{1,2} \d{2}:\d{2}:\d{2} \d{4} [+-]\d{4}$",
+        )
+
+
+class EditedByCliTests(WorkspaceCliCase):
+    def _fake_claude_cache(self, tmp: str) -> Path:
+        cache = Path(tmp) / "xdg"
+        trailer_dir = cache / "claude" / "commit-trailer"
+        trailer_dir.mkdir(parents=True)
+        (trailer_dir / "latest.json").write_text(
+            json.dumps({"model": "Opus 4.8 (1M context)", "effort": "xhigh"})
+        )
+        return cache
+
+    def _entries(self, path: Path) -> list[str]:
+        return [ln for ln in path.read_text().splitlines() if ln.startswith("  - ")]
+
+    def test_next_change_stamps_creator_from_trailer_cache(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._run(["effort", "new", "dojo", "-C", str(workspace)])
+            env = {"XDG_CACHE_HOME": str(self._fake_claude_cache(tmp)), "CLAUDECODE": "1"}
+            with mock.patch.dict(os.environ, env, clear=False):
+                os.environ.pop("CLAUDE_CODE_SESSION_ID", None)  # force latest.json
+                code, out, _ = self._run(["next-change", "wire", "-C", str(workspace)])
+            self.assertEqual(code, 0)
+            plan = workspace / out.strip()
+            self.assertTrue(
+                self._entries(plan)[-1].endswith("Claude Opus 4.8 (1M context, reasoning xhigh)")
+            )
+
+    def test_edited_records_git_user_outside_agent_session(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._run(["effort", "new", "dojo", "-C", str(workspace)])
+            env = {"XDG_CACHE_HOME": str(Path(tmp) / "empty")}
+            with mock.patch.dict(os.environ, env, clear=False):
+                for key in ("CLAUDECODE", "CODEX_THREAD_ID"):
+                    os.environ.pop(key, None)
+                _git(workspace, "config", "user.name", "Ada Lovelace")
+                code, out, _ = self._run(["next-change", "wire", "-C", str(workspace)])
+                plan = workspace / out.strip()
+                self.assertTrue(self._entries(plan)[-1].endswith("Ada Lovelace"))
+                # a second edit by the same human collapses, not appends
+                self.assertEqual(self._run(["edited", str(plan)])[0], 0)
+                self.assertEqual(len(self._entries(plan)), 1)
+
+    def test_edited_as_override_appends_with_git_style_timestamp(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._run(["effort", "new", "dojo", "-C", str(workspace)])
+            plan = workspace / self._run(["next-change", "wire", "-C", str(workspace)])[1].strip()
+            before = len(self._entries(plan))
+            self.assertEqual(self._run(["edited", str(plan), "--as", "Grace Hopper"])[0], 0)
+            entries = self._entries(plan)
+            self.assertEqual(len(entries), before + 1)
+            self.assertTrue(entries[-1].endswith("  Grace Hopper"))
+            timestamp = entries[-1][len("  - ") :].rsplit("  ", 1)[0]
+            self.assertRegex(
+                timestamp,
+                r"^[A-Z][a-z]{2} [A-Z][a-z]{2} \d{1,2} \d{2}:\d{2}:\d{2} \d{4} [+-]\d{4}$",
+            )
+
+    def test_edited_missing_file_exits_1(self):
+        self.assertEqual(self._run(["edited", "/no/such/file.md"])[0], 1)
+
+    def test_edited_without_frontmatter_exits_2(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            freeform = Path(tmp) / "freeform.md"
+            freeform.write_text("# notes\n\njust prose\n")
+            code, _, err = self._run(["edited", str(freeform)])
+            self.assertEqual(code, 2)
+            self.assertIn("frontmatter", err)
 
 
 if __name__ == "__main__":
