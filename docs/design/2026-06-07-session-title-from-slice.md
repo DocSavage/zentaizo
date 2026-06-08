@@ -1,6 +1,6 @@
 # Session titles from a per-slice `short_title`: a Claude `SessionStart` hook
 
-_Design doc. Drafted 2026-06-07. Status: proposed (not yet implemented)._
+_Design doc. Drafted 2026-06-07; revised 2026-06-08 to fold in a code-grounded review (resolutions inline). Status: proposed (not yet implemented)._
 
 Give a Claude Code **Remote Control** session a title that names *the work*, not the
 first thing the user happened to type. The title is driven by a short, front-loaded
@@ -15,8 +15,9 @@ agent supplies the one thing a machine cannot — a good short description of th
 ## Problem
 
 Claude Code's Remote Control header shows a session **title** (bold) over the working
-directory (subtitle). With no explicit title, the title falls back — per Claude Code's
-documented resolution order — to *a meaningful message from the conversation*, truncated.
+directory (subtitle). With no explicit title, the title falls back to *a meaningful
+message from the conversation*, truncated — observed behavior; the hooks docs do not
+document the fallback strategy (see below).
 A user opening Remote Control for the first time in the `zen-ACG` workspace saw:
 
 > **configure remote session namin…**
@@ -30,9 +31,11 @@ which effort, which slice* — with the **most distinguishing attribute first**,
 the header truncates aggressively (the example above cut off at ~30 characters, and the
 iPhone header is the most compressed target).
 
-There is no Claude Code **setting** that changes the fallback away from "last meaningful
-message." The only documented levers are `--name`/`/rename` (manual) and a `SessionStart`
-hook that emits a `sessionTitle` (automatic). So the automatic path is a hook — and the
+The hooks docs are **silent on how the fallback title is chosen** (the "last meaningful
+message" behavior above is observed, not documented) and expose no setting to change it.
+The only documented levers are `--name`/`/rename` (manual) and a hook that emits a
+`sessionTitle` (automatic) — documented on both `SessionStart` and `UserPromptSubmit` (we
+use `SessionStart`; § "Why `SessionStart`" explains why). So the automatic path is a hook — and the
 question becomes *what should the hook name the session*.
 
 ### What Claude Code gives us (verified against the docs)
@@ -121,13 +124,23 @@ Examples (effort `ingest`), each ≤ 30 chars:
 CLI-fills-mechanics / agent-fills-judgment split:
 
 - `zentaizo next-change <slug> --short-title "…"` — optional flag. When given, the CLI
-  writes it into frontmatter atomically at creation and validates the 30-char budget
-  (warns, or refuses, past the cap). This is the preferred one-step path.
+  writes it into frontmatter atomically at creation and **enforces the 30-char budget by
+  refusing a value over the cap** — the flag is mechanical input, so it is strict (this is
+  the hard half of the "hard budget" rule above; the soft half is the `validate` nudge
+  below). This is the preferred one-step path.
 - When the flag is omitted, the scaffold leaves a `short_title:` placeholder, and
   `plan-and-implement.md` instructs the agent to fill it before moving the slice to
   `in-progress`. Enforcement is **soft**: an empty `short_title` does not block the status
-  transition; it surfaces as a `validate`/lint nudge, and the hook degrades gracefully via
-  the resolution chain below.
+  transition; it surfaces as a `validate` nudge (see below), and the hook degrades
+  gracefully via the resolution chain below.
+
+This soft nudge is not free today: `validate` does **not** currently inspect session
+frontmatter at all (`validate_workspace` checks atlas shape plus effort-doc integrity
+only). The implementation therefore adds a **session-frontmatter validation pass** to
+`validate` — a *warning* (never a hard error, per Decision 3) for an open slice whose
+`short_title` is empty, and a *warning* for any on-disk `short_title` that exceeds 30
+chars. That overlong warning is the soft counterpart to the CLI flag's hard refusal:
+new input is rejected at the cap, existing files are only nudged.
 
 The frontmatter contract in `plan-template.md` gains one line; the
 CLI-consumed-contract comment is extended to list `short_title` among the fields
@@ -139,7 +152,7 @@ A new subcommand reads the hook JSON on stdin and prints the `SessionStart` deci
 JSON. Pseudocode:
 
 ```
-read stdin as JSON (lenient: empty/garbage -> {} -> fall through to dir name)
+read stdin as JSON (lenient: empty/garbage -> treat as {}; source is then absent)
 source = input.get("source")
 if source not in {"startup", "resume"}: emit {} ; exit 0   # title ignored anyway
 if input.get("session_title"):        emit {} ; exit 0   # respect --name / /rename
@@ -151,11 +164,21 @@ emit {"hookSpecificOutput": {"hookEventName": "SessionStart", "sessionTitle": ti
 check above — the frontmatter field it reads is `short_title`, the deliberate distinction
 from § "Why `short_title`".)
 
-`resolve_title()` reuses helpers that already exist in `cli.py` — no new building blocks:
+`resolve_title()` is built on the slice-scanning machinery that already exists in `cli.py`:
 
-1. **active slice `short_title`** — `find_active_plan(ws, current_label)` →
-   `read_frontmatter(path)["short_title"]`, if present and not the empty placeholder.
-2. else **active slice `slug`** — recovered from the active plan's filename.
+1. **active slice `short_title`** — the active slice is the highest-counter *open* slice
+   for the current effort label, *across both `changes/` and `debugging/`* (`short_title`
+   lives on both). The existing `scan_slice_files(ws, label)` already spans both dirs and
+   the shared per-effort counter; a thin `find_active_slice()` over it (drop
+   `CLOSED_SLICE_STATUSES`, take the max counter) yields that slice, and
+   `read_frontmatter(path).get("short_title")` its title. Use `.get`, never index: an old
+   or freshly-scaffolded slice may lack the field, and a `KeyError` would bubble to the
+   best-effort wrapper and emit `{}`, suppressing the *whole* fallback chain rather than
+   advancing to step 2. A missing, empty, or still-placeholder value falls through to the
+   next step. **Not** `find_active_plan`, which scans `changes/` only and is reused
+   elsewhere (e.g. handoff pairing) with that change-specific meaning — leave its semantics
+   alone.
+2. else **active slice `slug`** — recovered from that same active slice's filename.
 3. else **current effort label** if it is not the reserved `main` — `load_efforts(ws)["current"]`.
 4. else **workspace directory basename** (`ws.name`) — the brand-new-workspace / `main`-effort
    case. (Retained deliberately: a bare directory-name title is liked when there is no
@@ -194,7 +217,24 @@ block, preserving the user's rules). We follow the same pattern for a managed
 - **At create time:** `create_workspace` writes the managed hook into
   `.claude/settings.json` (best-effort, never fails creation), with a `--no-claude-hooks`
   opt-out paralleling `--no-commit-hook`. This is the "installed when a new workspace is
-  created" requirement.
+  created" requirement. **Gate the write on a probe of the PATH `zentaizo`, not just
+  `shutil.which`.** The hook command is the bare console-script name, so two failure modes
+  must both be ruled out: (a) no `zentaizo` on PATH at all (e.g. a workspace created via
+  `python -m zentaizo create` in an env without the entry point), and (b) a *stale*
+  `zentaizo` on PATH — an older global install predating this feature that lacks the
+  `session-title` subcommand. `shutil.which` alone only proves *some* executable exists,
+  not that it is current (the version running `create` need not be the one PATH resolves).
+  Either way every `SessionStart` would fail — command-not-found for (a),
+  `invalid choice: 'session-title'` for (b) — a failure at or before argparse, outside the
+  best-effort `{}` guarantee that only covers exceptions *inside* the subcommand body. So
+  probe: resolve `shutil.which("zentaizo")`, then run it once as `zentaizo session-title`
+  with empty stdin and require exit 0 (the lenient empty-stdin path emits `{}` and exits 0
+  on a current binary; a stale one exits non-zero). Install only if the probe passes;
+  otherwise skip the hook and point the user at `zentaizo claude-hooks` to install it once
+  a current `zentaizo` is on PATH.
+  (Do not paper over this by writing `sys.executable -m zentaizo` into the committed
+  `settings.json`: that bakes one machine's interpreter path into a file the workspace's
+  other users share.)
 - **For existing workspaces:** a small `zentaizo claude-hooks` subcommand runs the same
   merge so workspaces created before this change (e.g. `zen-ACG`) can adopt it, and a line
   in `upgrade-zentaizo.md` points there.
@@ -205,18 +245,33 @@ the CLI* instead of going stale as a copied script (the very rot the
 `upgrade-zentaizo` procedure exists to fix). The scaffolded `settings.json` only ever
 references the command name.
 
-## Known limitation: the title is set at session start, not on slice switch
+## Why `SessionStart` (and the mid-session limitation)
 
-`sessionTitle` only applies on `startup` and `resume` (ignored on `clear`/`compact`), and
-there is no documented CLI path to retitle a *live* session (only the interactive
-`/rename`). So a slice created or activated **mid-session** is not reflected until the
-next resume; the immediate override is `/rename`.
+`sessionTitle` is documented on **two** hook events: `SessionStart`, where it "applies only
+when `source` is `startup` or `resume`," and `UserPromptSubmit`, where the docs say to "use
+[it] to name sessions automatically based on the prompt content." So a *live* session **can**
+be retitled programmatically — via `UserPromptSubmit`, which fires before every prompt —
+not only via the interactive `/rename`. We deliberately use `SessionStart` anyway:
 
-This is acceptable because it aligns with the dominant workflow. In the planner/implementor
-split (`plan-and-implement.md` § Handing off), the implementing session *starts* (or
-resumes) with the slice already created — so `SessionStart`-time resolution picks up the
-right `short_title` exactly when an implementing session begins. We document the
-limitation rather than engineer around it.
+- **Our title tracks workspace state, not prompt content.** It is derived from the active
+  slice's `short_title` / effort / workspace — values that change when *work* moves, not
+  when the *user types*. `UserPromptSubmit`'s documented intent ("based on the prompt
+  content") is a different thing than ours.
+- **`UserPromptSubmit` runs in the blocking pre-prompt path** (a 30-second timeout, on
+  *every* prompt; a stuck hook stalls the session). Recomputing a rarely-changing
+  workspace-state title there is overhead for a value `SessionStart` already resolves once,
+  at the right moment.
+- **The dominant workflow lines up with `SessionStart`.** In the planner/implementor split
+  (`plan-and-implement.md` § Handing off), the implementing session *starts* (or resumes)
+  with the slice already created — so `SessionStart`-time resolution picks up the right
+  `short_title` exactly when an implementing session begins.
+
+The accepted cost is therefore a deliberate scope choice, not a platform limit: a slice
+created or activated **mid-session** is not reflected until the next startup/resume; the
+immediate override is `/rename`. If mid-session slice switches prove common, a
+`UserPromptSubmit` handler — guarded to retitle only when the resolved workspace-state title
+actually changed, so it stays cheap and quiet — is the documented escape hatch, noted as a
+possible follow-up rather than built here.
 
 ## Secondary benefit: the `short_title` is reusable
 
@@ -259,17 +314,25 @@ raises the field's payoff beyond the Claude-only hook.
 
 1. **`short_title` field** — add to `plan-template.md` frontmatter + the contract comment;
    extend `scaffold_plan()` and `next-change`/`next-debugging` to accept `--short-title`
-   and string-replace it (with the 30-char check); add the authoring step + style rules to
-   `plan-and-implement.md`.
-2. **`zentaizo session-title`** — new subcommand + `resolve_title()` reusing
-   `find_active_plan` / `read_frontmatter` / `load_efforts`; best-effort wrapper.
+   and string-replace it (**refusing a value over 30 chars**); add the authoring step +
+   style rules to `plan-and-implement.md`; add a **session-frontmatter pass to `validate`**
+   that warns on an open slice's empty `short_title` and on any on-disk `short_title` over
+   30 chars (warnings, not hard errors — Decision 3).
+2. **`zentaizo session-title`** — new subcommand + `resolve_title()` built on a thin
+   `find_active_slice()` (over the existing `scan_slice_files`, spanning `changes/` +
+   `debugging/`) plus `read_frontmatter` / `load_efforts`; best-effort wrapper. **Not**
+   `find_active_plan` (changes-only).
 3. **Settings install** — managed `hooks.SessionStart` merge (mirror
-   `_render_claude_settings`); call from `create_workspace` (+ `--no-claude-hooks`); add
-   `zentaizo claude-hooks` for retrofit; note it in `upgrade-zentaizo.md`.
+   `_render_claude_settings`); call from `create_workspace` (+ `--no-claude-hooks`), gated
+   on a probe that the PATH `zentaizo` supports `session-title` (not just `shutil.which`);
+   add `zentaizo claude-hooks` for retrofit; note it in `upgrade-zentaizo.md`.
 4. **Listings (optional)** — show `short_title` in `effort show` / `path active`.
-5. **Tests** (`tests/test_cli.py`) — title precedence chain; `session_title` (stdin)
-   respected; `source` filtering (clear/compact → `{}`); empty/garbage stdin → `{}`;
-   settings merge idempotency and user-hook preservation; `--short-title` scaffolding +
-   30-char handling.
+5. **Tests** (`tests/test_cli.py`) — title precedence chain (including a `debugging/` slice
+   as the active slice); `session_title` (stdin) respected; `source` filtering
+   (clear/compact → `{}`); empty/garbage stdin → `{}`; settings merge idempotency and
+   user-hook preservation; `--short-title` scaffolding + over-30 refusal; `validate`
+   warnings for empty and overlong `short_title`; create-time hook install skipped when the
+   PATH `zentaizo` is absent *or* stale (probe fails); `resolve_title` falling through
+   (not erroring) when the active slice lacks `short_title`.
 6. **Docs** — `docs/cli.md` (new subcommands), `docs/workspace-format.md` (the field),
    README workspace layout if it enumerates frontmatter.
