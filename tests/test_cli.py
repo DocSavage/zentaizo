@@ -582,6 +582,80 @@ class CliTests(unittest.TestCase):
             _, prompt, _ = self._run_summarize(workspace)
             self.assertIn("- `alpha`", prompt.partition("## Keep as-is")[0])
 
+    def test_summarize_legacy_prefers_repo_commit_date_over_fetched_at(self):
+        # A legacy summary is kept when the repo's HEAD commit predates it, even
+        # if fetched_at is newer (a no-op refetch must not false-stale it).
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "legacy-commit"
+            repo = workspace / "repos" / "alpha"
+            repo.mkdir(parents=True)
+            _git(repo, "init", "-q", "-b", "main")
+            _git(repo, "config", "user.email", "t@e.com")
+            _git(repo, "config", "user.name", "T")
+            (repo / "f.txt").write_text("x\n")
+            _git(repo, "add", ".")
+            old_env = {
+                **os.environ,
+                "GIT_AUTHOR_DATE": "2020-01-01T00:00:00+00:00",
+                "GIT_COMMITTER_DATE": "2020-01-01T00:00:00+00:00",
+            }
+            subprocess.run(
+                ["git", "commit", "-q", "-m", "c"],
+                cwd=repo,
+                env=old_env,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            head = subprocess.run(
+                ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True
+            ).stdout.strip()
+
+            atlas = {
+                "version": 1,
+                "name": "legacy-commit",
+                "sources": {
+                    "repos": [
+                        {
+                            "name": "alpha",
+                            "url": "https://e/a.git",
+                            "ref": "main",
+                            "role": "reference",
+                        }
+                    ],
+                    "docs": [],
+                    "papers": [],
+                    "notes": [],
+                },
+            }
+            lock = {
+                "version": 1,
+                "name": "legacy-commit",
+                "sources": {
+                    # fetched_at is far in the future; a fetched_at-based check would
+                    # falsely stale the summary. The 2020 HEAD commit date keeps it.
+                    "repos": [
+                        {
+                            "name": "alpha",
+                            "role": "reference",
+                            "commit": head,
+                            "head": head,
+                            "fetched_at": "2099-01-01T00:00:00+00:00",
+                        }
+                    ],
+                    "papers": [],
+                    "notes": [],
+                },
+            }
+            self._write_atlas_and_lock(workspace, atlas=atlas, lock=lock)
+            self._write_summary(workspace, "alpha", "# alpha\nlegacy summary\n")
+            summary = workspace / "summaries" / "sources" / "alpha.md"
+            os.utime(summary, (1_750_000_000, 1_750_000_000))  # ~2025-06, after the 2020 commit
+
+            _, prompt, _ = self._run_summarize(workspace)
+            self.assertIn("- `alpha`", prompt.partition("## Keep as-is")[2])
+            self.assertNotIn("- `alpha`", prompt.partition("## Keep as-is")[0])
+
     def test_summarize_focus_includes_atlas_description_and_flag(self):
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp) / "focus"

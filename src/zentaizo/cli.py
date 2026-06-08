@@ -1874,6 +1874,47 @@ def _summary_written_at(workspace: pathlib.Path, path: pathlib.Path) -> datetime
         return None
 
 
+def _git_commit_date(repo_dir: pathlib.Path, ref: str) -> datetime | None:
+    """Committer date of ``ref`` in a cloned repo, as an aware datetime or
+    ``None``. Guarded like ``_git_file_commit_time``."""
+    if not repo_dir.is_dir():
+        return None
+    try:
+        result = subprocess.run(
+            ["git", "show", "-s", "--format=%cI", ref],
+            cwd=repo_dir,
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    return _parse_iso(result.stdout.strip())
+
+
+def _source_changed_at(
+    workspace: pathlib.Path, group: str, name: str, locked: dict | None
+) -> datetime | None:
+    """Best estimate of when a source's content last changed, for the legacy
+    (no ``source_rev``) staleness fallback.
+
+    For repos this is the HEAD commit's *committer date* — which only moves when
+    the repo actually advances — rather than ``fetched_at``, which a re-fetch
+    bumps even when nothing changed. Falls back to ``fetched_at`` when the commit
+    date is unavailable, and uses ``fetched_at`` directly for docs (no commit
+    date) and anything else.
+    """
+    if not locked:
+        return None
+    if group == "repos":
+        ref = locked.get("head") or locked.get("commit") or "HEAD"
+        commit_date = _git_commit_date(workspace / "repos" / name, ref)
+        if commit_date is not None:
+            return commit_date
+    return _parse_iso(locked.get("fetched_at"))
+
+
 def _summarize_focus_lines(
     workspace: pathlib.Path, config: dict, focus_arg: str | None
 ) -> list[str]:
@@ -1963,10 +2004,10 @@ def summarize_workspace(args: argparse.Namespace) -> int:
                     keep.append(record)
             else:
                 # Legacy summary (no source_rev): timestamp fallback. Stale only if
-                # the source was fetched after the summary was last written.
-                fetched_at = _parse_iso(locked.get("fetched_at")) if locked else None
+                # the source's content changed after the summary was last written.
+                changed_at = _source_changed_at(workspace, group, name, locked)
                 written_at = _summary_written_at(workspace, summary_path)
-                if fetched_at and written_at and fetched_at > written_at:
+                if changed_at and written_at and changed_at > written_at:
                     record["reason"] = "changed"
                     todo.append(record)
                 else:
