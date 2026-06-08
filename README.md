@@ -84,7 +84,8 @@ zentaizo validate
 # Fetch pinned source snapshots and write zentaizo.lock.json.
 zentaizo fetch
 
-# Prepare hierarchical summary prompts and outputs.
+# Prepare hierarchical summary prompts and outputs (incremental: only
+# (re)summarizes sources that are new or changed since last time).
 zentaizo summarize
 
 # Give another repo instructions for using this context.

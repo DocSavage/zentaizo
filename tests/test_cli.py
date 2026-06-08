@@ -15,6 +15,8 @@ from zentaizo.cli import (
     HOOK_MARKER,
     CliError,
     _HttpResult,
+    _preserve_unchanged_fetched_at,
+    _repo_identity,
     _stamp_edited_by,
     compute_policy,
     default_atlas,
@@ -371,13 +373,257 @@ class CliTests(unittest.TestCase):
             self.assertTrue(prompt.exists())
             prompt_text = prompt.read_text()
             self.assertIn("Zentaizo Summary Task", prompt_text)
+            self.assertIn("Workspace focus", prompt_text)
             self.assertIn("Reuse, don't regenerate", prompt_text)
-            self.assertIn("Record provenance", prompt_text)
+            self.assertIn("Provenance frontmatter", prompt_text)
+            self.assertIn("source_rev", prompt_text)
             self.assertIn("(kind: api-reference, upstream)", prompt_text)
 
             text = output.getvalue()
             self.assertIn("Atlas: zentaizo.atlas.json", text)
             self.assertIn("valid", text)
+
+    # -- incremental summarize -------------------------------------------------
+
+    def _write_atlas_and_lock(self, workspace: Path, *, atlas: dict, lock: dict | None = None):
+        workspace.mkdir(parents=True, exist_ok=True)
+        (workspace / "zentaizo.atlas.json").write_text(json.dumps(atlas))
+        if lock is not None:
+            (workspace / "zentaizo.lock.json").write_text(json.dumps(lock))
+
+    def _write_summary(self, workspace: Path, name: str, body: str):
+        sources_dir = workspace / "summaries" / "sources"
+        sources_dir.mkdir(parents=True, exist_ok=True)
+        (sources_dir / f"{name}.md").write_text(body)
+
+    def _run_summarize(self, workspace: Path, *extra: str) -> tuple[int, str, str]:
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            code = main(["summarize", str(workspace), *extra])
+        prompt = (workspace / "summaries" / "summarize.prompt.md").read_text()
+        return code, prompt, output.getvalue()
+
+    def test_summarize_incremental_keeps_current_repins_changed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "inc"
+            atlas = {
+                "version": 1,
+                "name": "inc",
+                "sources": {
+                    "repos": [
+                        {
+                            "name": "alpha",
+                            "url": "https://e/a.git",
+                            "ref": "main",
+                            "role": "reference",
+                        },
+                        {
+                            "name": "beta",
+                            "url": "https://e/b.git",
+                            "ref": "main",
+                            "role": "reference",
+                        },
+                    ],
+                    "docs": [],
+                    "papers": [],
+                    "notes": [],
+                },
+            }
+            lock = {
+                "version": 1,
+                "name": "inc",
+                "sources": {
+                    "repos": [
+                        {
+                            "name": "alpha",
+                            "role": "reference",
+                            "commit": "aaaa1111",
+                            "fetched_at": "2026-06-08T00:00:00+00:00",
+                        },
+                        {
+                            "name": "beta",
+                            "role": "reference",
+                            "commit": "bbbb2222",
+                            "fetched_at": "2026-06-08T00:00:00+00:00",
+                        },
+                    ],
+                    "papers": [],
+                    "notes": [],
+                },
+            }
+            self._write_atlas_and_lock(workspace, atlas=atlas, lock=lock)
+            self._write_summary(
+                workspace,
+                "alpha",
+                "---\nsource: alpha\nsource_rev: aaaa1111\nsummarized_at: 2026-06-08T01:00:00+00:00\n---\nalpha\n",
+            )
+
+            code, prompt, out = self._run_summarize(workspace)
+            self.assertEqual(code, 0)
+            todo, _, keep = prompt.partition("## Keep as-is")
+            self.assertIn("- `beta`", todo)
+            self.assertNotIn("- `alpha`", todo)
+            self.assertIn("- `alpha`", keep)
+            self.assertIn("1 new", out)
+
+            # alpha's source changed -> it becomes stale.
+            lock["sources"]["repos"][0]["commit"] = "cccc3333"
+            (workspace / "zentaizo.lock.json").write_text(json.dumps(lock))
+            _, prompt, _ = self._run_summarize(workspace)
+            self.assertIn("- `alpha`", prompt.partition("## Keep as-is")[0])
+
+            # --force regenerates everything; nothing is kept.
+            _, prompt, _ = self._run_summarize(workspace, "--force")
+            self.assertNotIn("## Keep as-is", prompt)
+            todo = prompt.partition("## Provenance")[0]
+            self.assertIn("- `alpha`", todo)
+            self.assertIn("- `beta`", todo)
+
+    def test_summarize_docs_use_doc_snapshots(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "docs-inc"
+            atlas = {
+                "version": 1,
+                "name": "docs-inc",
+                "sources": {
+                    "repos": [],
+                    "docs": [{"name": "okdoc", "kind": "guide", "url": "https://e/ok"}],
+                    "papers": [],
+                    "notes": [],
+                },
+            }
+            lock = {
+                "version": 1,
+                "name": "docs-inc",
+                "sources": {"repos": [], "docs": [], "papers": [], "notes": []},
+                "doc_snapshots": [
+                    {
+                        "name": "okdoc",
+                        "status": "ok",
+                        "content_hash": "sha256:ok",
+                        "fetched_at": "2026-06-08T00:00:00+00:00",
+                    }
+                ],
+            }
+            self._write_atlas_and_lock(workspace, atlas=atlas, lock=lock)
+            self._write_summary(
+                workspace, "okdoc", "---\nsource: okdoc\nsource_rev: sha256:ok\n---\nok\n"
+            )
+
+            # Matching content_hash -> kept.
+            _, prompt, _ = self._run_summarize(workspace)
+            self.assertIn("- `okdoc`", prompt.partition("## Keep as-is")[2])
+
+            # Changed content_hash -> stale.
+            lock["doc_snapshots"][0]["content_hash"] = "sha256:changed"
+            (workspace / "zentaizo.lock.json").write_text(json.dumps(lock))
+            _, prompt, _ = self._run_summarize(workspace)
+            self.assertIn("- `okdoc`", prompt.partition("## Keep as-is")[0])
+
+            # Flagged snapshot -> review bucket, never silently kept.
+            lock["doc_snapshots"][0]["status"] = "flagged"
+            (workspace / "zentaizo.lock.json").write_text(json.dumps(lock))
+            _, prompt, out = self._run_summarize(workspace)
+            self.assertIn("## Review needed", prompt)
+            self.assertIn("- `okdoc`", prompt.partition("## Review needed")[2])
+            self.assertNotIn("## Keep as-is", prompt)
+            self.assertIn("need review", out)
+
+    def test_summarize_legacy_timestamp_fallback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "legacy"
+            atlas = {
+                "version": 1,
+                "name": "legacy",
+                "sources": {
+                    "repos": [
+                        {
+                            "name": "alpha",
+                            "url": "https://e/a.git",
+                            "ref": "main",
+                            "role": "reference",
+                        }
+                    ],
+                    "docs": [],
+                    "papers": [],
+                    "notes": [],
+                },
+            }
+            lock = {
+                "version": 1,
+                "name": "legacy",
+                "sources": {
+                    "repos": [
+                        {
+                            "name": "alpha",
+                            "role": "reference",
+                            "commit": "aaaa1111",
+                            "fetched_at": "2020-01-01T00:00:00+00:00",
+                        }
+                    ],
+                    "papers": [],
+                    "notes": [],
+                },
+            }
+            self._write_atlas_and_lock(workspace, atlas=atlas, lock=lock)
+            # Legacy summary: no source_rev frontmatter.
+            self._write_summary(workspace, "alpha", "# alpha\nlegacy summary\n")
+            summary = workspace / "summaries" / "sources" / "alpha.md"
+            os.utime(summary, (1_750_000_000, 1_750_000_000))  # ~2025-06-15
+
+            # Source fetched before the summary was written -> kept (unverified).
+            _, prompt, _ = self._run_summarize(workspace)
+            self.assertIn("- `alpha`", prompt.partition("## Keep as-is")[2])
+            self.assertIn("staleness unverified", prompt)
+
+            # Source refetched after the summary -> stale.
+            lock["sources"]["repos"][0]["fetched_at"] = "2099-01-01T00:00:00+00:00"
+            (workspace / "zentaizo.lock.json").write_text(json.dumps(lock))
+            _, prompt, _ = self._run_summarize(workspace)
+            self.assertIn("- `alpha`", prompt.partition("## Keep as-is")[0])
+
+    def test_summarize_focus_includes_atlas_description_and_flag(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "focus"
+            atlas = {
+                "version": 1,
+                "name": "focus",
+                "description": "Workspace about widget pipelines.",
+                "sources": {"repos": [], "docs": [], "papers": [], "notes": []},
+            }
+            self._write_atlas_and_lock(workspace, atlas=atlas)
+            _, prompt, _ = self._run_summarize(workspace, "--focus", "DSG integration")
+            focus = prompt.partition("## Workspace focus")[2].partition("## Output Files")[0]
+            self.assertIn("Workspace about widget pipelines.", focus)
+            self.assertIn("DSG integration", focus)
+
+    def test_preserve_unchanged_fetched_at(self):
+        prior = {
+            "alpha": {"name": "alpha", "commit": "aaaa", "fetched_at": "OLD"},
+            "beta": {"name": "beta", "commit": "bbbb", "fetched_at": "OLD"},
+        }
+        new = [
+            {"name": "alpha", "commit": "aaaa", "fetched_at": "NEW"},  # unchanged -> preserve
+            {"name": "beta", "commit": "zzzz", "fetched_at": "NEW"},  # changed -> re-stamp
+            {"name": "gamma", "commit": "gggg", "fetched_at": "NEW"},  # no prior -> keep
+        ]
+        _preserve_unchanged_fetched_at(new, prior, _repo_identity)
+        by_name = {e["name"]: e for e in new}
+        self.assertEqual(by_name["alpha"]["fetched_at"], "OLD")
+        self.assertEqual(by_name["beta"]["fetched_at"], "NEW")
+        self.assertEqual(by_name["gamma"]["fetched_at"], "NEW")
+
+    def test_validate_rejects_unsafe_source_name(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "unsafe"
+            self._write_docs_atlas(
+                workspace,
+                [],
+                repos=[{"name": "../evil", "url": "https://e/x.git", "ref": "main"}],
+            )
+            code, text = self._validate_text(workspace)
+            self.assertEqual(code, 1)
+            self.assertIn("unsafe name", text)
 
     def test_validate_reports_missing_repo_fields(self):
         with tempfile.TemporaryDirectory() as tmp:

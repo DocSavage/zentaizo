@@ -1,6 +1,7 @@
 ---
 created: 2026-06-08
-status: proposed
+status: implemented
+implemented: 2026-06-08
 edited_by:
   - 2026-06-08  Claude Opus 4.8
   - 2026-06-08  Codex (review)
@@ -10,7 +11,7 @@ edited_by:
 
 _Design doc. Drafted 2026-06-08. `zentaizo summarize` today is all-or-nothing: it lists every source and asks the assistant to regenerate every summary, with no memory of which summaries are still accurate. This makes it unusable once a workspace has summaries — adding three repos means re-doing the dozen summaries written an hour ago. This design makes `summarize` **incremental** (pin each summary to the locked state it was made from; only re-do what is new or changed) and **focus-aware** (carry the workspace's intent into the prompt so regenerated summaries don't drift from the framing the original session had)._
 
-_**Revised 2026-06-08 after a Codex review** (findings verified against the code): doc identity is read from the **top-level `lock["doc_snapshots"]`** (where `fetch-docs` actually writes `content_hash`/`status`), not `lock["sources"]["docs"]`; the legacy timestamp fallback is made churn-proof by **preserving `fetched_at` across no-op fetches** (re-stamping only when the resolved identity changed) rather than the unconditional re-stamp fetch does today; **source names gain a slug-safety check** in `validate` because `<name>` is already a path component; and **flagged doc snapshots are routed to a review bucket while reference-only ones are kept-but-annotated**, instead of either silently counting as "current." The four open questions are resolved per Codex below. Status: proposed; Codex signed off 2026-06-08, ready to implement._
+_**Revised 2026-06-08 after a Codex review** (findings verified against the code): doc identity is read from the **top-level `lock["doc_snapshots"]`** (where `fetch-docs` actually writes `content_hash`/`status`), not `lock["sources"]["docs"]`; the legacy timestamp fallback is made churn-proof by **preserving `fetched_at` across no-op fetches** (re-stamping only when the resolved identity changed) rather than the unconditional re-stamp fetch does today; **source names gain a slug-safety check** in `validate` because `<name>` is already a path component; and **flagged doc snapshots are routed to a review bucket while reference-only ones are kept-but-annotated**, instead of either silently counting as "current." The four open questions are resolved per Codex below. Status: implemented 2026-06-08 (CLI + docs + tests), Codex signed off._
 
 A workspace's summaries are the top of its level-of-detail spine — the first thing a future session reads. They are expensive to produce (an assistant reads whole repos and docs) and they go stale silently when a source advances. The current command treats them as disposable: every run is a full regenerate. That is fine for the very first `summarize`, and wrong for every one after it. The fix keys each summary to the snapshot/fetch it was derived from, so the tool can tell *kept-and-current* from *new* from *changed*, and only spends the assistant's effort where it is needed.
 

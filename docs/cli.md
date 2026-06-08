@@ -101,10 +101,10 @@ zentaizo discover-docs [PATH]
 Read-only scan of the fetched `repos/` for in-repo doc sources — OpenAPI/Swagger specs, GraphQL schemas, `.proto` files, and `llms.txt`/`llms-full.txt` — and prints ready-to-paste `docs` atlas entries (`repo` + `path`). It also flags doc-site configs (`.readthedocs.yaml`, `mkdocs.yml`, `docs/conf.py`) so you can add an external `url` entry once you know the published URL. Sources already listed in the atlas are skipped; noisy/vendored directories are pruned. Writes nothing — paste the entries you want into `zentaizo.atlas.json` yourself.
 
 ```bash
-zentaizo summarize [PATH]
+zentaizo summarize [PATH] [--force|--all] [--focus TEXT]
 ```
 
-Writes a prompt for hierarchical summarization. A later version can run a configured LLM directly.
+Writes a prompt for hierarchical summarization. **Incremental:** each `summaries/sources/<name>.md` carries a `source_rev` frontmatter line pinning it to the source's locked identity (repo `commit`/`head`, doc `content_hash`); the command diffs that against `zentaizo.lock.json` and asks only for sources that are new or changed, keeping the rest. Legacy summaries without `source_rev` fall back to a timestamp check (source `fetched_at` vs the summary's git/mtime). Flagged doc snapshots are surfaced for review rather than summarized. `--force`/`--all` regenerates everything; `--focus TEXT` adds a per-run framing emphasis. A later version can run a configured LLM directly.
 
 ```bash
 zentaizo provide-info TARGET [PATH]
