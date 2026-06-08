@@ -51,16 +51,16 @@ The design rule is that `zentaizo` is the product interface. `python -m zentaizo
 ## Initial Commands
 
 ```bash
-zentaizo create PATH
+zentaizo create PATH [--no-claude-hooks]
 ```
 
-Creates a workspace shell with source directories, summaries directory, and assistant instructions. It does not create `zentaizo.atlas.json`; the first AI-assisted setup step is to identify the source material and create that human-authored atlas.
+Creates a workspace shell with source directories, summaries directory, and assistant instructions. It does not create `zentaizo.atlas.json`; the first AI-assisted setup step is to identify the source material and create that human-authored atlas. By default it also installs the managed Claude `SessionStart` hook when a current `zentaizo session-title` command is available on `PATH`; pass `--no-claude-hooks` to skip that.
 
 ```bash
 zentaizo validate [PATH]
 ```
 
-Checks that `zentaizo.atlas.json` exists and has the required shape. It also runs effort-doc integrity checks: missing effort docs, orphan effort docs, duplicate effort numbers, and legacy registry entries without a `number` are reported loudly. Legacy `zentaizo.config.json` workspaces are still readable.
+Checks that `zentaizo.atlas.json` exists and has the required shape. It also runs effort-doc integrity checks: missing effort docs, orphan effort docs, duplicate effort numbers, and legacy registry entries without a `number` are reported loudly. Missing or overlong `short_title` fields on open `changes/` and `debugging/` slices are warnings only. Legacy `zentaizo.config.json` workspaces are still readable.
 
 ```bash
 zentaizo status [PATH]
@@ -118,6 +118,18 @@ zentaizo edited PATH [--as IDENTITY]
 
 Records that the current editor touched a frontmatter-bearing session file, appending (or, for a consecutive same-editor edit, refreshing) an entry in its `edited_by:` ledger. The editor identity is resolved deterministically: in an AI session it comes from the commit-trailer cache (the exact model + reasoning effort, the same source the commit-attribution hook reads); in a plain shell it falls back to `git config user.name`; `--as` overrides both. Entries are git-style local timestamps (`Tue Jun 2 12:41:53 2026 -0400  Claude Opus 4.8 (1M context, reasoning xhigh)`). The `effort new`, `next-change`, `next-debugging`, `next-handoff`, and `next-report` scaffolders stamp the first entry automatically.
 
+```bash
+zentaizo claude-hooks [PATH]
+```
+
+Installs or refreshes the managed Claude `SessionStart` hook in `.claude/settings.json`, preserving user-authored settings and hooks. It probes the `zentaizo` executable on `PATH` first and refuses to write a hook if that executable is missing or too old to support `session-title`.
+
+```bash
+zentaizo session-title
+```
+
+Claude hook command, not a normal user workflow command. It reads `SessionStart` JSON on stdin and emits a `sessionTitle` derived from the active slice `short_title`, active slice slug, current non-main effort label, or workspace directory name.
+
 ## Efforts and Session Files
 
 ```bash
@@ -147,11 +159,11 @@ zentaizo path handoff <ID>
 `path effort` resolves the effort doc from the registry number and label. `path slice` recovers an existing `changes/` or `debugging/` file by numeric id; `--next` previews the next `<label>-NNNN` id without writing. `path active` resolves the highest open plan for the current effort. `path handoff` lists handoffs tied to a slice id.
 
 ```bash
-zentaizo next-change SLUG
-zentaizo next-debugging SLUG
+zentaizo next-change SLUG [--short-title TEXT]
+zentaizo next-debugging SLUG [--short-title TEXT]
 zentaizo next-handoff ID [TOPIC]
 zentaizo next-note SLUG
 zentaizo next-report SLUG
 ```
 
-These commands allocate session files through the CLI. `next-change` and `next-debugging` share the per-effort slice counter and scaffold frontmatter from `skills/plan-template.md`. `next-handoff` creates a per-slice handoff letter without consuming the slice counter. `next-note` writes a dated Q&A log under `sessions/questions/`. `next-report` writes a living report under `sessions/reports/`.
+These commands allocate session files through the CLI. `next-change` and `next-debugging` share the per-effort slice counter and scaffold frontmatter from `skills/plan-template.md`; `--short-title` fills the `short_title` frontmatter field and rejects values over 30 characters. `next-handoff` creates a per-slice handoff letter without consuming the slice counter. `next-note` writes a dated Q&A log under `sessions/questions/`. `next-report` writes a living report under `sessions/reports/`.

@@ -42,6 +42,8 @@ BEGIN_MARKER = "<!-- BEGIN zentaizo -->"
 END_MARKER = "<!-- END zentaizo -->"
 GLOBAL_SKILL_NAME = "zentaizo"
 GLOBAL_SKILL_TARGETS = ("claude", "codex", "gemini")
+SHORT_TITLE_MAX = 30
+CLAUDE_SESSION_TITLE_COMMAND = "zentaizo session-title"
 
 VALID_ROLES = ("edit", "reference")
 DEFAULT_ROLE = "reference"
@@ -636,6 +638,107 @@ def resolve_editor_identity(cwd: pathlib.Path, override: str | None) -> str:
     return agent_editor_identity() or human_editor_identity(cwd)
 
 
+def _read_claude_settings(settings_path: pathlib.Path, *, context: str) -> dict:
+    if not settings_path.exists():
+        return {}
+    data = json.loads(settings_path.read_text())
+    if not isinstance(data, dict):
+        raise CliError(
+            f"{context}: {settings_path} is not a JSON object; refusing to overwrite",
+            1,
+        )
+    return data
+
+
+def _is_session_title_hook(entry: object) -> bool:
+    return (
+        isinstance(entry, dict)
+        and entry.get("type") == "command"
+        and entry.get("command") == CLAUDE_SESSION_TITLE_COMMAND
+    )
+
+
+def _render_claude_session_title_settings(existing: dict) -> dict:
+    """Merge the managed Claude SessionStart title hook into settings.
+
+    Only hook entries whose command is exactly ``zentaizo session-title`` are
+    considered managed. User hooks and unrelated settings are preserved.
+    """
+    data = json.loads(json.dumps(existing))  # deep copy; never mutate caller's dict
+    hooks = data.setdefault("hooks", {})
+    if not isinstance(hooks, dict):
+        raise CliError(
+            "claude-hooks: .claude/settings.json 'hooks' is not an object; refusing to overwrite",
+            1,
+        )
+    groups = hooks.get("SessionStart", [])
+    if not isinstance(groups, list):
+        raise CliError(
+            "claude-hooks: .claude/settings.json hooks.SessionStart is not a list; "
+            "refusing to overwrite",
+            1,
+        )
+
+    kept_groups: list[object] = []
+    for group in groups:
+        if not isinstance(group, dict) or not isinstance(group.get("hooks"), list):
+            kept_groups.append(group)
+            continue
+        group_copy = json.loads(json.dumps(group))
+        kept_hooks = [h for h in group_copy["hooks"] if not _is_session_title_hook(h)]
+        removed = len(kept_hooks) != len(group_copy["hooks"])
+        if removed and not kept_hooks:
+            continue
+        group_copy["hooks"] = kept_hooks
+        kept_groups.append(group_copy)
+
+    kept_groups.append({"hooks": [{"type": "command", "command": CLAUDE_SESSION_TITLE_COMMAND}]})
+    hooks["SessionStart"] = kept_groups
+    return data
+
+
+def _probe_claude_session_title_command() -> tuple[bool, str]:
+    executable = shutil.which("zentaizo")
+    if not executable:
+        return (
+            False,
+            "current `zentaizo` is not on PATH; run `zentaizo claude-hooks` after installing it",
+        )
+    try:
+        result = subprocess.run(
+            [executable, "session-title"],
+            input="",
+            text=True,
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return (
+            False,
+            f"`zentaizo session-title` probe failed: {exc}; run `zentaizo claude-hooks` later",
+        )
+    if result.returncode != 0:
+        return (
+            False,
+            "`zentaizo` on PATH does not support `session-title`; "
+            "run `zentaizo claude-hooks` after upgrading it",
+        )
+    return True, ""
+
+
+def install_claude_session_title_hook(workspace: pathlib.Path) -> bool:
+    settings_path = workspace / ".claude" / "settings.json"
+    current_text = settings_path.read_text() if settings_path.exists() else None
+    existing = _read_claude_settings(settings_path, context="claude-hooks")
+    new_text = json.dumps(_render_claude_session_title_settings(existing), indent=2) + "\n"
+    if new_text == current_text:
+        return False
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    settings_path.write_text(new_text)
+    return True
+
+
 def create_workspace(args: argparse.Namespace) -> int:
     target = pathlib.Path(args.path).resolve()
     name = args.name or target.name
@@ -706,6 +809,18 @@ def create_workspace(args: argparse.Namespace) -> int:
                     print("Initialized git repo and installed commit-attribution hook")
                 else:
                     print("Initialized git repo")
+        except Exception:
+            pass
+
+    if not getattr(args, "no_claude_hooks", False):
+        try:
+            ok, reason = _probe_claude_session_title_command()
+            if ok:
+                changed = install_claude_session_title_hook(target)
+                if changed:
+                    print("Installed Claude session-title hook")
+            else:
+                print(f"Skipped Claude session-title hook: {reason}")
         except Exception:
             pass
 
@@ -800,9 +915,32 @@ def validate_doc_entries(docs: list[dict], repo_names: set[str]) -> list[str]:
     return errors
 
 
+def session_frontmatter_warnings(workspace: pathlib.Path) -> list[str]:
+    warnings: list[str] = []
+    sessions = workspace / SESSIONS_DIR
+    if not sessions.is_dir():
+        return warnings
+    for subdir in ("changes", "debugging"):
+        directory = sessions / subdir
+        if not directory.is_dir():
+            continue
+        files = sorted(p for p in directory.iterdir() if p.is_file() and p.suffix == ".md")
+        for path in files:
+            frontmatter = read_frontmatter(path)
+            title = frontmatter.get("short_title")
+            status = frontmatter.get("status", "")
+            rel = _rel(workspace, path)
+            if status not in CLOSED_SLICE_STATUSES and usable_short_title(title) is None:
+                warnings.append(f"WARNING: {rel} has empty short_title")
+            if isinstance(title, str) and len(title.strip()) > SHORT_TITLE_MAX:
+                warnings.append(f"WARNING: {rel} short_title exceeds {SHORT_TITLE_MAX} chars")
+    return warnings
+
+
 def validate_workspace(args: argparse.Namespace) -> int:
     workspace = pathlib.Path(args.workspace).resolve()
     effort_errors = effort_doc_integrity_errors(workspace)
+    warnings = session_frontmatter_warnings(workspace)
     atlas = find_atlas(workspace)
     if atlas is None:
         print(f"{workspace}: invalid")
@@ -810,6 +948,8 @@ def validate_workspace(args: argparse.Namespace) -> int:
         print(f"- First create {ATLAS_NAME} with AI assistance from this workspace.")
         for error in effort_errors:
             print(f"- {error}")
+        for warning in warnings:
+            print(warning)
         return 1
 
     config = read_json(atlas)
@@ -856,11 +996,15 @@ def validate_workspace(args: argparse.Namespace) -> int:
         print(f"{workspace}: invalid")
         for error in errors:
             print(f"- {error}")
+        for warning in warnings:
+            print(warning)
         return 1
 
     print(f"{workspace}: valid")
     print(f"Atlas: {atlas.name}")
     print_counts(sources)
+    for warning in warnings:
+        print(warning)
     return 0
 
 
@@ -2127,6 +2271,30 @@ def normalize_slug(value: str | None, *, kind: str = "slug") -> str:
     return result
 
 
+def normalize_short_title(value: str | None) -> str:
+    """Normalize a user-supplied short title, enforcing the hook display budget."""
+    if value is None:
+        return ""
+    title = value.strip()
+    if len(title) > SHORT_TITLE_MAX:
+        raise CliError(f"--short-title must be {SHORT_TITLE_MAX} characters or fewer", 1)
+    return title
+
+
+def usable_short_title(value: object) -> str | None:
+    """Return a displayable short title, ignoring blanks and scaffold placeholders."""
+    if not isinstance(value, str):
+        return None
+    title = value.strip()
+    if not title:
+        return None
+    if re.fullmatch(r"<[^>]+>", title):
+        return None
+    if title.lower() in {"todo", "tbd", "none", "null", "short_title", "short title"}:
+        return None
+    return title
+
+
 def read_frontmatter(path: pathlib.Path) -> dict:
     """Minimal YAML-frontmatter reader: the leading ``---`` … ``---`` block.
 
@@ -2699,6 +2867,63 @@ def find_active_plan(workspace: pathlib.Path, label: str) -> pathlib.Path | None
     return best[1] if best else None
 
 
+def find_active_slice(workspace: pathlib.Path, label: str) -> pathlib.Path | None:
+    """Highest-counter open slice for ``label`` across changes/ and debugging/."""
+    candidates: list[tuple[int, str, pathlib.Path]] = []
+    for counter, path in scan_slice_files(workspace, label):
+        if read_frontmatter(path).get("status", "") in CLOSED_SLICE_STATUSES:
+            continue
+        candidates.append((counter, _rel(workspace, path), path))
+    if not candidates:
+        return None
+    candidates.sort()
+    return candidates[-1][2]
+
+
+def slice_slug(path: pathlib.Path, label: str) -> str | None:
+    match = _slice_pattern(label).match(path.name)
+    if not match:
+        return None
+    prefix = f"{label}-{match.group(1)}-"
+    if not path.name.startswith(prefix):
+        return None
+    slug = path.name[len(prefix) :]
+    if slug.endswith(path.suffix):
+        slug = slug[: -len(path.suffix)]
+    return slug or None
+
+
+def workspace_root_for_cwd(cwd: pathlib.Path) -> pathlib.Path | None:
+    current = cwd.resolve()
+    candidates = [current, *current.parents]
+    for candidate in candidates:
+        if (candidate / SESSIONS_DIR).is_dir():
+            return candidate
+    return None
+
+
+def resolve_session_title(cwd: pathlib.Path) -> str:
+    workspace = workspace_root_for_cwd(cwd)
+    if workspace is None:
+        return cwd.name
+    try:
+        data = load_efforts(workspace)
+        label = data.get("current") or MAIN_EFFORT
+        active = find_active_slice(workspace, label)
+        if active is not None:
+            title = usable_short_title(read_frontmatter(active).get("short_title"))
+            if title is not None:
+                return title
+            slug = slice_slug(active, label)
+            if slug:
+                return slug
+        if label != MAIN_EFFORT:
+            return label
+    except Exception:
+        return cwd.name
+    return workspace.name
+
+
 def next_handoff_letter(workspace: pathlib.Path, label: str, padded: str) -> str:
     directory = workspace / SESSIONS_DIR / "handoffs"
     pattern = re.compile(rf"^{re.escape(label)}-{padded}([a-z]+)")
@@ -2729,6 +2954,26 @@ def _read_template(workspace: pathlib.Path, name: str) -> str:
 
 def _set_frontmatter_field(text: str, key: str, value: str) -> str:
     return re.sub(rf"^{re.escape(key)}:.*$", f"{key}: {value}", text, count=1, flags=re.M)
+
+
+def _set_or_insert_frontmatter_field(
+    text: str, key: str, value: str, *, after_key: str | None = None
+) -> str:
+    replacement = f"{key}: {value}"
+    updated = re.sub(rf"^{re.escape(key)}:.*$", replacement, text, count=1, flags=re.M)
+    if updated != text:
+        return updated
+    if after_key:
+        updated = re.sub(
+            rf"^({re.escape(after_key)}:.*)$",
+            rf"\1\n{replacement}",
+            text,
+            count=1,
+            flags=re.M,
+        )
+        if updated != text:
+            return updated
+    return text.replace("---\n", f"---\n{replacement}\n", 1)
 
 
 EDITED_BY_KEY = "edited_by"
@@ -2800,9 +3045,10 @@ def _record_edited_by(path: pathlib.Path, identity: str) -> None:
     path.write_text(_stamp_edited_by(text, identity, git_style_now()), encoding="utf-8")
 
 
-def scaffold_plan(template: str, label: str, now: str) -> str:
+def scaffold_plan(template: str, label: str, now: str, short_title: str = "") -> str:
     text = _set_frontmatter_field(template, "created", f'"{now}"')
-    return _set_frontmatter_field(text, "label", label)
+    text = _set_frontmatter_field(text, "label", label)
+    return _set_or_insert_frontmatter_field(text, "short_title", short_title, after_key="label")
 
 
 def scaffold_effort(template: str, now: str, description: str) -> str:
@@ -2978,11 +3224,17 @@ def _next_slice(args: argparse.Namespace, subdir: str) -> int:
     workspace = pathlib.Path(args.workspace).resolve()
     sessions_root(workspace)
     slug = normalize_slug(args.slug)
+    short_title = normalize_short_title(getattr(args, "short_title", None))
     data = load_efforts(workspace)
     label = resolve_effort(workspace, data, args.label, for_write=True)["label"]
     counter = next_counter(workspace, label)
     now = utc_now()
-    text = scaffold_plan(_read_template(workspace, "plan-template.md"), label, now)
+    text = scaffold_plan(
+        _read_template(workspace, "plan-template.md"),
+        label,
+        now,
+        short_title=short_title,
+    )
     target = workspace / SESSIONS_DIR / subdir / f"{label}-{counter:04d}-{slug}.md"
     _write_exclusive(target, text)
     _record_edited_by(target, resolve_editor_identity(target.parent, None))
@@ -3070,6 +3322,57 @@ def edited_session(args: argparse.Namespace) -> int:
         print(json.dumps({"path": str(path), "edited_by": identity, "wrote": True}))
     else:
         print(f"{path}: {identity}")
+    return 0
+
+
+def session_title_command(args: argparse.Namespace) -> int:
+    try:
+        raw = sys.stdin.read()
+        try:
+            data = json.loads(raw) if raw.strip() else {}
+        except (ValueError, TypeError):
+            data = {}
+        if not isinstance(data, dict):
+            data = {}
+        if data.get("source") not in {"startup", "resume"}:
+            print("{}")
+            return 0
+        if data.get("session_title"):
+            print("{}")
+            return 0
+        cwd_value = data.get("cwd")
+        cwd = (
+            pathlib.Path(cwd_value).expanduser()
+            if isinstance(cwd_value, str)
+            else pathlib.Path.cwd()
+        )
+        if not cwd.is_absolute():
+            cwd = (pathlib.Path.cwd() / cwd).resolve()
+        title = resolve_session_title(cwd)
+        print(
+            json.dumps(
+                {
+                    "hookSpecificOutput": {
+                        "hookEventName": "SessionStart",
+                        "sessionTitle": title,
+                    }
+                }
+            )
+        )
+    except Exception:
+        print("{}")
+    return 0
+
+
+def claude_hooks_command(args: argparse.Namespace) -> int:
+    workspace = pathlib.Path(args.workspace).resolve()
+    sessions_root(workspace)
+    ok, reason = _probe_claude_session_title_command()
+    if not ok:
+        raise CliError(f"claude-hooks: {reason}", 1)
+    changed = install_claude_session_title_hook(workspace)
+    rel = _rel(workspace, workspace / ".claude" / "settings.json")
+    print(("wrote: " if changed else "unchanged: ") + rel)
     return 0
 
 
@@ -3315,7 +3618,25 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="git-init the workspace but do not install the commit-attribution hook",
     )
+    create.add_argument(
+        "--no-claude-hooks",
+        action="store_true",
+        help="do not install the Claude session-title hook",
+    )
     create.set_defaults(func=create_workspace)
+
+    session_title = sub.add_parser(
+        "session-title",
+        help="Claude SessionStart hook handler for Zentaizo workspace titles",
+    )
+    session_title.set_defaults(func=session_title_command)
+
+    claude_hooks = sub.add_parser(
+        "claude-hooks",
+        help="install or refresh the Claude session-title hook in a workspace",
+    )
+    claude_hooks.add_argument("workspace", nargs="?", default=".", help="workspace directory")
+    claude_hooks.set_defaults(func=claude_hooks_command)
 
     cache_trailer = sub.add_parser(
         "cache-commit-trailer",
@@ -3605,6 +3926,10 @@ def _add_next_parsers(sub: argparse._SubParsersAction) -> None:
         parser.add_argument("slug", help=slug_help)
         if verb in ("next-change", "next-debugging"):
             _add_label_arg(parser)
+            parser.add_argument(
+                "--short-title",
+                help=f"frontmatter short_title for session titles (max {SHORT_TITLE_MAX} chars)",
+            )
         parser.add_argument("--json", action="store_true", help="emit JSON")
         _add_workspace_arg(parser)
         parser.set_defaults(func=func)

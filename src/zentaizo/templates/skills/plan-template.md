@@ -2,6 +2,7 @@
 status: planned
 created: "YYYY-MM-DDTHH:MM:SSZ"
 label: main
+short_title:
 editable_repos: []
 edited_by:
 # related: [<path>, ...]
@@ -9,8 +10,8 @@ edited_by:
 
 <!--
   CLI-consumed contract: `zentaizo next-change` / `next-debugging` scaffold this
-  file by string-replacing the `status`, `created`, and `label` frontmatter
-  lines above, and stamping the first `edited_by:` entry. Keep those keys
+  file by string-replacing the `status`, `created`, `label`, and `short_title`
+  frontmatter lines above, and stamping the first `edited_by:` entry. Keep those keys
   present, at the start of their line, and the frontmatter as the very first
   thing in the file (a reader scans the leading `---` … `---` block). There is
   no `updated:` field — run `zentaizo edited <this file>` after each substantive

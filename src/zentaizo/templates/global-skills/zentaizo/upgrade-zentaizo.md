@@ -21,6 +21,9 @@ Symptoms that motivate running it:
 - Plan files use frontmatter fields or filename patterns that the current
   templates no longer document.
 - New convention sections exist upstream that this workspace has never had.
+- The workspace predates the Claude `SessionStart` session-title hook and should
+  adopt it with `zentaizo claude-hooks` after the current `zentaizo` executable
+  is on PATH.
 
 Do **not** run it for:
 
@@ -70,6 +73,8 @@ files Zentaizo owns are:
 - `sessions/efforts.json` — the effort registry (seeded with a `main` effort by
   a current `zentaizo create`). A pre-effort workspace will not have it; a
   pre-effort-doc workspace may have registry entries without `number`.
+- `.claude/settings.json` — not overwritten as a template file, but a current
+  workspace can merge the managed session-title hook with `zentaizo claude-hooks`.
 
 Read both sides. Capture each delta. Do not edit yet.
 

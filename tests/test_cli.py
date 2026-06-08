@@ -29,6 +29,14 @@ def write_example_atlas(workspace: Path, name: str = "example-atlas") -> None:
 
 
 class CliTests(unittest.TestCase):
+    def setUp(self):
+        patcher = mock.patch(
+            "zentaizo.cli._probe_claude_session_title_command",
+            return_value=(False, "not on PATH"),
+        )
+        self.addCleanup(patcher.stop)
+        patcher.start()
+
     def test_create_starts_with_missing_atlas_prompt(self):
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp) / "example-atlas"
@@ -133,6 +141,7 @@ class CliTests(unittest.TestCase):
             self.assertTrue(plan.exists())
             plan_body = plan.read_text()
             self.assertIn("status: planned", plan_body)
+            self.assertIn("short_title:", plan_body)
             self.assertIn("## Plan", plan_body)
             self.assertIn("## Outcome", plan_body)
 
@@ -1042,12 +1051,22 @@ class WorkspaceCliCase(unittest.TestCase):
     def _make_workspace(self, tmp: str) -> Path:
         workspace = Path(tmp) / "ws"
         with contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(main(["create", str(workspace)]), 0)
+            self.assertEqual(main(["create", str(workspace), "--no-claude-hooks"]), 0)
         return workspace
 
     def _run(self, argv: list[str]) -> tuple[int, str, str]:
         out, err = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = main(argv)
+        return code, out.getvalue(), err.getvalue()
+
+    def _run_stdin(self, argv: list[str], stdin: str) -> tuple[int, str, str]:
+        out, err = io.StringIO(), io.StringIO()
+        with (
+            contextlib.redirect_stdout(out),
+            contextlib.redirect_stderr(err),
+            mock.patch("sys.stdin", io.StringIO(stdin)),
+        ):
             code = main(argv)
         return code, out.getvalue(), err.getvalue()
 
@@ -1486,8 +1505,88 @@ class SessionPathTests(WorkspaceCliCase):
             body = (workspace / rel).read_text()
             self.assertTrue(body.startswith("---\n"))
             self.assertIn("label: katana", body)
+            self.assertIn("short_title:", body)
             self.assertIn("status: planned", body)
             self.assertRegex(body, r'created: "\d{4}-\d{2}-\d{2}T')
+
+    def test_next_change_short_title_writes_frontmatter(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._new_effort(workspace)
+            rel = self._out(
+                [
+                    "next-change",
+                    "token-rotation",
+                    "--short-title",
+                    "Token rotation",
+                    "-C",
+                    str(workspace),
+                ]
+            )
+            self.assertIn("short_title: Token rotation", (workspace / rel).read_text())
+
+    def test_next_debugging_short_title_writes_frontmatter(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._new_effort(workspace)
+            rel = self._out(
+                [
+                    "next-debugging",
+                    "trace-auth",
+                    "--short-title",
+                    "Auth trace",
+                    "-C",
+                    str(workspace),
+                ]
+            )
+            self.assertIn("short_title: Auth trace", (workspace / rel).read_text())
+
+    def test_short_title_over_budget_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._new_effort(workspace)
+            code, _, err = self._run(
+                [
+                    "next-change",
+                    "x",
+                    "--short-title",
+                    "x" * 31,
+                    "-C",
+                    str(workspace),
+                ]
+            )
+            self.assertEqual(code, 1)
+            self.assertIn("30 characters", err)
+
+    def test_validate_warns_for_empty_and_overlong_short_title(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            write_example_atlas(workspace)
+            empty = self._out(["next-change", "empty-title", "-C", str(workspace)])
+            overlong = self._out(
+                [
+                    "next-debugging",
+                    "long-title",
+                    "--short-title",
+                    "Debug title",
+                    "-C",
+                    str(workspace),
+                ]
+            )
+            path = workspace / overlong
+            path.write_text(
+                path.read_text().replace(
+                    "short_title: Debug title",
+                    "short_title: " + "x" * 31,
+                    1,
+                )
+            )
+
+            code, out, _ = self._run(["validate", str(workspace)])
+            self.assertEqual(code, 0)
+            self.assertIn("valid", out)
+            self.assertIn(f"WARNING: {empty} has empty short_title", out)
+            self.assertIn(f"WARNING: {overlong} short_title exceeds 30 chars", out)
 
     def test_json_output_shape(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1521,6 +1620,268 @@ class SessionPathTests(WorkspaceCliCase):
             code, _, err = self._run(["next-change", "x", "-C", ws])
             self.assertEqual(code, 2)
             self.assertIn("closed", err)
+
+
+class SessionTitleTests(WorkspaceCliCase):
+    def _new_effort(self, workspace: Path, label: str = "katana") -> None:
+        self.assertEqual(self._run(["effort", "new", label, "-C", str(workspace)])[0], 0)
+
+    def _out(self, argv: list[str]) -> str:
+        code, out, _ = self._run(argv)
+        self.assertEqual(code, 0, argv)
+        return out.strip()
+
+    def _title_payload(self, workspace: Path, **extra) -> str:
+        payload = {"source": "startup", "cwd": str(workspace)}
+        payload.update(extra)
+        code, out, _ = self._run_stdin(["session-title"], json.dumps(payload))
+        self.assertEqual(code, 0)
+        return out.strip()
+
+    def _session_title(self, workspace: Path, **extra) -> str:
+        return json.loads(self._title_payload(workspace, **extra))["hookSpecificOutput"][
+            "sessionTitle"
+        ]
+
+    def test_empty_or_invalid_stdin_emits_empty_object(self):
+        self.assertEqual(self._run_stdin(["session-title"], "")[:2], (0, "{}\n"))
+        self.assertEqual(self._run_stdin(["session-title"], "{not json")[:2], (0, "{}\n"))
+
+    def test_clear_and_compact_sources_emit_empty_object(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            for source in ("clear", "compact"):
+                payload = json.dumps({"source": source, "cwd": str(workspace)})
+                code, out, _ = self._run_stdin(["session-title"], payload)
+                self.assertEqual(code, 0)
+                self.assertEqual(out, "{}\n")
+
+    def test_existing_session_title_is_respected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            payload = json.dumps(
+                {"source": "startup", "cwd": str(workspace), "session_title": "Manual"}
+            )
+            code, out, _ = self._run_stdin(["session-title"], payload)
+            self.assertEqual(code, 0)
+            self.assertEqual(out, "{}\n")
+
+    def test_title_uses_active_slice_short_title(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._new_effort(workspace)
+            self._out(
+                [
+                    "next-change",
+                    "token-rotation",
+                    "--short-title",
+                    "Token rotation",
+                    "-C",
+                    str(workspace),
+                ]
+            )
+            self.assertEqual(self._session_title(workspace), "Token rotation")
+
+    def test_title_falls_back_to_active_slice_slug(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._new_effort(workspace)
+            self._out(["next-change", "token-rotation", "-C", str(workspace)])
+            self.assertEqual(self._session_title(workspace), "token-rotation")
+
+    def test_title_falls_back_to_current_non_main_effort(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._new_effort(workspace, "katana")
+            self.assertEqual(self._session_title(workspace), "katana")
+
+    def test_title_falls_back_to_workspace_basename(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self.assertEqual(self._session_title(workspace), "ws")
+
+    def test_debugging_slice_can_win_over_older_change(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._new_effort(workspace)
+            self._out(
+                [
+                    "next-change",
+                    "old-work",
+                    "--short-title",
+                    "Old change",
+                    "-C",
+                    str(workspace),
+                ]
+            )
+            self._out(
+                [
+                    "next-debugging",
+                    "trace-auth",
+                    "--short-title",
+                    "Auth trace",
+                    "-C",
+                    str(workspace),
+                ]
+            )
+            self.assertEqual(self._session_title(workspace), "Auth trace")
+
+    def test_missing_short_title_field_falls_back_without_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._new_effort(workspace)
+            rel = self._out(["next-change", "legacy-plan", "-C", str(workspace)])
+            path = workspace / rel
+            path.write_text(
+                "\n".join(
+                    line
+                    for line in path.read_text().split("\n")
+                    if not line.startswith("short_title:")
+                )
+            )
+            self.assertEqual(self._session_title(workspace), "legacy-plan")
+
+
+class ClaudeHooksTests(WorkspaceCliCase):
+    def _settings(self, workspace: Path) -> dict:
+        return json.loads((workspace / ".claude" / "settings.json").read_text())
+
+    def test_settings_merge_is_idempotent_and_preserves_user_hooks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            settings = workspace / ".claude" / "settings.json"
+            settings.parent.mkdir()
+            settings.write_text(
+                json.dumps(
+                    {
+                        "model": "opus",
+                        "hooks": {
+                            "SessionStart": [
+                                {
+                                    "hooks": [
+                                        {"type": "command", "command": "custom start"},
+                                        {
+                                            "type": "command",
+                                            "command": "zentaizo session-title",
+                                        },
+                                    ]
+                                },
+                                {
+                                    "hooks": [
+                                        {
+                                            "type": "command",
+                                            "command": "zentaizo session-title",
+                                        }
+                                    ]
+                                },
+                            ],
+                            "PreToolUse": [{"hooks": [{"type": "command", "command": "pretool"}]}],
+                        },
+                    }
+                )
+            )
+
+            with mock.patch(
+                "zentaizo.cli._probe_claude_session_title_command", return_value=(True, "")
+            ):
+                code, out, _ = self._run(["claude-hooks", str(workspace)])
+                self.assertEqual(code, 0)
+                self.assertIn("wrote", out)
+                first = settings.read_text()
+                code, out, _ = self._run(["claude-hooks", str(workspace)])
+                self.assertEqual(code, 0)
+                self.assertIn("unchanged", out)
+                self.assertEqual(settings.read_text(), first)
+
+            data = self._settings(workspace)
+            self.assertEqual(data["model"], "opus")
+            self.assertEqual(
+                data["hooks"]["PreToolUse"],
+                [{"hooks": [{"type": "command", "command": "pretool"}]}],
+            )
+            start_groups = data["hooks"]["SessionStart"]
+            commands = [
+                hook["command"]
+                for group in start_groups
+                for hook in group["hooks"]
+                if hook.get("type") == "command"
+            ]
+            self.assertIn("custom start", commands)
+            self.assertEqual(commands.count("zentaizo session-title"), 1)
+
+    def test_create_hook_install_skips_when_path_command_is_absent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "ws"
+            with mock.patch(
+                "zentaizo.cli._probe_claude_session_title_command",
+                return_value=(False, "current `zentaizo` is not on PATH"),
+            ):
+                code, out, _ = self._run(["create", str(workspace)])
+            self.assertEqual(code, 0)
+            self.assertIn("Skipped Claude session-title hook", out)
+            self.assertFalse((workspace / ".claude" / "settings.json").exists())
+
+    def test_create_hook_install_skips_when_path_command_is_stale(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "ws"
+            with mock.patch(
+                "zentaizo.cli._probe_claude_session_title_command",
+                return_value=(False, "`zentaizo` on PATH does not support `session-title`"),
+            ):
+                code, out, _ = self._run(["create", str(workspace)])
+            self.assertEqual(code, 0)
+            self.assertIn("does not support", out)
+            self.assertFalse((workspace / ".claude" / "settings.json").exists())
+
+    def test_no_claude_hooks_create_flag_prevents_probe_and_install(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "ws"
+            with mock.patch("zentaizo.cli._probe_claude_session_title_command") as probe:
+                code, _, _ = self._run(["create", str(workspace), "--no-claude-hooks"])
+            self.assertEqual(code, 0)
+            probe.assert_not_called()
+            self.assertFalse((workspace / ".claude" / "settings.json").exists())
+
+    def test_create_installs_hook_when_probe_passes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "ws"
+            with mock.patch(
+                "zentaizo.cli._probe_claude_session_title_command", return_value=(True, "")
+            ):
+                code, out, _ = self._run(["create", str(workspace)])
+            self.assertEqual(code, 0)
+            self.assertIn("Installed Claude session-title hook", out)
+            data = self._settings(workspace)
+            self.assertEqual(
+                data["hooks"]["SessionStart"],
+                [{"hooks": [{"type": "command", "command": "zentaizo session-title"}]}],
+            )
+
+    def test_claude_hooks_fails_when_probe_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            with mock.patch(
+                "zentaizo.cli._probe_claude_session_title_command",
+                return_value=(False, "current `zentaizo` is not on PATH"),
+            ):
+                code, _, err = self._run(["claude-hooks", str(workspace)])
+            self.assertEqual(code, 1)
+            self.assertIn("not on PATH", err)
+            self.assertFalse((workspace / ".claude" / "settings.json").exists())
+
+    def test_probe_rejects_stale_path_executable(self):
+        import zentaizo.cli as cli
+
+        with (
+            mock.patch("zentaizo.cli.shutil.which", return_value="/tmp/zentaizo"),
+            mock.patch("zentaizo.cli.subprocess.run") as run,
+        ):
+            run.return_value = subprocess.CompletedProcess(
+                ["/tmp/zentaizo", "session-title"], 2, "", "invalid choice"
+            )
+            ok, reason = cli._probe_claude_session_title_command()
+        self.assertFalse(ok)
+        self.assertIn("does not support", reason)
 
 
 class SandboxPolicyTests(WorkspaceCliCase):
@@ -1998,7 +2359,7 @@ class CommitAttributionHookTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             ws = Path(tmp) / "ws"
             with contextlib.redirect_stdout(io.StringIO()):
-                self.assertEqual(main(["create", str(ws)]), 0)
+                self.assertEqual(main(["create", str(ws), "--no-claude-hooks"]), 0)
             hook = ws / ".git" / "hooks" / "prepare-commit-msg"
             self.assertTrue((ws / ".git").is_dir())
             self.assertTrue(hook.exists())
@@ -2009,7 +2370,7 @@ class CommitAttributionHookTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             ws = Path(tmp) / "ws"
             with contextlib.redirect_stdout(io.StringIO()):
-                self.assertEqual(main(["create", str(ws), "--no-git"]), 0)
+                self.assertEqual(main(["create", str(ws), "--no-git", "--no-claude-hooks"]), 0)
             self.assertFalse((ws / ".git").exists())
 
     @unittest.skipUnless(_HAVE_GIT, "test needs git")
@@ -2017,7 +2378,9 @@ class CommitAttributionHookTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             ws = Path(tmp) / "ws"
             with contextlib.redirect_stdout(io.StringIO()):
-                self.assertEqual(main(["create", str(ws), "--no-commit-hook"]), 0)
+                self.assertEqual(
+                    main(["create", str(ws), "--no-commit-hook", "--no-claude-hooks"]), 0
+                )
             self.assertTrue((ws / ".git").is_dir())
             self.assertFalse((ws / ".git" / "hooks" / "prepare-commit-msg").exists())
 
