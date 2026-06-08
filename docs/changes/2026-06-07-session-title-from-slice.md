@@ -1,6 +1,14 @@
+---
+created: 2026-06-07
+status: implemented
+implemented: 2026-06-08  # 7c0b4ff
+edited_by:
+  - 2026-06-08  Claude Opus 4.8
+---
+
 # Session titles from a per-slice `short_title`: a Claude `SessionStart` hook
 
-_Design doc. Drafted 2026-06-07; revised 2026-06-08 to fold in a code-grounded review (resolutions inline). Status: proposed (not yet implemented)._
+_Design doc. Drafted 2026-06-07; revised 2026-06-08 to fold in a code-grounded review (resolutions inline). Status: implemented 2026-06-08 (commit 7c0b4ff); the optional listings display was deferred (see frontmatter)._
 
 Give a Claude Code **Remote Control** session a title that names *the work*, not the
 first thing the user happened to type. The title is driven by a short, front-loaded

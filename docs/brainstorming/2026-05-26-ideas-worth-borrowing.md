@@ -1,3 +1,11 @@
+---
+created: 2026-05-26
+status: brainstorming
+edited_by:
+  - 2026-05-26  Claude Opus 4.7
+  - 2026-05-30  Claude Opus 4.8
+---
+
 # Ideas worth borrowing
 
 A living catalog of ideas from adjacent tools that *might* improve Zentaizo,

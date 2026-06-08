@@ -1,3 +1,10 @@
+---
+created: 2026-05-08
+status: implemented
+edited_by:
+  - 2026-05-08  Claude Opus 4.7
+---
+
 # Plan: Rename Zentaizo Config and Add a Model-Agnostic Curation Skill
 
 ## Context

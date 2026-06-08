@@ -1,6 +1,14 @@
+---
+created: 2026-05-27
+status: implemented
+implemented: 2026-05-27  # 72b60e3
+edited_by:
+  - 2026-05-27  Claude Opus 4.7
+---
+
 # Integrating `zen-segmend-mesher` workspace conventions back into the templates — Round 2
 
-_Round 2. Integrated 2026-05-27 (UTC). Covers `zen-segmend-mesher` commits `4c20b27` (2026-05-17, the round‑1 upgrade point) → `ae9ee43` (2026-05-26). The round‑1 record is [`zen-segmend-mesher-template-integration.md`](zen-segmend-mesher-template-integration.md)._
+_Round 2. Integrated 2026-05-27 (UTC). Covers `zen-segmend-mesher` commits `4c20b27` (2026-05-17, the round‑1 upgrade point) → `ae9ee43` (2026-05-26). The round‑1 record is [`zen-segmend-mesher-template-integration.md`](2026-05-17-zen-segmend-mesher-template-integration.md)._
 
 ## Context
 
@@ -63,9 +71,9 @@ The original request flagged a recurring dogfooding idea: *replace the AI‑proc
 The shape it would take — and why it is deferred, not done:
 
 - A read‑only `zentaizo next-slice [--dir changes|debugging]` that derives the branch prefix, scans `changes/` + `debugging/` for the current prefix, runs the cross‑branch collision check, and prints the next canonical filename (`<branch_prefix>-NNNN-<slug>` skeleton). It fits the repo's thin‑CLI rule (no network, no judgment — just locate‑and‑print) and removes a class of agent arithmetic mistakes (skipped/duplicated counters, wrong zero‑padding, prefix derivation drift).
-- It overlaps with idea #4 in [`ideas-worth-borrowing.md`](ideas-worth-borrowing.md) ("an explicit agent‑facing retrieval verb"), which proposes a `zentaizo get`/`search` read surface; a counter/filename helper is the same "thin verb the agent calls instead of filesystem spelunking" instinct and shares an output convention with it.
+- It overlaps with idea #4 in [`ideas-worth-borrowing.md`](../brainstorming/2026-05-26-ideas-worth-borrowing.md) ("an explicit agent‑facing retrieval verb"), which proposes a `zentaizo get`/`search` read surface; a counter/filename helper is the same "thin verb the agent calls instead of filesystem spelunking" instinct and shares an output convention with it.
 
-**Now designed:** the full proposal — a `zentaizo next-slice` family that scaffolds the file with deterministic frontmatter across all six session kinds, plus the resulting `AGENTS.md` slimming — lives in [`next-slice-cli-helper.md`](next-slice-cli-helper.md). The maintainer's steer was explicit: a deterministic tool is preferred over expanding `AGENTS.md` with rules an LLM re‑derives non‑deterministically each session (context rot).
+**Now designed:** the full proposal — a `zentaizo next-slice` family that scaffolds the file with deterministic frontmatter across all six session kinds, plus the resulting `AGENTS.md` slimming — lives in [`next-slice-cli-helper.md`](2026-05-27-next-slice-cli-helper.md). The maintainer's steer was explicit: a deterministic tool is preferred over expanding `AGENTS.md` with rules an LLM re‑derives non‑deterministically each session (context rot).
 
 ## Recommended next step for `zen-segmend-mesher`
 

@@ -1,6 +1,15 @@
+---
+created: 2026-06-07
+status: implemented
+implemented: 2026-06-07  # 58e1310
+edited_by:
+  - 2026-06-07  Claude Opus 4.8
+  - 2026-06-07  Codex gpt-5.5
+---
+
 # Efforts get a plan doc: collapsing "brief" into the effort
 
-_Design doc. Drafted 2026-06-07. Sequel to [`next-slice-cli-helper.md`](next-slice-cli-helper.md): that design gave an effort a **name** (a CLI-allocated label backing a `sessions/efforts.json` registry); this one gives the effort a **body** — a human-authored plan doc — and corrects what `main` means. Status: implemented 2026-06-07 in the CLI, templates, docs, and tests. **Revised 2026-06-07 after a Codex review:** `main` is uncloseable (enforced); the **registry** owns the effort number (filesystem scan demoted to an integrity check); repo attachment to `main` is defined via a relaxed `set-branch`; `--describe` seeds the doc as scaffold only; integrity/migration failure modes are made explicit. Further refined after a second Codex pass (signed off): bare `set-branch` never downgrades an existing branch, and orphan / duplicate-number detection lives in `zentaizo validate`._
+_Design doc. Drafted 2026-06-07. Sequel to [`next-slice-cli-helper.md`](2026-05-27-next-slice-cli-helper.md): that design gave an effort a **name** (a CLI-allocated label backing a `sessions/efforts.json` registry); this one gives the effort a **body** — a human-authored plan doc — and corrects what `main` means. Status: implemented 2026-06-07 in the CLI, templates, docs, and tests. **Revised 2026-06-07 after a Codex review:** `main` is uncloseable (enforced); the **registry** owns the effort number (filesystem scan demoted to an integrity check); repo attachment to `main` is defined via a relaxed `set-branch`; `--describe` seeds the doc as scaffold only; integrity/migration failure modes are made explicit. Further refined after a second Codex pass (signed off): bare `set-branch` never downgrades an existing branch, and orphan / duplicate-number detection lives in `zentaizo validate`._
 
 An effort today is a registry entry with a one-line `description` and a repo→branch/base map, and nothing else. There is no structured home for the *why/what* of a body of work — the 10,000-ft plan that a project is shaped around before it is sliced into `changes/`. This design adds that home as `sessions/efforts/NNNN-<label>.md`, collapses the would-be separate "brief" concept into the effort itself, and corrects the `main` effort from a "workspace-meta only" bucket (a never-validated framing that practice contradicted) to what everyone already reads it as: the deliverable trunk.
 
@@ -96,8 +105,8 @@ Targeted checks live on the specific CLI operation (fail loud on the file you as
 
 - **Brainstorming is untouched.** It stays freeform dated dumps (`YYYY-MM-DD-<slug>.md`, participants listed inline, no frontmatter) — the raw input an effort doc distills *from*. The effort doc is the *curated* sibling; the dumps remain the only frontmatter-free, schema-free session type.
 - **Not a rename of `next-*`.** A unifying `new` namespace (`zentaizo new change|effort|…`) was considered and rejected: pure churn that doesn't reduce concept count (`effort` still needs its management namespace).
-- **The Claude-Remote session-titles work** (`docs/design/2026-06-07-session-title-from-slice.md`) is a **separate, later** effort, sequenced after this lands.
-- **Historical design docs left as dated artifacts**, not rewritten to current behavior — including the stale `main` snippet at `docs/design/next-slice-cli-helper.md:77`.
+- **The Claude-Remote session-titles work** (`docs/changes/2026-06-07-session-title-from-slice.md`) is a **separate, later** effort, sequenced after this lands.
+- **Historical design docs left as dated artifacts**, not rewritten to current behavior — including the stale `main` snippet in `docs/changes/2026-05-27-next-slice-cli-helper.md`.
 
 ## Testing
 
@@ -127,6 +136,6 @@ Lands as a single commit to `main` (trunk-based); the prepare-commit-msg hook su
 
 ## Related
 
-- [`next-slice-cli-helper.md`](next-slice-cli-helper.md) — the effort registry / `next-*` / `path` design this extends.
-- [`zen-segmend-mesher-template-integration-round-2.md`](zen-segmend-mesher-template-integration-round-2.md) — the dogfooding workspace whose `main`-usage history motivated the charter correction.
+- [`next-slice-cli-helper.md`](2026-05-27-next-slice-cli-helper.md) — the effort registry / `next-*` / `path` design this extends.
+- [`zen-segmend-mesher-template-integration-round-2.md`](2026-05-27-zen-segmend-mesher-template-integration-round-2.md) — the dogfooding workspace whose `main`-usage history motivated the charter correction.
 - [`2026-06-07-session-title-from-slice.md`](2026-06-07-session-title-from-slice.md) — the separate, follow-on Claude-session work.

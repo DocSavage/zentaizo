@@ -1,3 +1,11 @@
+---
+created: 2026-05-30
+status: partial
+edited_by:
+  - 2026-05-31  Claude Opus 4.8
+  - 2026-06-07  Codex gpt-5.5
+---
+
 # Sandboxing agentic execution in a Zentaizo workspace
 
 _Design doc. Drafted 2026-05-30; revised 2026-05-31 after a Codex review (path-hardening, mode-based writable set, threat model split by enforcement class, concrete renderer contracts, a neutral `policy` output)._

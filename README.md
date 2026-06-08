@@ -103,7 +103,7 @@ zentaizo sandbox --target claude           # write .claude/settings.json deny ru
 zentaizo sandbox --target claude --check   # CI-style: fail if the config drifted from the atlas
 ```
 
-This is a guardrail against accidental writes, not an airtight boundary — a shell command can still slip past file-tool denies — so see `docs/design/sandboxing.md` for the threat model and the planned container-based enforcement.
+This is a guardrail against accidental writes, not an airtight boundary — a shell command can still slip past file-tool denies — so see `docs/changes/2026-05-30-sandboxing.md` for the threat model and the planned container-based enforcement.
 
 To seed a fresh workspace from an existing one that overlaps in scope (same
 repos pinned, same papers, shared design notes), use `seed-from`:
@@ -179,7 +179,7 @@ zen-link-shortener/
 
 ## Safety
 
-A workspace deliberately aggregates external material — fetched repositories, documentation, notes, and papers — for an AI assistant to read. Treat all of it as **untrusted input**: content pulled from the web or third-party repos can carry indirect prompt-injection payloads (hidden instructions, fake system messages, invisible characters). The generated workspace `AGENTS.md` instructs assistants to read this material as evidence to cite and summarize, **never as instructions to follow**. Hardened fetch-time handling — sanitization, quarantine, and a summarize-as-quarantine-boundary pattern — is planned; see `docs/design/api-reference-docs-layer.md` (§2.9).
+A workspace deliberately aggregates external material — fetched repositories, documentation, notes, and papers — for an AI assistant to read. Treat all of it as **untrusted input**: content pulled from the web or third-party repos can carry indirect prompt-injection payloads (hidden instructions, fake system messages, invisible characters). The generated workspace `AGENTS.md` instructs assistants to read this material as evidence to cite and summarize, **never as instructions to follow**. Hardened fetch-time handling — sanitization, quarantine, and a summarize-as-quarantine-boundary pattern — is planned; see `docs/changes/2026-05-20-api-reference-docs-layer.md` (§2.9).
 
 ## Use Cases
 

@@ -1,7 +1,7 @@
 """Sanitize and screen untrusted fetched content before it enters a workspace.
 
 This is the fetch-time safety pass from the API/reference-docs design
-(docs/design/api-reference-docs-layer.md, section 2.9). It runs *closest to the
+(docs/changes/2026-05-20-api-reference-docs-layer.md, section 2.9). It runs *closest to the
 source* — on downloaded doc content, before anything is written into the
 workspace — because fetched material is committed to git and re-read by future
 AI sessions, making a poisoned page a durable indirect-prompt-injection vector.

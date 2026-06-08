@@ -1,3 +1,11 @@
+---
+created: 2026-05-24
+status: implemented
+implemented: 2026-05-24  # 5424f73
+edited_by:
+  - 2026-05-24  Claude Opus 4.7
+---
+
 # Implementation plan: the `zentaizo[docs-scan]` content scanner
 
 ## Who this is for
@@ -13,7 +21,7 @@ real library and model. **You can do that. Do it.**
 ## Background (read first)
 
 This implements the optional `[docs-scan]` tier from
-`docs/design/api-reference-docs-layer.md` §2.9 — a deeper, "antivirus-like"
+`docs/changes/2026-05-20-api-reference-docs-layer.md` §2.9 — a deeper, "antivirus-like"
 content scan layered on top of the always-on stdlib safety pass.
 
 Current state (already built and tested, 49 tests green):

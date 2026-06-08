@@ -1,3 +1,10 @@
+---
+created: 2026-05-26
+status: proposed
+edited_by:
+  - 2026-05-26  Claude Opus 4.7
+---
+
 # Context Hub (`chub`) integration plan
 
 ## Context

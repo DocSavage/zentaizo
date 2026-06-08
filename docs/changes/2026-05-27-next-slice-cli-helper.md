@@ -1,6 +1,14 @@
+---
+created: 2026-05-27
+status: implemented
+edited_by:
+  - 2026-05-27  Claude Opus 4.7
+  - 2026-05-28  Claude Opus 4.8
+---
+
 # Deterministic efforts and session paths: `zentaizo effort`, `zentaizo path`, `zentaizo next-*`
 
-_Design doc. Drafted 2026-05-27; revised 2026-05-27 after a Codex review. **Revised again 2026-05-28: the branch-derived prefix is replaced by a CLI-allocated, agent-chosen `effort` label backed by a `sessions/efforts.json` registry.** This is the change that makes the workspace handle more than one editable repo per change, and it deletes the doc's hardest section (resolving branch → prefix) rather than patching it. Status: proposed (not yet implemented)._
+_Design doc. Drafted 2026-05-27; revised 2026-05-27 after a Codex review. **Revised again 2026-05-28: the branch-derived prefix is replaced by a CLI-allocated, agent-chosen `effort` label backed by a `sessions/efforts.json` registry.** This is the change that makes the workspace handle more than one editable repo per change, and it deletes the doc's hardest section (resolving branch → prefix) rather than patching it. Status: implemented; the `effort`/`path`/`next-*` family shipped and was extended by the effort-doc-collapse change._
 
 A thin, deterministic CLI for three things the agent does with sessions: **name a body of work** (an *effort*), **resolve** an existing session file to read it, and **allocate + scaffold** a new one — replacing the prose procedures in `AGENTS.md` and `skills/plan-and-implement.md` that an LLM re-derives (non-deterministically, with context rot) each session.
 

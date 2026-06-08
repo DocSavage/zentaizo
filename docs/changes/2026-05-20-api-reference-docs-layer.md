@@ -1,3 +1,10 @@
+---
+created: 2026-05-20
+status: partial
+edited_by:
+  - 2026-05-26  Claude Opus 4.7
+---
+
 # Workspace README layout tree + an API/reference-docs layer in hierarchical sourcing
 
 ## Context

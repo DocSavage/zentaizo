@@ -1,6 +1,14 @@
+---
+created: 2026-05-17
+status: implemented
+implemented: 2026-05-17  # f31cfe9
+edited_by:
+  - 2026-05-27  Claude Opus 4.7
+---
+
 # Integrating `zen-segmend-mesher` workspace conventions back into the templates
 
-_Round 1. Integrated 2026-05-17 (commit `f31cfe9`). Covers workspace commits through `410eef7` (2026-05-16). Round 2 is recorded in [`zen-segmend-mesher-template-integration-round-2.md`](zen-segmend-mesher-template-integration-round-2.md)._
+_Round 1. Integrated 2026-05-17 (commit `f31cfe9`). Covers workspace commits through `410eef7` (2026-05-16). Round 2 is recorded in [`zen-segmend-mesher-template-integration-round-2.md`](2026-05-27-zen-segmend-mesher-template-integration-round-2.md)._
 
 ## Context
 
