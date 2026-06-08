@@ -40,7 +40,7 @@ How the workspace realizes those ideas; each tag points back to the Core Idea(s)
 - **Multi-repo sandbox** — all associated repos available locally for agentic work, like a monorepo for coherent cross-system development; each repo marked read-only (`role: "reference"`) or editable (`role: "edit"`). It brings the full picture of code to bear (1), provides that code as persistent, version-pinned context (2), and removes failable web searches against drifting versions by making the exact source local (3); and that same read-only/editable marking *is* the access policy a sandbox enforces, so an agent can run at the workspace level with reference repos genuinely read-only (6). *(1, 2, 3, 6)*
 - **Pinned sources** — repos and document snapshots resolve to exact commits and content hashes (`zentaizo.lock.json`). *(2, 3)*
 - **Deterministic tooling over model instructions** — mechanical, single-answer work (session-file allocation, counter and path resolution, frontmatter) lives in the CLI, not in prose each model re-interprets each session. This frees context (4) and reduces run-to-run variability (3). *(3, 4)*
-- **Git-versioned `sessions/` trail** — plans, debugging notes, handoffs, reports, and the effort registry accumulate as the durable, auditable record a later session reads instead of re-deriving. *(2)*
+- **Git-versioned `sessions/` trail** — effort docs, slice plans, debugging notes, handoffs, reports, and the effort registry accumulate as the durable, auditable record a later session reads instead of re-deriving. *(2)*
 - **Model-neutral instructions** — `AGENTS.md` carries the model-agnostic guidance, and the `skills/` procedures are plain-markdown and tool-neutral (they name Claude, Codex, Gemini, and Aider as interchangeable). `CLAUDE.md`/`GEMINI.md` stay thin pointers, and the shared skill installs across Claude, Codex, and Gemini. *(5)*
 - **Least-privilege sandboxing** (`zentaizo sandbox`) — the atlas's edit/reference split *is* an access policy; a pure `compute_policy` derives it (write your own `sessions/`/`summaries/` and the editable repos, read everything else, touch nothing outside the workspace) and thin renderers project it into each harness's native guardrails — with airtight OS-level containers planned as an opt-in allied repo. One atlas-derived policy, rendered per assistant, so confinement isn't hand-maintained per tool. *(5, 6)*
 
@@ -167,7 +167,8 @@ zen-link-shortener/
   summaries/                # generated hierarchical summaries
   skills/                   # model-agnostic procedures (curate-atlas, plan-*, report-template)
   sessions/
-    efforts.json            # effort registry: labels, current pointer, repo/branch map
+    efforts.json            # effort registry: labels, numbers, current pointer, repo/branch map
+    efforts/                # effort-level plan docs
     brainstorming/          # pre-decision input: AI discussions, sketches, source inventories
     changes/                # implementation plans (slices), amended with outcomes
     debugging/              # bug investigations: traces, hypotheses, root cause

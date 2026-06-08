@@ -63,12 +63,13 @@ files Zentaizo owns are:
 - `CLAUDE.md`, `GEMINI.md` — the workspace pointer stub.
 - `.gitignore` — created by `zentaizo create`.
 - `skills/curate-atlas.md`, `skills/plan-and-implement.md`,
-  `skills/plan-template.md`, `skills/report-template.md` — copied verbatim from
+  `skills/effort-template.md`, `skills/plan-template.md`, `skills/report-template.md` — copied verbatim from
   `src/zentaizo/templates/skills/`.
-- The six `sessions/` subdirectory shells: `brainstorming/`, `changes/`,
-  `questions/`, `debugging/`, `handoffs/`, `reports/`.
+- The seven `sessions/` subdirectory shells: `efforts/`, `brainstorming/`,
+  `changes/`, `questions/`, `debugging/`, `handoffs/`, `reports/`.
 - `sessions/efforts.json` — the effort registry (seeded with a `main` effort by
-  a current `zentaizo create`). A pre-effort workspace will not have it.
+  a current `zentaizo create`). A pre-effort workspace will not have it; a
+  pre-effort-doc workspace may have registry entries without `number`.
 
 Read both sides. Capture each delta. Do not edit yet.
 
@@ -104,6 +105,16 @@ For every difference, decide which category it belongs to:
   `<label>-NNNN<letter>[-<role>].md`. Filenames themselves keep `<prefix>-NNNN-`
   as `<label>-NNNN-`, so `changes/`/`debugging/` files usually need a
   frontmatter rewrite but **not** a rename.
+- **Effort registry → effort docs.** Older effort-registry workspaces may have
+  `sessions/efforts.json` entries but no registry-owned `number` and no
+  `sessions/efforts/NNNN-<label>.md` docs. Migrating means: (a) assign
+  `number: 1` to `main`; (b) assign remaining efforts by their `created` order
+  (fall back to current registry order if timestamps are missing or tied);
+  (c) create `sessions/efforts/`; (d) backfill each doc from
+  `skills/effort-template.md`, seeding the opening framing line from the
+  registry `description`; (e) run `zentaizo edited <doc>` after human/AI prose
+  edits; and (f) run `zentaizo validate` to confirm there are no orphan docs,
+  duplicate numbers, missing docs, or unnumbered efforts.
 
 Output a written classification for the user before going further. The user's
 sign-off here is what authorizes the migration phase.
@@ -119,6 +130,10 @@ For every **convention rename** identified above, walk the existing
   ambiguities. Renames must be done with `git mv` so history is preserved.
 - **Frontmatter rewrites.** If field names changed, every plan/debugging file
   with the old field needs a key rename. List the files; do not modify yet.
+- **Effort doc backfills.** If registry efforts lack `number`, list the exact
+  number assigned to each label and the new doc path
+  `sessions/efforts/NNNN-<label>.md`. The registry is the source of truth; do
+  not allocate by scanning filenames.
 - **Cross-references in bodies.** If renamed filenames are referenced by other
   files (plans link to other plans, brainstorming docs, questions, debugging),
   every reference needs updating. Mechanical substitution usually suffices but
@@ -129,13 +144,15 @@ For every **convention rename** identified above, walk the existing
   `zentaizo.lock.json` and `zentaizo fetch`.
 
 Bundle the full migration list into a `sessions/changes/` plan. If the effort
-registry already exists, allocate the plan with `zentaizo next-change
-upgrade-zentaizo --label main` (workspace-meta work). If you are migrating *into*
-the effort convention, the registry won't exist yet — create it first
-(`zentaizo effort new` on the `main` effort, or write the seed `efforts.json`
-by hand) so the plan file itself is named under the new shape. The plan's
-`## Plan` section lays out every file affected and the verification the user
-will use to confirm correctness.
+registry already exists and is already numbered, allocate the plan with
+`zentaizo next-change upgrade-zentaizo --label main`. If the registry exists
+but lacks numbers, assign the numbers and backfill `sessions/efforts/0001-main.md`
+first so the CLI can allocate safely; then create the migration plan under
+`main`. If you are migrating *into* the effort convention, the registry won't
+exist yet — write the numbered seed `efforts.json` by hand and backfill the
+`main` effort doc so the plan file itself is named under the new shape. The
+plan's `## Plan` section lays out every file affected and the verification the
+user will use to confirm correctness.
 
 ### 4. Execute on approval
 

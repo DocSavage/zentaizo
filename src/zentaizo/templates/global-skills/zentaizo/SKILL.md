@@ -52,7 +52,7 @@ Call `zentaizo.atlas.json` the "context atlas" so the user understands its role 
    - Explain the intended consultation order: summaries first, then locked repos/docs/papers/notes as needed.
 
 7. Allocate session files through the CLI — never hand-derive a name or counter.
-   - Group work into an **effort** (a named body of work that may span several editable repos): `zentaizo effort new <word> --describe "…" --repo <name>=<branch>`; inspect with `zentaizo effort list` / `zentaizo effort show`.
+   - Group work into an **effort** (a named body of work that may span several editable repos): `zentaizo effort new <word> --describe "…" --repo <name>=<branch>`; this also scaffolds `sessions/efforts/NNNN-<label>.md`, the effort-level plan doc. Inspect with `zentaizo effort list` / `zentaizo effort show`; resolve the doc with `zentaizo path effort [label]`.
    - Create files with `zentaizo next-change` / `next-debugging` / `next-handoff` / `next-note` / `next-report`; they default to the current effort and scaffold correct frontmatter.
    - Read with `zentaizo path slice <id>` (recovers the slug) and `zentaizo path active`. The workspace `AGENTS.md` § Filename Convention is authoritative for the details.
 

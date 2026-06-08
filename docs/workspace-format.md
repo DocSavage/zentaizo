@@ -15,10 +15,12 @@ my-system-atlas/
   notes/
   summaries/
   sessions/
-    efforts.json            # effort registry (seeded with a `main` effort)
+    efforts.json            # effort registry (seeded with numbered `main`)
+    efforts/                # effort-level plan docs
   skills/
     curate-atlas.md         # model-agnostic interview procedure
     plan-and-implement.md   # the plan -> execute -> close-out lifecycle
+    effort-template.md      # scaffold for effort-level plan docs
     plan-template.md        # scaffold for changes/ and debugging/ files
     report-template.md      # scaffold for reports/ files
 ```
@@ -137,7 +139,8 @@ Sessions are the durable trail of how the workspace has been used:
 
 ```text
 sessions/
-  efforts.json     # registry: effort labels, the current pointer, per-repo branch/base
+  efforts.json     # registry: effort labels, numbers, current pointer, per-repo branch/base
+  efforts/         # effort-level plan docs
   brainstorming/   # pre-decision input (no schema)
   changes/         # implementation plans (slices)
   debugging/       # plan-shaped bug investigations (shares the changes/ counter)
@@ -147,14 +150,19 @@ sessions/
 ```
 
 Work is grouped into **efforts** — named bodies of work that may span several
-editable repos. The effort label, not a git branch, prefixes a slice's filename
-(`<label>-NNNN-<slug>.md`); `sessions/efforts.json` maps each effort to the
-repos and branches it touches. The CLI allocates every session file — `zentaizo
-effort new`, then `zentaizo next-change` / `next-debugging` / `next-handoff` /
-`next-note` / `next-report` — so names and counters are never hand-derived. See
-the generated `AGENTS.md` § Filename Convention for the full convention.
+editable repos. `sessions/efforts.json` owns each effort's label, number,
+status, current pointer, and repo branch/base map. `sessions/efforts/NNNN-<label>.md`
+is the human-authored effort plan doc; the CLI derives its path from the
+registry number and label.
 
-Frontmatter-bearing session files (`changes/`, `debugging/`, `reports/`, `handoffs/`) also carry an `edited_by:` ledger recording which model or human crafted, reviewed, or modified the file, in order. The scaffolding commands stamp the first entry, and `zentaizo edited <path>` appends or refreshes it on later edits — resolving the editor identity from the same commit-trailer cache the commit-attribution hook uses, so the recorded model + reasoning effort is never the model's own guess.
+The effort label, not a git branch, prefixes a slice's filename
+(`<label>-NNNN-<slug>.md`). The CLI allocates every session file — `zentaizo
+effort new`, then `zentaizo next-change` / `next-debugging` / `next-handoff` /
+`next-note` / `next-report` — so names and counters are never hand-derived. Use
+`zentaizo path effort [label]` to resolve an effort plan doc and `zentaizo path
+slice <id>` for a slice file.
+
+Frontmatter-bearing session files (`efforts/`, `changes/`, `debugging/`, `reports/`, `handoffs/`) also carry an `edited_by:` ledger recording which model or human crafted, reviewed, or modified the file, in order. The scaffolding commands stamp the first entry, and `zentaizo edited <path>` appends or refreshes it on later edits — resolving the editor identity from the same commit-trailer cache the commit-attribution hook uses, so the recorded model + reasoning effort is never the model's own guess.
 
 These are useful for preserving the reasoning behind an answer or implementation plan.
 

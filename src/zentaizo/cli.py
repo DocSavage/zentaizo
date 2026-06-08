@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import json
 import os
@@ -187,6 +188,7 @@ A workspace organizes knowledge as a level-of-detail spine — start at `summari
   skills/                   # model-agnostic procedures (curate-atlas, plan-*, report-template)
   sessions/
     efforts.json            # effort registry: labels, current pointer, repo/branch map
+    efforts/                # effort-level plan docs
     brainstorming/          # pre-decision input: transcripts, sketches, surveys
     changes/                # implementation plans (slices), amended with outcomes
     debugging/              # bug investigations: traces, hypotheses, root cause
@@ -195,7 +197,7 @@ A workspace organizes knowledge as a level-of-detail spine — start at `summari
     reports/                # living evidence-backed syntheses (must-read deliverables)
 ```
 
-`{ATLAS_NAME}` and `{LOCK_NAME}` do not exist yet in a freshly created workspace — the atlas is the first thing you author (see below), and the lock is written by `zentaizo fetch`. `sessions/efforts.json` is seeded with a reserved `main` effort.
+`{ATLAS_NAME}` and `{LOCK_NAME}` do not exist yet in a freshly created workspace — the atlas is the first thing you author (see below), and the lock is written by `zentaizo fetch`. `sessions/efforts.json` is seeded with a reserved `main` effort, whose plan doc starts at `sessions/efforts/0001-main.md`.
 
 ## First Step
 
@@ -245,7 +247,7 @@ For each multi-repo change, ask the AI to follow [`skills/plan-and-implement.md`
 
 > Follow [`skills/plan-and-implement.md`](skills/plan-and-implement.md) to draft and execute a plan for <describe change>.
 
-The skill handles the full lifecycle: read the atlas to find editable repos, group the work into an **effort** (`zentaizo effort new <word> --describe "…" --repo <name>=<branch>` — one effort can span several editable repos), scaffold the plan with `zentaizo next-change <slug>` (which fills the frontmatter) using [`skills/plan-template.md`](skills/plan-template.md), run with `status: planned` → `in-progress` → `done`, and append a `## Outcome` section on completion. Slice files are named `sessions/changes/<label>-NNNN-<slug>.md`; the CLI allocates the name, so you never derive it by hand (see [`AGENTS.md`](AGENTS.md) § Filename Convention).
+The skill handles the full lifecycle: read the atlas to find editable repos, group the work into an **effort** (`zentaizo effort new <word> --describe "…" --repo <name>=<branch>` — one effort can span several editable repos and scaffolds `sessions/efforts/NNNN-<label>.md` as the plan-of-record), then decompose it with `zentaizo next-change <slug>` (which fills the frontmatter) using [`skills/plan-template.md`](skills/plan-template.md), run with `status: planned` → `in-progress` → `done`, and append a `## Outcome` section on completion. Slice files are named `sessions/changes/<label>-NNNN-<slug>.md`; the CLI allocates the name, so you never derive it by hand (see [`AGENTS.md`](AGENTS.md) § Filename Convention).
 
 ### 6. Capture Q&A and debugging as they happen
 
@@ -317,19 +319,20 @@ When proposing a plan or summarizing changes, name the editable repo(s) explicit
 
 ## Active Efforts
 
-Work is grouped into **efforts** — named bodies of work that may span several editable repos (e.g. one auth-framework migration touching an API, a web client, and an SDK). The effort, not a git branch, is the unit that names a plan. Efforts live in the registry `sessions/efforts.json`, allocated and read through the CLI.
+Work is grouped into **efforts** — named bodies of work that may span several editable repos (e.g. one auth-framework migration touching an API, a web client, and an SDK). The effort, not a git branch, is the unit that names a plan. Efforts have two linked homes: `sessions/efforts.json` stores machine state (number, status, current pointer, repo/branch map), and `sessions/efforts/NNNN-<label>.md` stores the human-authored plan doc. Both are allocated and read through the CLI.
 
-1. **The registry is the source of truth for which work is live.** `zentaizo effort list` shows every effort and which one is *current*; `zentaizo effort show [label]` prints an effort's description, the repos and branches it uses, and its slices. Do not reconstruct this from checked-out branches.
-2. **An effort can span several editable repos on differently-named branches.** Each repo's branch (and the merge-base sha the work diverges from) is recorded against the effort — run `zentaizo effort set-branch <label> --repo <name>=<branch>` when a branch is opened. The branch name follows each repo's own conventions; it is **not** derived from the effort label, and the label is **not** a branch name.
+1. **The registry is the source of truth for which work is live.** `zentaizo effort list` shows every effort and which one is *current*; `zentaizo effort show [label]` prints the effort doc path, description, repos/branches, and slices. Do not reconstruct this from checked-out branches.
+2. **An effort can span several editable repos on differently-named branches.** Each repo's branch (and the merge-base sha the work diverges from) is recorded against the effort — run `zentaizo effort set-branch <label> --repo <name>` to attach a touched repo with no divergence branch yet, or `zentaizo effort set-branch <label> --repo <name>=<branch>` when a branch is opened. The branch name follows each repo's own conventions; it is **not** derived from the effort label, and the label is **not** a branch name.
 3. **The atlas `ref` stays pinned to the durable default** (usually `"main"`). Do not mutate the atlas to follow transient branch work — effort and branch state live in the registry plus plan frontmatter, not in atlas mutation.
-4. **Record branch switches in the plan's `## Outcome`, and close finished efforts** with `zentaizo effort close <label>` so the lineage stays durable across sessions. The reserved `main` effort holds workspace-meta work (atlas, summaries, conventions) — work not tied to an editable repo.
+4. **Record branch switches in the plan's `## Outcome`, and close finished efforts** with `zentaizo effort close <label>` so the lineage stays durable across sessions. The reserved `main` effort is the deliverable trunk: work flows there until it needs a separate branch/effort, and `zentaizo effort close main` is refused.
 
 ## Recording Work in `sessions/`
 
-`sessions/` is the durable trail of how this workspace has been used. Prefer writing to it over leaving substantive work only in chat history. Six subdirectories exist, summarized here and detailed below:
+`sessions/` is the durable trail of how this workspace has been used. Prefer writing to it over leaving substantive work only in chat history. Seven subdirectories exist, summarized here and detailed below:
 
 | Dir | Charter | Lifecycle |
 |---|---|---|
+| `efforts/` | effort-level plan docs: the 10,000-ft plan-of-record before slices | `zentaizo effort new`; amended in place |
 | `brainstorming/` | freeform input: surveys, hypotheses, roadmaps, design conversations, source inventories — *before* a decision | exploratory, no schema |
 | `changes/` | implementation plans (slices) | `planned→done`; `zentaizo next-change` |
 | `debugging/` | plan-shaped bug investigations | `zentaizo next-debugging` (shares the changes counter) |
@@ -343,7 +346,7 @@ The judgment calls the table can't capture: `brainstorming/` is *input before* a
 
 ### Editor attribution (`edited_by`)
 
-Frontmatter-bearing session files (`changes/`, `debugging/`, `reports/`, `handoffs/`) carry an `edited_by:` list — an ordered ledger of which model or human crafted, reviewed, or modified the file. Each entry is a git-style local timestamp, two spaces, then the editor identity:
+Frontmatter-bearing session files (`efforts/`, `changes/`, `debugging/`, `reports/`, `handoffs/`) carry an `edited_by:` list — an ordered ledger of which model or human crafted, reviewed, or modified the file. Each entry is a git-style local timestamp, two spaces, then the editor identity:
 
 ```text
 edited_by:
@@ -359,21 +362,22 @@ Consecutive edits by the same editor collapse into one entry whose timestamp adv
 
 Session files are allocated by the CLI — you never hand-compose a name or hand-derive a counter. Start (or pick) an effort, then ask for a file:
 
-- `zentaizo effort new <word> --describe "…" --repo <name>=<branch>` — reserve a new effort (a short word naming the work), record which editable repos/branches it uses, and make it current. Omit the word for a themed suggestion.
+- `zentaizo effort new <word> --describe "…" --repo <name>=<branch>` — reserve a new effort (a short word naming the work), record which editable repos/branches it uses, scaffold `sessions/efforts/NNNN-<label>.md`, and make it current. Omit the word for a themed suggestion.
 - `zentaizo next-change <slug>` — a plan in `changes/`. `zentaizo next-debugging <slug>` — a debugging note in `debugging/`. `zentaizo next-handoff <id> [topic]` — a handoff (omit the id, or use `0000`, for one not tied to a numbered slice). `zentaizo next-note <slug>` / `zentaizo next-report <slug>` — a Q&A log / a living report. All default to the current effort; pass `--label <effort>` to target another.
-- To read, `zentaizo path slice <id>` (recovers the slug from the id) or `zentaizo path active` (the highest open plan); `zentaizo effort show` for an effort's repos/branches/slices.
+- To read, `zentaizo path effort [label]` (the effort's plan doc), `zentaizo path slice <id>` (recovers the slug from the id), or `zentaizo path active` (the highest open slice plan); `zentaizo effort show` for an effort's doc, repos/branches, and slices.
 
 The commands apply the per-effort label (prefixed), allocate the shared `changes/`+`debugging/` counter, and scaffold correct frontmatter (`status`/`created`/`label`).
 
 | Subdirectory | Shape (for reading at a glance) |
 |---|---|
+| `efforts/` | `NNNN-<label>.md` — `NNNN` is the registry-owned effort number, and the label names the effort |
 | `changes/`, `debugging/` | `<label>-NNNN-<slug>.md` — `<label>` names the effort, `NNNN` is the per-effort counter shared across both dirs |
 | `handoffs/` | `<label>-NNNN<letter>[-<topic>].md` — `NNNN` reuses the paired slice's id; the letter is the key. Does **not** consume the counter |
 | `questions/` | `YYYY-MM-DD-<slug>.md` (date-prefixed, topical) |
 | `reports/` | `<slug>.md` (topical, living) |
 | `brainstorming/` | freeform, no required schema |
 
-The date does not appear in `changes/`/`debugging/`/`handoffs/`/`reports/` names; the creation date lives in frontmatter as `created:` (ISO 8601 UTC) and is canonical there, while each later edit is recorded in `edited_by:` (see § Editor attribution). If `zentaizo` is not on your PATH, install it (see the README) rather than naming a file by hand.
+The date does not appear in `efforts/`/`changes/`/`debugging/`/`handoffs/`/`reports/` names; the creation date lives in frontmatter as `created:` (ISO 8601 UTC) and is canonical there, while each later edit is recorded in `edited_by:` (see § Editor attribution). If `zentaizo` is not on your PATH, install it (see the README) rather than naming a file by hand.
 
 Use `tmp/` as a workspace-local scratch directory. It's under `.gitignore` and is only cleared by the user.
 
@@ -383,11 +387,11 @@ Commit at verified milestones. The Zentaizo-specific rule: **commit workspace no
 
 If your harness emits a `Co-authored-by:` trailer, it should carry the real model + reasoning effort used, not a hardcoded value (the bundled commit-attribution hook does this automatically when installed — the same identity that lands in `edited_by`; see § Editor attribution).
 
-The status-frontmatter schema (`status`/`created`/`label`/`editable_repos`/`edited_by` plus the optional `related` field), the `## Plan`/`## Outcome` body sections, and the acceptance-checkbox closeout rule are documented in `skills/plan-and-implement.md` and scaffolded by `skills/plan-template.md`. The CLI fills `status`/`created`/`label` and stamps the first `edited_by:` entry (see § Editor attribution); you fill `editable_repos` (the subset of the effort's repos this slice touches) and the body. Each repo's branch and divergence base live in the effort registry (`sessions/efforts.json`), not in the plan frontmatter. Follow the skill/template rather than reproducing the schema here.
+The effort doc carries only `created` + `edited_by` frontmatter; the registry owns `number`, `status`, and repo branch/base state. Slice files use the status-frontmatter schema (`status`/`created`/`label`/`editable_repos`/`edited_by` plus the optional `related` field), the `## Plan`/`## Outcome` body sections, and the acceptance-checkbox closeout rule documented in `skills/plan-and-implement.md` and scaffolded by `skills/plan-template.md`. The CLI fills `status`/`created`/`label` and stamps the first `edited_by:` entry (see § Editor attribution); you fill `editable_repos` (the subset of the effort's repos this slice touches) and the body. Each repo's branch and divergence base live in the effort registry (`sessions/efforts.json`), not in the plan frontmatter. Follow the skill/template rather than reproducing the schema here.
 
 ## From Brainstorming to Plan
 
-When the user shares a design conversation, sketch, or source inventory, save it under `sessions/brainstorming/`, then follow `skills/plan-and-implement.md` to distill it into a plan. The one split to get right: workspace-generic facts (which repos exist, which are editable, what the system is) belong in `{ATLAS_NAME}`; project-specific constraints (targets, phase exclusions, acceptance criteria) belong in the `sessions/changes/` plan. The skill covers the rest, including when a planner/implementor split needs a handoff.
+When the user shares a design conversation, sketch, or source inventory, save it under `sessions/brainstorming/`, then distill the 10,000-ft body of work into the effort doc before allocating smaller `sessions/changes/` slices. The one split to get right: workspace-generic facts (which repos exist, which are editable, what the system is) belong in `{ATLAS_NAME}`; project-specific constraints (targets, phase exclusions, acceptance criteria) belong in the effort doc and the slice plans that decompose it. The skill covers the rest, including when a planner/implementor split needs a handoff.
 """
 
 
@@ -646,6 +650,7 @@ def create_workspace(args: argparse.Namespace) -> int:
         "papers",
         "notes",
         "summaries",
+        "sessions/efforts",
         "sessions/brainstorming",
         "sessions/changes",
         "sessions/questions",
@@ -655,7 +660,13 @@ def create_workspace(args: argparse.Namespace) -> int:
     ]:
         (target / subdir).mkdir(parents=True, exist_ok=True)
 
-    write_json(target / SESSIONS_DIR / EFFORTS_NAME, new_efforts_registry())
+    registry = new_efforts_registry()
+    write_json(target / SESSIONS_DIR / EFFORTS_NAME, registry)
+    _create_effort_doc(
+        target,
+        registry["efforts"][0],
+        description=registry["efforts"][0].get("description") or "",
+    )
 
     (target / "README.md").write_text(workspace_readme(name))
     (target / "AGENTS.md").write_text(workspace_agents(name))
@@ -791,15 +802,18 @@ def validate_doc_entries(docs: list[dict], repo_names: set[str]) -> list[str]:
 
 def validate_workspace(args: argparse.Namespace) -> int:
     workspace = pathlib.Path(args.workspace).resolve()
+    effort_errors = effort_doc_integrity_errors(workspace)
     atlas = find_atlas(workspace)
     if atlas is None:
         print(f"{workspace}: invalid")
         print(f"- Missing source atlas: {ATLAS_NAME}")
         print(f"- First create {ATLAS_NAME} with AI assistance from this workspace.")
+        for error in effort_errors:
+            print(f"- {error}")
         return 1
 
     config = read_json(atlas)
-    errors: list[str] = []
+    errors: list[str] = list(effort_errors)
     sources = source_groups(config)
 
     if not config.get("name"):
@@ -2027,8 +2041,10 @@ def skills_uninstall(args: argparse.Namespace) -> int:
 
 SESSIONS_DIR = "sessions"
 EFFORTS_NAME = "efforts.json"
+EFFORT_DOCS_DIR = "efforts"
 MAIN_EFFORT = "main"
-MAIN_EFFORT_DESCRIPTION = "Workspace-meta work: atlas, summaries, conventions."
+MAIN_EFFORT_DESCRIPTION = "Principal line of work: the deliverable trunk."
+UPGRADE_ZENTAIZO_HINT = "Run the experimental `upgrade-zentaizo` skill to reconcile it."
 
 # Slice statuses that mean "no longer the active plan" (closeout-owned).
 CLOSED_SLICE_STATUSES = {"done", "superseded", "abandoned"}
@@ -2157,9 +2173,15 @@ def scan_slice_files(workspace: pathlib.Path, label: str) -> list[tuple[int, pat
 
 
 def label_in_use_on_disk(workspace: pathlib.Path, label: str) -> bool:
-    """True if any session file already uses ``label`` (slices or handoffs)."""
+    """True if any session file already uses ``label``."""
     if scan_slice_files(workspace, label):
         return True
+    efforts = workspace / SESSIONS_DIR / EFFORT_DOCS_DIR
+    if efforts.is_dir():
+        pattern = re.compile(rf"^\d{{4}}-{re.escape(label)}\.md$")
+        for path in efforts.iterdir():
+            if pattern.match(path.name) and path.is_file():
+                return True
     handoffs = workspace / SESSIONS_DIR / "handoffs"
     if handoffs.is_dir():
         prefix = re.compile(rf"^{re.escape(label)}-(\d{{4}})[a-z]")
@@ -2189,6 +2211,7 @@ def _main_effort() -> dict:
     now = utc_now()
     return {
         "label": MAIN_EFFORT,
+        "number": 1,
         "description": MAIN_EFFORT_DESCRIPTION,
         "status": "open",
         "repos": {},
@@ -2230,6 +2253,110 @@ def find_effort(data: dict, label: str) -> dict | None:
         if effort.get("label") == label:
             return effort
     return None
+
+
+def effort_number(effort: dict) -> int | None:
+    number = effort.get("number")
+    if isinstance(number, int) and number >= 1:
+        return number
+    return None
+
+
+def effort_doc_path(workspace: pathlib.Path, effort: dict) -> pathlib.Path:
+    label = effort.get("label") or "(unknown)"
+    number = effort_number(effort)
+    if number is None:
+        raise CliError(f"Effort {label!r} has no registry number. {UPGRADE_ZENTAIZO_HINT}")
+    return workspace / SESSIONS_DIR / EFFORT_DOCS_DIR / f"{number:04d}-{label}.md"
+
+
+def require_effort_doc_path(workspace: pathlib.Path, effort: dict) -> pathlib.Path:
+    path = effort_doc_path(workspace, effort)
+    if not path.is_file():
+        label = effort.get("label") or "(unknown)"
+        raise CliError(
+            f"Missing effort doc for {label!r}: {_rel(workspace, path)}. "
+            f"{UPGRADE_ZENTAIZO_HINT}"
+        )
+    return path
+
+
+def ensure_effort_numbers_allocatable(data: dict) -> None:
+    seen: dict[int, str] = {}
+    for effort in data.get("efforts", []):
+        label = effort.get("label") or "(unknown)"
+        number = effort_number(effort)
+        if number is None:
+            raise CliError(
+                f"Cannot allocate a new effort number because effort {label!r} "
+                f"has no registry number. {UPGRADE_ZENTAIZO_HINT}"
+            )
+        if number in seen:
+            raise CliError(
+                f"Cannot allocate a new effort number because efforts {seen[number]!r} "
+                f"and {label!r} both use number {number:04d}. {UPGRADE_ZENTAIZO_HINT}"
+            )
+        seen[number] = label
+
+
+def allocate_effort_number(data: dict) -> int:
+    ensure_effort_numbers_allocatable(data)
+    numbers = [effort_number(effort) or 0 for effort in data.get("efforts", [])]
+    return max(numbers, default=0) + 1
+
+
+def effort_doc_integrity_errors(workspace: pathlib.Path) -> list[str]:
+    root = workspace / SESSIONS_DIR
+    if not root.is_dir():
+        return []
+
+    path = efforts_path(workspace)
+    if not path.exists():
+        return [f"Missing {SESSIONS_DIR}/{EFFORTS_NAME}. {UPGRADE_ZENTAIZO_HINT}"]
+
+    data = load_efforts(workspace)
+    errors: list[str] = []
+    labels = {e.get("label") for e in data.get("efforts", []) if e.get("label")}
+    registry_numbers: dict[int, str] = {}
+
+    for effort in data.get("efforts", []):
+        label = effort.get("label") or "(unknown)"
+        number = effort_number(effort)
+        if number is None:
+            errors.append(f"Effort {label!r} is missing registry number. {UPGRADE_ZENTAIZO_HINT}")
+            continue
+        if number in registry_numbers:
+            errors.append(
+                f"Efforts {registry_numbers[number]!r} and {label!r} "
+                f"share registry number {number:04d}."
+            )
+        else:
+            registry_numbers[number] = label
+        expected = effort_doc_path(workspace, effort)
+        if not expected.is_file():
+            errors.append(f"Effort {label!r} is missing doc: {_rel(workspace, expected)}.")
+
+    docs_dir = workspace / SESSIONS_DIR / EFFORT_DOCS_DIR
+    docs_by_number: dict[int, list[pathlib.Path]] = {}
+    if docs_dir.is_dir():
+        for doc in sorted(docs_dir.iterdir()):
+            if not doc.is_file() or doc.suffix != ".md":
+                continue
+            match = re.fullmatch(r"(\d{4})-([a-z0-9][a-z0-9-]*)\.md", doc.name)
+            if not match:
+                errors.append(f"Invalid effort doc filename: {_rel(workspace, doc)}.")
+                continue
+            number = int(match.group(1))
+            label = match.group(2)
+            docs_by_number.setdefault(number, []).append(doc)
+            if label not in labels:
+                errors.append(f"Orphan effort doc {_rel(workspace, doc)} has no registry entry.")
+    for number, paths in sorted(docs_by_number.items()):
+        if len(paths) > 1:
+            listing = ", ".join(_rel(workspace, p) for p in paths)
+            errors.append(f"Duplicate effort doc number {number:04d}: {listing}.")
+
+    return errors
 
 
 def resolve_effort(
@@ -2333,15 +2460,28 @@ def _repo_entry(workspace: pathlib.Path, name: str, branch: str | None) -> dict:
 def _effort_summary_line(effort: dict) -> str:
     repos = effort.get("repos", {})
     repo_part = f"{len(repos)} repo(s)" if repos else "no repos"
+    upgrade_part = ", needs upgrade" if effort_number(effort) is None else ""
     desc = effort.get("description") or ""
     tail = f" — {desc}" if desc else ""
-    return f"{effort['label']} ({effort.get('status', 'open')}, {repo_part}){tail}"
+    return f"{effort['label']} ({effort.get('status', 'open')}, {repo_part}{upgrade_part}){tail}"
 
 
-def _print_effort_detail(workspace: pathlib.Path, effort: dict) -> None:
+def _print_effort_detail(
+    workspace: pathlib.Path, effort: dict, *, require_doc: bool = False
+) -> None:
     label = effort["label"]
     desc = effort.get("description") or ""
     print(f"{label} ({effort.get('status', 'open')})" + (f" — {desc}" if desc else ""))
+    number = effort_number(effort)
+    if number is None:
+        print(f"  doc: (needs upgrade; {UPGRADE_ZENTAIZO_HINT})")
+    else:
+        doc = (
+            require_effort_doc_path(workspace, effort)
+            if require_doc
+            else effort_doc_path(workspace, effort)
+        )
+        print(f"  doc: {_rel(workspace, doc)}")
     repos = effort.get("repos", {})
     for name in sorted(repos):
         info = repos[name] or {}
@@ -2366,6 +2506,7 @@ def effort_new(args: argparse.Namespace) -> int:
     workspace = pathlib.Path(args.workspace).resolve()
     sessions_root(workspace)
     data = load_efforts(workspace)
+    number = allocate_effort_number(data)
 
     if args.label is None:
         label = allocate_themed_label(workspace, data)
@@ -2386,20 +2527,28 @@ def effort_new(args: argparse.Namespace) -> int:
 
     effort = {
         "label": label,
+        "number": number,
         "description": args.describe or "",
         "status": "open",
         "repos": repos,
         "created": now,
         "updated": now,
     }
+    path = _create_effort_doc(workspace, effort, description=args.describe or "")
     data["efforts"].append(effort)
     data["current"] = label
-    save_efforts(workspace, data)
+    try:
+        save_efforts(workspace, data)
+    except OSError:
+        with contextlib.suppress(OSError):
+            path.unlink()
+        raise
 
     if args.json:
-        print(json.dumps(effort))
+        print(json.dumps(effort | {"path": _rel(workspace, path)}))
     else:
         print(f"Effort {label!r} created and set as current.")
+        print(f"Doc: {_rel(workspace, path)}")
         _print_effort_detail(workspace, effort)
     return 0
 
@@ -2426,9 +2575,14 @@ def effort_show(args: argparse.Namespace) -> int:
     data = load_efforts(workspace)
     effort = resolve_effort(workspace, data, args.label)
     if args.json:
-        print(json.dumps(effort))
+        payload = dict(effort)
+        if effort_number(effort) is None:
+            payload["needs_upgrade"] = True
+        else:
+            payload["path"] = _rel(workspace, require_effort_doc_path(workspace, effort))
+        print(json.dumps(payload))
     else:
-        _print_effort_detail(workspace, effort)
+        _print_effort_detail(workspace, effort, require_doc=True)
     return 0
 
 
@@ -2455,7 +2609,20 @@ def effort_set_branch(args: argparse.Namespace) -> int:
         raise CliError(f"Unknown effort {args.label!r}.")
     name, branch = parse_repo_spec(args.repo)
     if branch is None:
-        raise CliError(f"--repo {args.repo!r} must be NAME=BRANCH for set-branch", 1)
+        if args.base:
+            raise CliError("--base requires --repo NAME=BRANCH", 1)
+        validate_effort_repo(workspace, name)
+        existing = effort.setdefault("repos", {}).get(name) or {}
+        if existing.get("branch"):
+            raise CliError(f"Repo {name!r} already has a branch; pass {name}=BRANCH to update.")
+        effort.setdefault("repos", {})[name] = {"branch": None, "base": None}
+        effort["updated"] = utc_now()
+        save_efforts(workspace, data)
+        if args.json:
+            print(json.dumps(effort["repos"][name] | {"repo": name}))
+        else:
+            print(f"Recorded {name} with no branch on effort {args.label!r}.")
+        return 0
     validate_effort_repo(workspace, name)
     base = args.base or compute_base(workspace, name, branch)
     effort.setdefault("repos", {})[name] = {"branch": branch, "base": base}
@@ -2476,6 +2643,8 @@ def effort_close(args: argparse.Namespace) -> int:
     effort = find_effort(data, args.label)
     if effort is None:
         raise CliError(f"Unknown effort {args.label!r}.")
+    if effort.get("label") == MAIN_EFFORT:
+        raise CliError("The reserved 'main' effort is the deliverable trunk and cannot be closed.")
     effort["status"] = "closed"
     effort["updated"] = utc_now()
     save_efforts(workspace, data)
@@ -2636,6 +2805,29 @@ def scaffold_plan(template: str, label: str, now: str) -> str:
     return _set_frontmatter_field(text, "label", label)
 
 
+def scaffold_effort(template: str, now: str, description: str) -> str:
+    framing = description.strip() or "Describe the work this effort organizes."
+    text = _set_frontmatter_field(template, "created", f'"{now}"')
+    return text.replace("<framing>", framing, 1)
+
+
+def _create_effort_doc(
+    workspace: pathlib.Path,
+    effort: dict,
+    *,
+    description: str,
+) -> pathlib.Path:
+    path = effort_doc_path(workspace, effort)
+    text = scaffold_effort(
+        _read_template(workspace, "effort-template.md"),
+        effort.get("created") or utc_now(),
+        description,
+    )
+    _write_exclusive(path, text)
+    _record_edited_by(path, resolve_editor_identity(path.parent, None))
+    return path
+
+
 def scaffold_report(template: str, slug: str, now: str) -> str:
     title = slug.replace("-", " ").title()
     text = _set_frontmatter_field(template, "title", title)
@@ -2719,6 +2911,22 @@ def _resolve_read_effort(args: argparse.Namespace) -> tuple[pathlib.Path, str]:
     data = load_efforts(workspace)
     effort = resolve_effort(workspace, data, args.label)
     return workspace, effort["label"]
+
+
+def path_effort(args: argparse.Namespace) -> int:
+    workspace = pathlib.Path(args.workspace).resolve()
+    sessions_root(workspace)
+    data = load_efforts(workspace)
+    effort = resolve_effort(workspace, data, args.label)
+    path = require_effort_doc_path(workspace, effort)
+    return _emit_path(
+        args,
+        workspace,
+        path,
+        kind="effort",
+        label=effort["label"],
+        counter=effort_number(effort),
+    )
 
 
 def path_slice(args: argparse.Namespace) -> int:
@@ -3331,7 +3539,9 @@ def _add_effort_parser(sub: argparse._SubParsersAction) -> None:
         "set-branch", help="record a repo's branch on an effort (computes base)"
     )
     set_branch.add_argument("label", help="effort label")
-    set_branch.add_argument("--repo", required=True, metavar="NAME=BRANCH", help="repo and branch")
+    set_branch.add_argument(
+        "--repo", required=True, metavar="NAME[=BRANCH]", help="repo and optional branch"
+    )
     set_branch.add_argument("--base", help="override the computed merge-base short sha")
     set_branch.add_argument("--json", action="store_true", help="emit JSON")
     _add_workspace_arg(set_branch)
@@ -3351,6 +3561,12 @@ def _add_label_arg(parser: argparse.ArgumentParser) -> None:
 def _add_path_parser(sub: argparse._SubParsersAction) -> None:
     path = sub.add_parser("path", help="resolve an existing session file path (read-only)")
     path_sub = path.add_subparsers(dest="path_command", required=True)
+
+    effort_p = path_sub.add_parser("effort", help="resolve an effort's plan doc")
+    effort_p.add_argument("label", nargs="?", help="effort label (default: current)")
+    effort_p.add_argument("--json", action="store_true", help="emit JSON")
+    _add_workspace_arg(effort_p)
+    effort_p.set_defaults(func=path_effort)
 
     slice_p = path_sub.add_parser(
         "slice", help="resolve a slice file by id, or --next for the next id stem"

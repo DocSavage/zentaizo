@@ -1,8 +1,8 @@
 # Plan and Implement a Change
 
-This procedure helps an LLM-driven coding tool (Claude Code, Codex CLI, Gemini CLI, Aider, etc.) turn a user's change request into a `sessions/changes/` plan, execute it across the editable repos in this workspace, and record the outcome.
+This procedure helps an LLM-driven coding tool (Claude Code, Codex CLI, Gemini CLI, Aider, etc.) turn a user's change request into a `sessions/changes/` slice plan, execute it across the editable repos in this workspace, and record the outcome. The effort doc in `sessions/efforts/` is the higher-level plan-of-record; slices decompose that effort into executable chunks.
 
-The plan file is the single source of truth: it captures intent before work starts, tracks progress while it's in flight, and records the actual outcome on completion. The same file lives at the same path the whole way through — do not move or rename it when work completes.
+The slice plan file is the single source of truth for one implementation chunk: it captures intent before work starts, tracks progress while it's in flight, and records the actual outcome on completion. The same file lives at the same path the whole way through — do not move or rename it when work completes.
 
 ## When to run this procedure
 
@@ -24,17 +24,17 @@ Before drafting the plan:
 
 1. Read `AGENTS.md` for workspace rules — especially "Editable vs Reference Repos", "Active Efforts", and "Recording Work in `sessions/`".
 2. Read `zentaizo.atlas.json`. List the repos with `role: "edit"`. These are the only repos you may modify in this plan. Reference repos can be read and cited but never written to.
-3. Identify the **effort** this work belongs to. Run `zentaizo effort list` to see open efforts and which is current. If the work fits an existing effort, `zentaizo effort switch <label>` to it (or pass `--label` per command); if it is a new body of work — possibly spanning several editable repos — start one with `zentaizo effort new <word> --describe "…" --repo <name>=<branch>`. Workspace-meta work (atlas, summaries, conventions) uses the reserved `main` effort.
+3. Identify the **effort** this work belongs to. Run `zentaizo effort list` to see open efforts and which is current. If the work fits an existing effort, `zentaizo effort switch <label>` to it (or pass `--label` per command); if it is a new body of work — possibly spanning several editable repos — start one with `zentaizo effort new <word> --describe "…" --repo <name>=<branch>`, which also scaffolds `sessions/efforts/NNNN-<label>.md`. Work flows through the reserved `main` effort until it needs a separate branch/effort; `main` is the deliverable trunk and cannot be closed.
 4. If the user pointed at a doc in `sessions/brainstorming/`, read it in full. Otherwise skim recent files there for relevant context — design conversations often contain the constraints the plan needs.
 5. Read `summaries/overview.md` and any source summary covering the components you expect to touch.
-6. Check for related prior plans: `zentaizo effort show` lists the current effort's slices, and `zentaizo path active` resolves its active plan. If a related plan is `planned` or `in-progress`, ask whether to extend it rather than start a new one. If a related plan is `done`, read its `## Outcome` for surprises and follow-ups that apply.
+6. Read the effort doc with `zentaizo path effort [label]`; it is the plan-of-record above the slices. Then check for related prior slice plans: `zentaizo effort show` lists the current effort's slices, and `zentaizo path active` resolves its active plan. If a related plan is `planned` or `in-progress`, ask whether to extend it rather than start a new one. If a related plan is `done`, read its `## Outcome` for surprises and follow-ups that apply.
 
 ## Drafting the plan
 
-1. Run `zentaizo next-change <slug>` to allocate and scaffold the plan in `sessions/changes/` (defaults to the current effort; pass `--label <effort>` to target another). It composes the name `<label>-NNNN-<slug>.md`, allocates the per-effort counter, and writes the scaffold from `skills/plan-template.md` — you never derive the name, counter, or prefix by hand. Capture the printed path; `zentaizo path slice --next` previews the next id without writing.
+1. If the effort doc is still just scaffold text, fill or revise it first and run `zentaizo edited <effort-doc>`. Then run `zentaizo next-change <slug>` to allocate and scaffold the slice plan in `sessions/changes/` (defaults to the current effort; pass `--label <effort>` to target another). It composes the name `<label>-NNNN-<slug>.md`, allocates the per-effort counter, and writes the scaffold from `skills/plan-template.md` — you never derive the name, counter, or prefix by hand. Capture the printed path; `zentaizo path slice --next` previews the next id without writing.
 2. The CLI has already filled the deterministic frontmatter (`status: planned`; quoted UTC `created`; `label`) and stamped the first `edited_by:` entry crediting whoever ran the command. There is no `updated:` field — the latest `edited_by:` entry is the effective last-modified time. You fill:
    - `editable_repos`: only the subset of the effort's `role: "edit"` repos this plan will actually modify.
-   - Each repo's branch and divergence base are **not** in the plan — they live in the effort registry. Register a branch with `zentaizo effort set-branch <label> --repo <name>=<branch>` when you open one (it computes the base sha).
+   - Each repo's branch and divergence base are **not** in the plan — they live in the effort registry. Use `zentaizo effort set-branch <label> --repo <name>` to attach a touched repo before a divergence branch exists, and `zentaizo effort set-branch <label> --repo <name>=<branch>` when you open one (it computes the base sha).
 3. Fill in the `## Plan` section:
    - **Problem** — one short paragraph. Cite system context from the atlas/summaries rather than restating it.
    - **Scope** — what's in, what's explicitly out.

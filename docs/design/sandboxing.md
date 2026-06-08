@@ -8,7 +8,7 @@ _**Status (2026-05-31): build-order steps 1–4 are implemented and committed** 
 
 Agents are run **at the workspace level** (e.g. `~/work/zen-segmend-mesher`), not at the level of an individual editable repo — because the value of the workspace is precisely that the agent can see *all* the associated repos, the summaries, and the `sessions/` trail at once. But "see all of it" should not mean "write all of it." The access an agent actually needs is narrow:
 
-- **write** its own `sessions/` (plans, outcomes, debugging, handoffs, reports, the effort registry) and `summaries/`, plus the **editable** repos;
+- **write** its own `sessions/` (effort docs, plans, outcomes, debugging, handoffs, reports, the effort registry) and `summaries/`, plus the **editable** repos;
 - **read** everything else in the workspace — crucially the **reference** repos, whose entire purpose is to be read;
 - **touch nothing outside** the workspace.
 
@@ -32,7 +32,7 @@ mode = curate   (an agent running curate-atlas / upgrade-zentaizo)
   denied    = everything outside the workspace root
 ```
 
-The mode split resolves a real tension flagged in review: an *implementing* agent should not be able to rewrite the atlas, the lock, or the conventions it is working under — those are the source of truth, and a silent edit to them is exactly the drift the workspace exists to prevent — whereas a *curation* agent's whole job is to edit them. Default to `implement`; opt into `curate` for atlas/convention work. (`sessions/efforts.json` lives under `sessions/`, so the effort registry stays writable in both modes.)
+The mode split resolves a real tension flagged in review: an *implementing* agent should not be able to rewrite the atlas, the lock, or the conventions it is working under — those are the source of truth, and a silent edit to them is exactly the drift the workspace exists to prevent — whereas a *curation* agent's whole job is to edit them. Default to `implement`; opt into `curate` for atlas/convention work. (`sessions/efforts.json` and `sessions/efforts/` live under `sessions/`, so effort state stays writable in both modes.)
 
 So **Zentaizo owns the *policy* (derived from the atlas + mode); the open problem is *enforcement*, and enforcement is where it goes harness-specific.** This is the same shape as the rest of Zentaizo: the atlas is the single source of truth, and a thin deterministic step renders it into something concrete (here, per-harness guardrails or container mounts) — the same way the atlas already drives `fetch` behavior.
 

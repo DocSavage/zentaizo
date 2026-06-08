@@ -16,8 +16,9 @@ edited_by:
   no `updated:` field — run `zentaizo edited <this file>` after each substantive
   edit to extend the `edited_by:` ledger (who crafted, reviewed, or modified the
   plan, and when); the latest entry is the effective last-modified time. Never
-  hand-write the model name. The effort's per-repo branch and base sha live in
-  the registry (`sessions/efforts.json`), not here.
+  hand-write the model name. The effort's broader plan lives in
+  `sessions/efforts/`; its per-repo branch and base sha live in the registry
+  (`sessions/efforts.json`), not here.
 -->
 
 # <Concise plan title>

@@ -54,8 +54,9 @@ class CliTests(unittest.TestCase):
             self.assertIn("If `zentaizo.atlas.json` is missing", agents)
             self.assertIn("Do not write to Claude Memory", agents)
             self.assertIn("skills/curate-atlas.md", agents)
-            # All six session subdirs are documented (named in the summary table).
+            # All seven session subdirs are documented (named in the summary table).
             for subdir in (
+                "efforts",
                 "brainstorming",
                 "changes",
                 "questions",
@@ -77,6 +78,7 @@ class CliTests(unittest.TestCase):
             self.assertIn("skills/plan-and-implement.md", agents)
 
             for subdir in [
+                "efforts",
                 "brainstorming",
                 "changes",
                 "questions",
@@ -94,6 +96,7 @@ class CliTests(unittest.TestCase):
                 readme,
             )
             self.assertIn("sessions/brainstorming/", readme)
+            self.assertIn("sessions/efforts/", readme)
             self.assertIn("sessions/changes/", readme)
             self.assertIn("sessions/handoffs/", readme)
             self.assertIn("sessions/reports/", readme)
@@ -105,6 +108,10 @@ class CliTests(unittest.TestCase):
             self.assertIn("Created Zentaizo workspace", text)
             self.assertIn("Missing source atlas", text)
             self.assertIn("Atlas: missing zentaizo.atlas.json", text)
+
+            main_doc = workspace / "sessions" / "efforts" / "0001-main.md"
+            self.assertTrue(main_doc.exists())
+            self.assertIn("Principal line of work", main_doc.read_text())
 
     def test_create_installs_curate_atlas_skill(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -128,6 +135,12 @@ class CliTests(unittest.TestCase):
             self.assertIn("status: planned", plan_body)
             self.assertIn("## Plan", plan_body)
             self.assertIn("## Outcome", plan_body)
+
+            effort = workspace / "skills" / "effort-template.md"
+            self.assertTrue(effort.exists())
+            effort_body = effort.read_text()
+            self.assertIn("## Shape of the solution", effort_body)
+            self.assertIn("created:", effort_body)
 
             procedure = workspace / "skills" / "plan-and-implement.md"
             self.assertTrue(procedure.exists())
@@ -1049,6 +1062,14 @@ class EffortTests(WorkspaceCliCase):
             data = self._registry(workspace)
             self.assertEqual(data["current"], "main")
             self.assertEqual([e["label"] for e in data["efforts"]], ["main"])
+            main = data["efforts"][0]
+            self.assertEqual(main["number"], 1)
+            self.assertEqual(main["description"], "Principal line of work: the deliverable trunk.")
+            doc = workspace / "sessions" / "efforts" / "0001-main.md"
+            self.assertTrue(doc.exists())
+            body = doc.read_text()
+            self.assertRegex(body, r'created: "\d{4}-\d{2}-\d{2}T')
+            self.assertIn("edited_by:\n  - ", body)
 
     def test_themed_label_allocation_is_deterministic(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1066,11 +1087,47 @@ class EffortTests(WorkspaceCliCase):
             self.assertEqual(code, 2)
             self.assertIn("already in use", err)
 
+    def test_effort_new_writes_numbered_doc_and_stamps_edited_by(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            code, out, _ = self._run(
+                [
+                    "effort",
+                    "new",
+                    "katana",
+                    "--describe",
+                    "Add token rotation",
+                    "-C",
+                    str(workspace),
+                ]
+            )
+            self.assertEqual(code, 0)
+            self.assertIn("sessions/efforts/0002-katana.md", out)
+            effort = next(e for e in self._registry(workspace)["efforts"] if e["label"] == "katana")
+            self.assertEqual(effort["number"], 2)
+            doc = workspace / "sessions" / "efforts" / "0002-katana.md"
+            body = doc.read_text()
+            self.assertIn("Add token rotation", body)
+            self.assertRegex(body, r'created: "\d{4}-\d{2}-\d{2}T')
+            self.assertIn("edited_by:\n  - ", body)
+
+            self.assertEqual(self._run(["next-change", "first", "-C", str(workspace)])[0], 0)
+            effort = next(e for e in self._registry(workspace)["efforts"] if e["label"] == "katana")
+            self.assertEqual(effort["number"], 2)
+
     def test_label_already_used_on_disk_refused(self):
         with tempfile.TemporaryDirectory() as tmp:
             workspace = self._make_workspace(tmp)
             # A pre-existing slice file reserves its label even without a registry entry.
             (workspace / "sessions" / "changes" / "katana-0001-x.md").write_text("---\n---\n")
+            code, _, err = self._run(["effort", "new", "katana", "-C", str(workspace)])
+            self.assertEqual(code, 2)
+            self.assertIn("already in use", err)
+
+    def test_label_already_used_by_effort_doc_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            (workspace / "sessions" / "efforts" / "0009-katana.md").write_text("---\n---\n")
             code, _, err = self._run(["effort", "new", "katana", "-C", str(workspace)])
             self.assertEqual(code, 2)
             self.assertIn("already in use", err)
@@ -1104,6 +1161,17 @@ class EffortTests(WorkspaceCliCase):
             workspace = self._make_workspace(tmp)
             self.assertEqual(self._run(["effort", "show", "ghost", "-C", str(workspace)])[0], 2)
 
+    def test_path_effort_and_show_print_doc_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._run(["effort", "new", "katana", "-C", str(workspace)])
+            code, out, _ = self._run(["path", "effort", "katana", "-C", str(workspace)])
+            self.assertEqual(code, 0)
+            self.assertEqual(out.strip(), "sessions/efforts/0002-katana.md")
+            code, out, _ = self._run(["effort", "show", "katana", "-C", str(workspace)])
+            self.assertEqual(code, 0)
+            self.assertIn("doc: sessions/efforts/0002-katana.md", out)
+
     def test_set_branch_computes_base(self):
         with tempfile.TemporaryDirectory() as tmp:
             workspace = self._make_workspace(tmp)
@@ -1127,6 +1195,83 @@ class EffortTests(WorkspaceCliCase):
             ]
             self.assertEqual(repos["shortener-api"]["branch"], "feat/auth")
             self.assertEqual(repos["shortener-api"]["base"], base[:12])
+
+    def test_set_branch_bare_attaches_repo_and_branch_upgrades(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            write_example_atlas(workspace)
+            code, _, _ = self._run(
+                [
+                    "effort",
+                    "set-branch",
+                    "main",
+                    "--repo",
+                    "shortener-api",
+                    "-C",
+                    str(workspace),
+                ]
+            )
+            self.assertEqual(code, 0)
+            main_effort = next(
+                e for e in self._registry(workspace)["efforts"] if e["label"] == "main"
+            )
+            self.assertEqual(main_effort["repos"]["shortener-api"], {"branch": None, "base": None})
+
+            base = _init_repo_with_feature_branch(workspace / "repos" / "shortener-api")
+            code, _, _ = self._run(
+                [
+                    "effort",
+                    "set-branch",
+                    "main",
+                    "--repo",
+                    "shortener-api=feat/auth",
+                    "-C",
+                    str(workspace),
+                ]
+            )
+            self.assertEqual(code, 0)
+            main_effort = next(
+                e for e in self._registry(workspace)["efforts"] if e["label"] == "main"
+            )
+            self.assertEqual(main_effort["repos"]["shortener-api"]["branch"], "feat/auth")
+            self.assertEqual(main_effort["repos"]["shortener-api"]["base"], base[:12])
+
+    def test_set_branch_bare_never_downgrades_recorded_branch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            write_example_atlas(workspace)
+            _init_repo_with_feature_branch(workspace / "repos" / "shortener-api")
+            self.assertEqual(
+                self._run(
+                    [
+                        "effort",
+                        "set-branch",
+                        "main",
+                        "--repo",
+                        "shortener-api=feat/auth",
+                        "-C",
+                        str(workspace),
+                    ]
+                )[0],
+                0,
+            )
+            code, _, err = self._run(
+                [
+                    "effort",
+                    "set-branch",
+                    "main",
+                    "--repo",
+                    "shortener-api",
+                    "-C",
+                    str(workspace),
+                ]
+            )
+            self.assertEqual(code, 2)
+            self.assertIn("already has a branch", err)
+            main_effort = next(
+                e for e in self._registry(workspace)["efforts"] if e["label"] == "main"
+            )
+            self.assertEqual(main_effort["repos"]["shortener-api"]["branch"], "feat/auth")
 
     def test_set_branch_rejects_reference_repo(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1154,6 +1299,57 @@ class EffortTests(WorkspaceCliCase):
             self.assertEqual(self._run(["effort", "close", "katana", "-C", str(workspace)])[0], 0)
             effort = next(e for e in self._registry(workspace)["efforts"] if e["label"] == "katana")
             self.assertEqual(effort["status"], "closed")
+
+    def test_close_main_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            code, _, err = self._run(["effort", "close", "main", "-C", str(workspace)])
+            self.assertEqual(code, 2)
+            self.assertIn("cannot be closed", err)
+            main_effort = next(
+                e for e in self._registry(workspace)["efforts"] if e["label"] == "main"
+            )
+            self.assertEqual(main_effort["status"], "open")
+
+    def test_missing_effort_doc_fails_path_and_show(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._run(["effort", "new", "katana", "-C", str(workspace)])
+            (workspace / "sessions" / "efforts" / "0002-katana.md").unlink()
+            code, _, err = self._run(["path", "effort", "katana", "-C", str(workspace)])
+            self.assertEqual(code, 2)
+            self.assertIn("Missing effort doc", err)
+            code, _, err = self._run(["effort", "show", "katana", "-C", str(workspace)])
+            self.assertEqual(code, 2)
+            self.assertIn("Missing effort doc", err)
+
+    def test_legacy_registry_without_number_refuses_new_but_lists(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            data = self._registry(workspace)
+            data["efforts"][0].pop("number")
+            (workspace / "sessions" / "efforts.json").write_text(json.dumps(data, indent=2))
+            code, _, err = self._run(["effort", "new", "katana", "-C", str(workspace)])
+            self.assertEqual(code, 2)
+            self.assertIn("upgrade-zentaizo", err)
+            code, out, _ = self._run(["effort", "list", "-C", str(workspace)])
+            self.assertEqual(code, 0)
+            self.assertIn("needs upgrade", out)
+            code, out, _ = self._run(["effort", "show", "main", "-C", str(workspace)])
+            self.assertEqual(code, 0)
+            self.assertIn("needs upgrade", out)
+
+    def test_validate_flags_orphan_and_duplicate_effort_docs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            write_example_atlas(workspace)
+            efforts = workspace / "sessions" / "efforts"
+            (efforts / "0001-copy.md").write_text('---\ncreated: "x"\nedited_by:\n---\n')
+            (efforts / "0002-ghost.md").write_text('---\ncreated: "x"\nedited_by:\n---\n')
+            code, out, _ = self._run(["validate", str(workspace)])
+            self.assertEqual(code, 1)
+            self.assertIn("Duplicate effort doc number 0001", out)
+            self.assertIn("Orphan effort doc sessions/efforts/0002-ghost.md", out)
 
 
 class SessionPathTests(WorkspaceCliCase):

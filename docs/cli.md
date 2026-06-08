@@ -60,7 +60,7 @@ Creates a workspace shell with source directories, summaries directory, and assi
 zentaizo validate [PATH]
 ```
 
-Checks that `zentaizo.atlas.json` exists and has the required shape. Legacy `zentaizo.config.json` workspaces are still readable.
+Checks that `zentaizo.atlas.json` exists and has the required shape. It also runs effort-doc integrity checks: missing effort docs, orphan effort docs, duplicate effort numbers, and legacy registry entries without a `number` are reported loudly. Legacy `zentaizo.config.json` workspaces are still readable.
 
 ```bash
 zentaizo status [PATH]
@@ -116,4 +116,42 @@ Adds a Zentaizo reference block to `TARGET/AGENTS.md` so an assistant working in
 zentaizo edited PATH [--as IDENTITY]
 ```
 
-Records that the current editor touched a frontmatter-bearing session file, appending (or, for a consecutive same-editor edit, refreshing) an entry in its `edited_by:` ledger. The editor identity is resolved deterministically: in an AI session it comes from the commit-trailer cache (the exact model + reasoning effort, the same source the commit-attribution hook reads); in a plain shell it falls back to `git config user.name`; `--as` overrides both. Entries are git-style local timestamps (`Tue Jun 2 12:41:53 2026 -0400  Claude Opus 4.8 (1M context, reasoning xhigh)`). The `next-change`/`next-debugging`/`next-report` scaffolders stamp the first entry automatically.
+Records that the current editor touched a frontmatter-bearing session file, appending (or, for a consecutive same-editor edit, refreshing) an entry in its `edited_by:` ledger. The editor identity is resolved deterministically: in an AI session it comes from the commit-trailer cache (the exact model + reasoning effort, the same source the commit-attribution hook reads); in a plain shell it falls back to `git config user.name`; `--as` overrides both. Entries are git-style local timestamps (`Tue Jun 2 12:41:53 2026 -0400  Claude Opus 4.8 (1M context, reasoning xhigh)`). The `effort new`, `next-change`, `next-debugging`, `next-handoff`, and `next-report` scaffolders stamp the first entry automatically.
+
+## Efforts and Session Files
+
+```bash
+zentaizo effort new [LABEL] [--describe TEXT] [--repo NAME[=BRANCH]]...
+```
+
+Creates an effort, assigns the next registry-owned number, writes `sessions/efforts/NNNN-<label>.md` from `skills/effort-template.md`, stamps `created` and `edited_by`, records any repos/branches in `sessions/efforts.json`, makes the effort current, and prints the doc path. If `LABEL` is omitted, a deterministic themed label is chosen. `--describe` is the registry's canonical short description and also seeds the opening line of the doc as scaffold text only.
+
+```bash
+zentaizo effort list
+zentaizo effort show [LABEL]
+zentaizo effort switch LABEL
+zentaizo effort set-branch LABEL --repo NAME[=BRANCH] [--base SHA]
+zentaizo effort close LABEL
+```
+
+`effort list` shows all efforts and marks the current one. `effort show` prints the effort doc path, description, repos/branches, and slices. `effort switch` changes the current pointer. `effort set-branch` records repo participation: bare `--repo NAME` attaches a repo with no branch yet (`branch: null`, `base: null`), while `--repo NAME=BRANCH` records a real branch and computes the merge base when possible. Bare `--repo NAME` refuses to erase an existing recorded branch; pass `NAME=BRANCH` to update it. `effort close` closes non-main efforts; `main` is the uncloseable deliverable trunk.
+
+```bash
+zentaizo path effort [LABEL]
+zentaizo path slice <ID>
+zentaizo path slice --next
+zentaizo path active
+zentaizo path handoff <ID>
+```
+
+`path effort` resolves the effort doc from the registry number and label. `path slice` recovers an existing `changes/` or `debugging/` file by numeric id; `--next` previews the next `<label>-NNNN` id without writing. `path active` resolves the highest open plan for the current effort. `path handoff` lists handoffs tied to a slice id.
+
+```bash
+zentaizo next-change SLUG
+zentaizo next-debugging SLUG
+zentaizo next-handoff ID [TOPIC]
+zentaizo next-note SLUG
+zentaizo next-report SLUG
+```
+
+These commands allocate session files through the CLI. `next-change` and `next-debugging` share the per-effort slice counter and scaffold frontmatter from `skills/plan-template.md`. `next-handoff` creates a per-slice handoff letter without consuming the slice counter. `next-note` writes a dated Q&A log under `sessions/questions/`. `next-report` writes a living report under `sessions/reports/`.
