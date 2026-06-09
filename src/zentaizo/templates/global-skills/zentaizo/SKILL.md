@@ -5,6 +5,15 @@ description: Build and maintain Zentaizo context workspaces for AI-assisted work
 
 # Zentaizo
 
+> **First, check where you are.** If the working directory is the **Zentaizo
+> tool repo itself** — you will see `src/zentaizo/`, `pyproject.toml`, and a
+> `src/zentaizo/templates/` directory — then you are *developing* Zentaizo, not
+> using a workspace. This skill describes how to *use* a workspace; do **not**
+> follow it as a workflow there. Read that repo's `AGENTS.md` instead. The rest
+> of this skill assumes you are inside a Zentaizo workspace (it has
+> `zentaizo.atlas.json` or an `AGENTS.md` that names itself a Zentaizo
+> workspace).
+
 ## Overview
 
 Use Zentaizo as a project-local context atlas, not as a replacement for an assistant's memory system. Help the user identify sources that define a system's goals/architecture/implementation, and turn that real-world knowledge into committed markdown and, crucially, the human-curated context atlas (`zentaizo.atlas.json`).
