@@ -69,6 +69,7 @@ class CliTests(unittest.TestCase):
             self.assertIn("If `zentaizo.atlas.json` is missing", agents)
             self.assertIn("Do not write to Claude Memory", agents)
             self.assertIn("skills/curate-atlas.md", agents)
+            self.assertIn("next-brainstorming", agents)
             # All seven session subdirs are documented (named in the summary table).
             for subdir in (
                 "efforts",
@@ -111,6 +112,7 @@ class CliTests(unittest.TestCase):
                 readme,
             )
             self.assertIn("sessions/brainstorming/", readme)
+            self.assertIn("next-brainstorming", readme)
             self.assertIn("sessions/efforts/", readme)
             self.assertIn("sessions/changes/", readme)
             self.assertIn("sessions/handoffs/", readme)
@@ -118,6 +120,7 @@ class CliTests(unittest.TestCase):
             self.assertIn("Plan and implement changes", readme)
             self.assertIn("auto-discovers", readme)
             self.assertNotIn("Do not write to assistant memory", readme)
+            self.assertTrue((workspace / "skills" / "brainstorming-template.md").exists())
 
             text = output.getvalue()
             self.assertIn("Created Zentaizo workspace", text)
@@ -1814,11 +1817,47 @@ class SessionPathTests(WorkspaceCliCase):
             workspace = self._make_workspace(tmp)
             note = self._out(["next-note", "Why The Cache?", "-C", str(workspace)])
             self.assertRegex(note, r"^sessions/questions/\d{4}-\d{2}-\d{2}-why-the-cache\.md$")
+            brainstorming = self._out(
+                ["next-brainstorming", "Architecture Map", "-C", str(workspace)]
+            )
+            self.assertRegex(
+                brainstorming,
+                r"^sessions/brainstorming/\d{4}-\d{2}-\d{2}-architecture-map\.md$",
+            )
+            brainstorming_body = (workspace / brainstorming).read_text()
+            self.assertTrue(brainstorming_body.startswith("---\n"))
+            self.assertRegex(brainstorming_body, r'created: "\d{4}-\d{2}-\d{2}T')
+            self.assertIn("source_type:", brainstorming_body)
+            self.assertIn("related_efforts: []", brainstorming_body)
+            self.assertIn("related: []", brainstorming_body)
+            lines = brainstorming_body.splitlines()
+            edited_by = lines.index("edited_by:")
+            self.assertTrue(lines[edited_by + 1].startswith("  - "))
+            self.assertEqual(lines[edited_by + 2], "---")
             report = self._out(["next-report", "auth-findings", "-C", str(workspace)])
             self.assertEqual(report, "sessions/reports/auth-findings.md")
             body = (workspace / report).read_text()
             self.assertIn("title: Auth Findings", body)
             self.assertIn("status: living", body)
+
+    def test_next_brainstorming_json_shape_and_local_template(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            (workspace / "skills" / "brainstorming-template.md").write_text(
+                '---\ncreated: "YYYY-MM-DDTHH:MM:SSZ"\nedited_by:\n---\n\n# Local template\n'
+            )
+            payload = json.loads(
+                self._out(["next-brainstorming", "local-source", "--json", "-C", str(workspace)])
+            )
+            self.assertEqual(payload["kind"], "brainstorming")
+            self.assertIsNone(payload["label"])
+            self.assertIsNone(payload["counter"])
+            self.assertTrue(payload["wrote"])
+            self.assertRegex(
+                payload["path"],
+                r"^sessions/brainstorming/\d{4}-\d{2}-\d{2}-local-source\.md$",
+            )
+            self.assertIn("# Local template", (workspace / payload["path"]).read_text())
 
     def test_scaffold_frontmatter_and_default_effort(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1935,6 +1974,12 @@ class SessionPathTests(WorkspaceCliCase):
             self.assertEqual(code, 2)
             self.assertIn("refusing to overwrite", err)
             self.assertEqual((workspace / first).read_text(), original)
+            brainstorm = self._out(["next-brainstorming", "same-day", "-C", ws])
+            original = (workspace / brainstorm).read_text()
+            code, _, err = self._run(["next-brainstorming", "same-day", "-C", ws])
+            self.assertEqual(code, 2)
+            self.assertIn("refusing to overwrite", err)
+            self.assertEqual((workspace / brainstorm).read_text(), original)
 
     def test_next_change_refuses_closed_current_effort(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -2954,6 +2999,17 @@ class EditedByCliTests(WorkspaceCliCase):
             ho_path = workspace / self._run(["next-handoff", "1", "-C", str(workspace)])[1].strip()
             self.assertEqual(self._run(["edited", str(ho_path), "--as", "Ada Lovelace"])[0], 0)
             self.assertTrue(self._entries(ho_path)[-1].endswith("Ada Lovelace"))
+
+    def test_edited_works_on_generated_brainstorming_doc(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            rel = self._run(["next-brainstorming", "external-plan", "-C", str(workspace)])[
+                1
+            ].strip()
+            path = workspace / rel
+            self.assertEqual(len(self._entries(path)), 1)
+            self.assertEqual(self._run(["edited", str(path), "--as", "Ada Lovelace"])[0], 0)
+            self.assertTrue(self._entries(path)[-1].endswith("Ada Lovelace"))
 
 
 if __name__ == "__main__":

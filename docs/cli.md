@@ -116,7 +116,7 @@ Adds a Zentaizo reference block to `TARGET/AGENTS.md` so an assistant working in
 zentaizo edited PATH [--as IDENTITY]
 ```
 
-Records that the current editor touched a frontmatter-bearing session file, appending (or, for a consecutive same-editor edit, refreshing) an entry in its `edited_by:` ledger. The editor identity is resolved deterministically: in an AI session it comes from the commit-trailer cache (the exact model + reasoning effort, the same source the commit-attribution hook reads); in a plain shell it falls back to `git config user.name`; `--as` overrides both. Entries are git-style local timestamps (`Tue Jun 2 12:41:53 2026 -0400  Claude Opus 4.8 (1M context, reasoning xhigh)`). The `effort new`, `next-change`, `next-debugging`, `next-handoff`, and `next-report` scaffolders stamp the first entry automatically.
+Records that the current editor touched a frontmatter-bearing session file, appending (or, for a consecutive same-editor edit, refreshing) an entry in its `edited_by:` ledger. The editor identity is resolved deterministically: in an AI session it comes from the commit-trailer cache (the exact model + reasoning effort, the same source the commit-attribution hook reads); in a plain shell it falls back to `git config user.name`; `--as` overrides both. Entries are git-style local timestamps (`Tue Jun 2 12:41:53 2026 -0400  Claude Opus 4.8 (1M context, reasoning xhigh)`). The `effort new`, `next-change`, `next-debugging`, `next-brainstorming`, `next-handoff`, and `next-report` scaffolders stamp the first entry automatically.
 
 ```bash
 zentaizo claude-hooks [PATH]
@@ -162,8 +162,9 @@ zentaizo path handoff <ID>
 zentaizo next-change SLUG [--short-title TEXT]
 zentaizo next-debugging SLUG [--short-title TEXT]
 zentaizo next-handoff ID [TOPIC]
+zentaizo next-brainstorming SLUG
 zentaizo next-note SLUG
 zentaizo next-report SLUG
 ```
 
-These commands allocate session files through the CLI. `next-change` and `next-debugging` share the per-effort slice counter and scaffold frontmatter from `skills/plan-template.md`; `--short-title` fills the `short_title` frontmatter field and rejects values over 30 characters. `next-handoff` creates a per-slice handoff letter without consuming the slice counter. `next-note` writes a dated Q&A log under `sessions/questions/`. `next-report` writes a living report under `sessions/reports/`.
+These commands allocate session files through the CLI. `next-change` and `next-debugging` share the per-effort slice counter and scaffold frontmatter from `skills/plan-template.md`; `--short-title` fills the `short_title` frontmatter field and rejects values over 30 characters. `next-handoff` creates a per-slice handoff letter without consuming the slice counter. `next-brainstorming` writes a dated, provenance-bearing planning input under `sessions/brainstorming/`; raw freeform dumps are still allowed there. `next-note` writes a dated Q&A log under `sessions/questions/`. `next-report` writes a living report under `sessions/reports/`.

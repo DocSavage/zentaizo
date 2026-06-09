@@ -193,11 +193,11 @@ A workspace organizes knowledge as a level-of-detail spine — start at `summari
   papers/                   # PDFs and specs (design rationale)
   notes/                    # issue reports, traces, local design notes
   summaries/                # generated hierarchical summaries (start here)
-  skills/                   # model-agnostic procedures (curate-atlas, plan-*, report-template)
+  skills/                   # model-agnostic procedures and session templates
   sessions/
     efforts.json            # effort registry: labels, current pointer, repo/branch map
     efforts/                # effort-level plan docs
-    brainstorming/          # pre-decision input: transcripts, sketches, surveys
+    brainstorming/          # pre-decision input: templates or freeform dumps
     changes/                # implementation plans (slices), amended with outcomes
     debugging/              # bug investigations: traces, hypotheses, root cause
     questions/              # dated Q&A logs with researched answers + citations
@@ -221,7 +221,7 @@ Do not assume your AI harness auto-discovers `AGENTS.md` or the `skills/` direct
 
 ### 1. Curate the source atlas with AI assistance
 
-Ask the AI to follow [`skills/curate-atlas.md`](skills/curate-atlas.md) and the instructions in [`AGENTS.md`](AGENTS.md) to interview you and draft `{ATLAS_NAME}`. If you've already had relevant design conversations with one or more AIs, drop the transcripts into `sessions/brainstorming/` first — the skill reads those before interviewing, so you don't repeat yourself.
+Ask the AI to follow [`skills/curate-atlas.md`](skills/curate-atlas.md) and the instructions in [`AGENTS.md`](AGENTS.md) to interview you and draft `{ATLAS_NAME}`. If you've already had relevant design conversations with one or more AIs, run `zentaizo next-brainstorming <slug>` for a provenance-bearing note or drop raw transcripts into `sessions/brainstorming/` — the skill reads those before interviewing, so you don't repeat yourself.
 
 ```bash
 $EDITOR {ATLAS_NAME}
@@ -259,7 +259,7 @@ The skill handles the full lifecycle: read the atlas to find editable repos, gro
 
 ### 6. Capture Q&A and debugging as they happen
 
-The CLI allocates every session file: `zentaizo next-note <slug>` for a cross-repo Q&A (`sessions/questions/`), `zentaizo next-debugging <slug>` for a bug investigation (`sessions/debugging/`, sharing the effort's counter with `changes/`), `zentaizo next-handoff <id> [topic]` for a paste-ready execution prompt (`sessions/handoffs/`), and `zentaizo next-report <slug>` for a living evidence-backed synthesis (`sessions/reports/`). Ask the AI to write these as you work — future sessions will read them instead of re-deriving the same context. The conventions are in [`AGENTS.md`](AGENTS.md).
+The CLI allocates session files when a scaffold is useful: `zentaizo next-brainstorming <slug>` for pre-decision planning input (`sessions/brainstorming/`), `zentaizo next-note <slug>` for a cross-repo Q&A (`sessions/questions/`), `zentaizo next-debugging <slug>` for a bug investigation (`sessions/debugging/`, sharing the effort's counter with `changes/`), `zentaizo next-handoff <id> [topic]` for a paste-ready execution prompt (`sessions/handoffs/`), and `zentaizo next-report <slug>` for a living evidence-backed synthesis (`sessions/reports/`). Ask the AI to write these as you work — future sessions will read them instead of re-deriving the same context. The conventions are in [`AGENTS.md`](AGENTS.md).
 
 ### 7. (Optional) Share this context with another repo
 
@@ -341,7 +341,7 @@ Work is grouped into **efforts** — named bodies of work that may span several 
 | Dir | Charter | Lifecycle |
 |---|---|---|
 | `efforts/` | effort-level plan docs: the 10,000-ft plan-of-record before slices | `zentaizo effort new`; amended in place |
-| `brainstorming/` | freeform input: surveys, hypotheses, roadmaps, design conversations, source inventories — *before* a decision | exploratory, no schema |
+| `brainstorming/` | input before a decision: surveys, hypotheses, roadmaps, design conversations, source inventories | `zentaizo next-brainstorming` when provenance helps; freeform dumps allowed |
 | `changes/` | implementation plans (slices) | `planned→done`; `zentaizo next-change` |
 | `debugging/` | plan-shaped bug investigations | `zentaizo next-debugging` (shares the changes counter) |
 | `questions/` | dated Q&A logs | `zentaizo next-note` |
@@ -350,11 +350,11 @@ Work is grouped into **efforts** — named bodies of work that may span several 
 
 The clean mental model: **`brainstorming/` is *before* (input), `reports/` is *after* (synthesized output with evidence + a conclusion), `handoffs/` is the *execution* glue; `changes/`/`debugging/`/`questions/` are the work itself.**
 
-The judgment calls the table can't capture: `brainstorming/` is *input before* a decision (transcripts, sketches, surveys) — never a home for execution prompts or finished syntheses. `reports/` is *synthesized output* — keep **one living report per topic** and revise it in place rather than forking a second. A `debugging/` note is a plan-shaped investigation that shares the `changes/` counter. For the lifecycle (draft → execute → close out) and the plan/report body and frontmatter, follow `skills/plan-and-implement.md` and the templates it copies (`skills/plan-template.md`, `skills/report-template.md`) — don't reproduce the schema here. Allocate every file with the CLI (see § Filename Convention); the command for each dir is in the table above.
+The judgment calls the table can't capture: `brainstorming/` is *input before* a decision (transcripts, sketches, surveys) — never a home for execution prompts or finished syntheses. Use `zentaizo next-brainstorming <slug>` for external planning docs or source inventories that should carry provenance and may feed multiple efforts; raw dumps are still allowed when a template is not useful. `reports/` is *synthesized output* — keep **one living report per topic** and revise it in place rather than forking a second. A `debugging/` note is a plan-shaped investigation that shares the `changes/` counter. For the lifecycle (draft → execute → close out) and the plan/report body and frontmatter, follow `skills/plan-and-implement.md` and the templates it copies (`skills/plan-template.md`, `skills/report-template.md`) — don't reproduce the schema here. Allocate scaffolded files with the CLI (see § Filename Convention); the command for each scaffolded dir is in the table above.
 
 ### Editor attribution (`edited_by`)
 
-Frontmatter-bearing session files (`efforts/`, `changes/`, `debugging/`, `reports/`, `handoffs/`) carry an `edited_by:` list — an ordered ledger of which model or human crafted, reviewed, or modified the file. Each entry is a git-style local timestamp, two spaces, then the editor identity:
+Frontmatter-bearing session files (`efforts/`, generated `brainstorming/`, `changes/`, `debugging/`, `reports/`, `handoffs/`) carry an `edited_by:` list — an ordered ledger of which model or human crafted, reviewed, or modified the file. Each entry is a git-style local timestamp, two spaces, then the editor identity:
 
 ```text
 edited_by:
@@ -362,7 +362,7 @@ edited_by:
   - Thu Jun 4 23:33:15 2026 -0400  Codex gpt-5.5 (reasoning xhigh)
 ```
 
-The scaffolding commands stamp the first entry. After **any** substantive edit to a session file, run `zentaizo edited <path>` to log it. **Do not hand-write the identity** — a model can't reliably name its own model id: the CLI resolves it from the same commit-trailer cache the attribution hook uses (falling back to `git config user.name` for a human shell; `--as "<identity>"` overrides).
+The scaffolding commands stamp the first entry. After **any** substantive edit to a frontmatter-bearing session file, run `zentaizo edited <path>` to log it. Raw/freeform brainstorming dumps may not have frontmatter; add frontmatter first or leave them as immutable input. **Do not hand-write the identity** — a model can't reliably name its own model id: the CLI resolves it from the same commit-trailer cache the attribution hook uses (falling back to `git config user.name` for a human shell; `--as "<identity>"` overrides).
 
 Consecutive edits by the same editor collapse into one entry whose timestamp advances; a different editor appends a new line, so hand-offs between models (or to a human) stay visible. There is no `updated:` field: the most recent `edited_by:` entry *is* the last-modified record (`created:` remains the stable creation timestamp). So at each status transition, run `zentaizo edited <path>` instead of hand-editing a timestamp.
 
@@ -371,21 +371,22 @@ Consecutive edits by the same editor collapse into one entry whose timestamp adv
 Session files are allocated by the CLI — you never hand-compose a name or hand-derive a counter. Start (or pick) an effort, then ask for a file:
 
 - `zentaizo effort new <word> --describe "…" --repo <name>=<branch>` — reserve a new effort (a short word naming the work), record which editable repos/branches it uses, scaffold `sessions/efforts/NNNN-<label>.md`, and make it current. Omit the word for a themed suggestion.
-- `zentaizo next-change <slug>` — a plan in `changes/`. `zentaizo next-debugging <slug>` — a debugging note in `debugging/`. `zentaizo next-handoff <id> [topic]` — a handoff (omit the id, or use `0000`, for one not tied to a numbered slice). `zentaizo next-note <slug>` / `zentaizo next-report <slug>` — a Q&A log / a living report. All default to the current effort; pass `--label <effort>` to target another.
+- `zentaizo next-change <slug>` — a plan in `changes/`. `zentaizo next-debugging <slug>` — a debugging note in `debugging/`. `zentaizo next-handoff <id> [topic]` — a handoff (omit the id, or use `0000`, for one not tied to a numbered slice). These effort-scoped commands default to the current effort; pass `--label <effort>` to target another.
+- `zentaizo next-brainstorming <slug>` — a pre-decision planning note in `brainstorming/`. `zentaizo next-note <slug>` — a Q&A log in `questions/`. `zentaizo next-report <slug>` — a living report in `reports/`. These are cross-effort and do not consume a counter.
 - To read, `zentaizo path effort [label]` (the effort's plan doc), `zentaizo path slice <id>` (recovers the slug from the id), or `zentaizo path active` (the highest open slice plan); `zentaizo effort show` for an effort's doc, repos/branches, and slices.
 
-The commands apply the per-effort label (prefixed), allocate the shared `changes/`+`debugging/` counter, and scaffold correct frontmatter (`status`/`created`/`label`).
+The effort-scoped commands apply the per-effort label (prefixed), allocate the shared `changes/`+`debugging/` counter, and scaffold correct frontmatter (`status`/`created`/`label`).
 
 | Subdirectory | Shape (for reading at a glance) |
 |---|---|
 | `efforts/` | `NNNN-<label>.md` — `NNNN` is the registry-owned effort number, and the label names the effort |
 | `changes/`, `debugging/` | `<label>-NNNN-<slug>.md` — `<label>` names the effort, `NNNN` is the per-effort counter shared across both dirs |
 | `handoffs/` | `<label>-NNNN<letter>[-<topic>].md` — `NNNN` reuses the paired slice's id; the letter is the key. Does **not** consume the counter |
+| `brainstorming/` | `YYYY-MM-DD-<slug>.md` for generated input; freeform files still allowed |
 | `questions/` | `YYYY-MM-DD-<slug>.md` (date-prefixed, topical) |
 | `reports/` | `<slug>.md` (topical, living) |
-| `brainstorming/` | freeform, no required schema |
 
-The date does not appear in `efforts/`/`changes/`/`debugging/`/`handoffs/`/`reports/` names; the creation date lives in frontmatter as `created:` (ISO 8601 UTC) and is canonical there, while each later edit is recorded in `edited_by:` (see § Editor attribution). If `zentaizo` is not on your PATH, install it (see the README) rather than naming a file by hand.
+The date appears in `brainstorming/` and `questions/` names because those are cross-effort, topical notes. The date does not appear in `efforts/`/`changes/`/`debugging/`/`handoffs/`/`reports/` names; the creation date lives in frontmatter as `created:` (ISO 8601 UTC) where the template has frontmatter, while each later edit is recorded in `edited_by:` (see § Editor attribution). If `zentaizo` is not on your PATH, install it (see the README) rather than naming a file by hand.
 
 Use `tmp/` as a workspace-local scratch directory. It's under `.gitignore` and is only cleared by the user.
 
@@ -399,7 +400,7 @@ The effort doc carries only `created` + `edited_by` frontmatter; the registry ow
 
 ## From Brainstorming to Plan
 
-When the user shares a design conversation, sketch, or source inventory, save it under `sessions/brainstorming/`, then distill the 10,000-ft body of work into the effort doc before allocating smaller `sessions/changes/` slices. The one split to get right: workspace-generic facts (which repos exist, which are editable, what the system is) belong in `{ATLAS_NAME}`; project-specific constraints (targets, phase exclusions, acceptance criteria) belong in the effort doc and the slice plans that decompose it. The skill covers the rest, including when a planner/implementor split needs a handoff.
+When the user shares a design conversation, sketch, source inventory, or external planning doc, save it under `sessions/brainstorming/` (use `zentaizo next-brainstorming <slug>` when provenance matters), then distill the 10,000-ft body of work into the effort doc before allocating smaller `sessions/changes/` slices. The one split to get right: workspace-generic facts (which repos exist, which are editable, what the system is) belong in `{ATLAS_NAME}`; project-specific constraints (targets, phase exclusions, acceptance criteria) belong in the effort doc and the slice plans that decompose it. The skill covers the rest, including when a planner/implementor split needs a handoff.
 """
 
 
@@ -3453,6 +3454,10 @@ def scaffold_report(template: str, slug: str, now: str) -> str:
     return _set_frontmatter_field(text, "created", f'"{now}"')
 
 
+def scaffold_brainstorming(template: str, now: str) -> str:
+    return _set_frontmatter_field(template, "created", f'"{now}"')
+
+
 def scaffold_handoff(template: str, now: str, spec: str | None) -> str:
     """Fill the handoff template's `created` and, when tied to a plan, the
     `<spec>` placeholder. For an untied handoff (id 0000), drop the spec line so
@@ -3666,6 +3671,20 @@ def next_note(args: argparse.Namespace) -> int:
     _write_exclusive(target, stub)
     return _emit_created(
         args, workspace, target, kind="questions", label=None, counter=None, created=now
+    )
+
+
+def next_brainstorming(args: argparse.Namespace) -> int:
+    workspace = pathlib.Path(args.workspace).resolve()
+    sessions_root(workspace)
+    slug = normalize_slug(args.slug)
+    now = utc_now()
+    text = scaffold_brainstorming(_read_template(workspace, "brainstorming-template.md"), now)
+    target = workspace / SESSIONS_DIR / "brainstorming" / f"{utc_date()}-{slug}.md"
+    _write_exclusive(target, text)
+    _record_edited_by(target, resolve_editor_identity(target.parent, None))
+    return _emit_created(
+        args, workspace, target, kind="brainstorming", label=None, counter=None, created=now
     )
 
 
@@ -4304,6 +4323,7 @@ def _add_next_parsers(sub: argparse._SubParsersAction) -> None:
     for verb, func, slug_help in (
         ("next-change", next_change, "short hyphenated slug for the plan"),
         ("next-debugging", next_debugging, "short hyphenated slug for the investigation"),
+        ("next-brainstorming", next_brainstorming, "short hyphenated slug for the input"),
         ("next-note", next_note, "short hyphenated slug for the question"),
         ("next-report", next_report, "short hyphenated slug for the report topic"),
     ):

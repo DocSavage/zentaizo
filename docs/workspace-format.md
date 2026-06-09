@@ -20,6 +20,7 @@ my-system-atlas/
   skills/
     curate-atlas.md         # model-agnostic interview procedure
     plan-and-implement.md   # the plan -> execute -> close-out lifecycle
+    brainstorming-template.md # scaffold for provenance-bearing brainstorming docs
     effort-template.md      # scaffold for effort-level plan docs
     plan-template.md        # scaffold for changes/ and debugging/ files
     report-template.md      # scaffold for reports/ files
@@ -141,7 +142,7 @@ Sessions are the durable trail of how the workspace has been used:
 sessions/
   efforts.json     # registry: effort labels, numbers, current pointer, per-repo branch/base
   efforts/         # effort-level plan docs
-  brainstorming/   # pre-decision input (no schema)
+  brainstorming/   # pre-decision input (scaffolded or freeform)
   changes/         # implementation plans (slices)
   debugging/       # plan-shaped bug investigations (shares the changes/ counter)
   questions/       # dated Q&A logs
@@ -158,9 +159,16 @@ registry number and label.
 The effort label, not a git branch, prefixes a slice's filename
 (`<label>-NNNN-<slug>.md`). The CLI allocates every session file — `zentaizo
 effort new`, then `zentaizo next-change` / `next-debugging` / `next-handoff` /
-`next-note` / `next-report` — so names and counters are never hand-derived. Use
+`next-brainstorming` / `next-note` / `next-report` — so scaffolded names and
+counters are never hand-derived. Use
 `zentaizo path effort [label]` to resolve an effort plan doc and `zentaizo path
 slice <id>` for a slice file.
+
+`brainstorming/` remains permissive: raw transcripts, sketches, and pasted
+external planning docs may live there as freeform files. When a pre-decision
+input should carry provenance and an `edited_by:` ledger, use
+`zentaizo next-brainstorming <slug>` to scaffold
+`sessions/brainstorming/YYYY-MM-DD-<slug>.md`.
 
 `changes/` and `debugging/` slice frontmatter includes `short_title`, a
 human/agent-authored title for compact session headers. The CLI can fill it via
@@ -168,7 +176,7 @@ human/agent-authored title for compact session headers. The CLI can fill it via
 workspace intent: review it like the rest of the plan frontmatter. It is not
 machine lock state and does not belong in `zentaizo.lock.json`.
 
-Frontmatter-bearing session files (`efforts/`, `changes/`, `debugging/`, `reports/`, `handoffs/`) also carry an `edited_by:` ledger recording which model or human crafted, reviewed, or modified the file, in order. The scaffolding commands stamp the first entry, and `zentaizo edited <path>` appends or refreshes it on later edits — resolving the editor identity from the same commit-trailer cache the commit-attribution hook uses, so the recorded model + reasoning effort is never the model's own guess.
+Frontmatter-bearing session files (`efforts/`, generated `brainstorming/`, `changes/`, `debugging/`, `reports/`, `handoffs/`) also carry an `edited_by:` ledger recording which model or human crafted, reviewed, or modified the file, in order. The scaffolding commands stamp the first entry, and `zentaizo edited <path>` appends or refreshes it on later edits — resolving the editor identity from the same commit-trailer cache the commit-attribution hook uses, so the recorded model + reasoning effort is never the model's own guess. Raw/freeform brainstorming dumps may not have frontmatter and are not required to support `zentaizo edited`.
 
 These are useful for preserving the reasoning behind an answer or implementation plan.
 

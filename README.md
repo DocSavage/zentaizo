@@ -166,11 +166,11 @@ zen-link-shortener/
   papers/                   # PDFs and specs
   notes/                    # issue reports, traces, design notes
   summaries/                # generated hierarchical summaries
-  skills/                   # model-agnostic procedures (curate-atlas, plan-*, report-template)
+  skills/                   # model-agnostic procedures and session templates
   sessions/
     efforts.json            # effort registry: labels, numbers, current pointer, repo/branch map
     efforts/                # effort-level plan docs
-    brainstorming/          # pre-decision input: AI discussions, sketches, source inventories
+    brainstorming/          # pre-decision input: scaffolded notes or freeform dumps
     changes/                # implementation plans (slices), amended with outcomes
     debugging/              # bug investigations: traces, hypotheses, root cause
     questions/              # dated Q&A logs with researched answers and citations

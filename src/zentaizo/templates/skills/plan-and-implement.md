@@ -25,7 +25,7 @@ Before drafting the plan:
 1. Read `AGENTS.md` for workspace rules — especially "Editable vs Reference Repos", "Active Efforts", and "Recording Work in `sessions/`".
 2. Read `zentaizo.atlas.json`. List the repos with `role: "edit"`. These are the only repos you may modify in this plan. Reference repos can be read and cited but never written to.
 3. Identify the **effort** this work belongs to. Run `zentaizo effort list` to see open efforts and which is current. If the work fits an existing effort, `zentaizo effort switch <label>` to it (or pass `--label` per command); if it is a new body of work — possibly spanning several editable repos — start one with `zentaizo effort new <word> --describe "…" --repo <name>=<branch>`, which also scaffolds `sessions/efforts/NNNN-<label>.md`. Work flows through the reserved `main` effort until it needs a separate branch/effort; `main` is the deliverable trunk and cannot be closed.
-4. If the user pointed at a doc in `sessions/brainstorming/`, read it in full. Otherwise skim recent files there for relevant context — design conversations often contain the constraints the plan needs.
+4. If the user pointed at a doc in `sessions/brainstorming/`, read it in full. Otherwise skim recent files there for relevant context — design conversations often contain the constraints the plan needs. If the user gives a new external planning doc or source inventory that may feed this or future efforts, run `zentaizo next-brainstorming <slug>` and paste/summarize it there before slicing.
 5. Read `summaries/overview.md` and any source summary covering the components you expect to touch.
 6. Read the effort doc with `zentaizo path effort [label]`; it is the plan-of-record above the slices. Then check for related prior slice plans: `zentaizo effort show` lists the current effort's slices, and `zentaizo path active` resolves its active plan. If a related plan is `planned` or `in-progress`, ask whether to extend it rather than start a new one. If a related plan is `done`, read its `## Outcome` for surprises and follow-ups that apply.
 
@@ -44,7 +44,7 @@ Before drafting the plan:
    - **Acceptance criteria** — checkable outcomes (one checkbox per criterion). Start criteria unchecked; they are marked complete only during closeout when the outcome supports them.
    - **Verification** — commands, tests, or artifacts that prove each criterion.
    - **Open questions** — anything to confirm with the user before starting.
-4. If brainstorming docs informed this plan, link to them by relative path so the lineage is preserved.
+4. If brainstorming docs informed this plan, link to them by relative path so the lineage is preserved. Generated brainstorming docs have `edited_by:` provenance; raw/freeform dumps may not, and that is allowed.
 5. Leave `## Outcome` empty (or omit it) until work is done.
 6. Show the user the plan file (or a unified diff) and wait for confirmation before editing any code. Do not start implementation while `status: planned`.
 
@@ -75,7 +75,7 @@ Once the user approves (and, for a split, once the handoff has been written):
 1. Confirm the plan frontmatter has a useful `short_title` before execution starts. Fill a blank value, or revise a weak one, then set `status: in-progress` and run `zentaizo edited <plan>` to record your edit in the `edited_by:` ledger (the CLI fills in the model/effort or human identity — never hand-write it; see `AGENTS.md` § Editor attribution). Treat the `## Plan` section as frozen from this point, except for marking acceptance criteria checkboxes during closeout. If scope changes mid-flight, capture it as a deviation in the upcoming `## Outcome` rather than rewriting the plan.
 2. Work step by step through the approach. Modify files only in repos with `role: "edit"` in the atlas. Read reference repos freely but do not write to them.
 3. Run the verification steps as you go, not just at the end.
-4. If a substantive cross-repo question comes up that the user answers, run `zentaizo next-note <slug>` and fill in the Q&A (date-prefixed; no effort/counter). If a bug investigation is needed mid-implementation, run `zentaizo next-debugging <slug>` — it scaffolds the **same plan shape** as a change (Context / Hypotheses / Investigation / Acceptance criteria / Outcome) and draws the same per-effort counter as `changes/`, so a debugging note is "a plan for an investigation," not a loose trace. Link these back from the plan if they were load-bearing.
+4. If a substantive cross-repo question comes up that the user answers, run `zentaizo next-note <slug>` and fill in the Q&A (date-prefixed; no effort/counter). If a new pre-decision planning input appears, run `zentaizo next-brainstorming <slug>` and keep it cross-effort unless or until an effort consumes it. If a bug investigation is needed mid-implementation, run `zentaizo next-debugging <slug>` — it scaffolds the **same plan shape** as a change (Context / Hypotheses / Investigation / Acceptance criteria / Outcome) and draws the same per-effort counter as `changes/`, so a debugging note is "a plan for an investigation," not a loose trace. Link these back from the plan if they were load-bearing.
 
 ## Closing out
 
