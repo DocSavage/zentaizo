@@ -60,41 +60,207 @@ You want to ask:
 
 Zentaizo is meant to prepare the agent to answer that first, then help make the actual edits in the right repositories.
 
-## How to Use
+## Install
 
-To install the zentaizo skill, which describes the workflow and conventions:
+Put `zentaizo` on your `PATH` (`pipx` keeps it isolated):
+
+```bash
+pipx install -e /path/to/zentaizo
+zentaizo --help
+```
+
+If you don't have `pipx`: `pixi global install pipx` (or `brew install pipx`,
+`apt install pipx`).
+
+Then install the global Zentaizo skill, which teaches your AI assistants the
+workspace workflow and conventions:
 
 ```bash
 zentaizo skills install --target claude  # or codex, gemini, all
 ```
 
-Typically you'd create a `zen-` prefixed workspace repo that targets a particular project where one or more of the fetched or created repos will be modified:
+(Working on Zentaizo itself uses a pixi dev env — see
+[Developing](#developing).)
+
+## The Workflow
+
+A workspace has two phases: **build the context** (once, then refreshed as
+sources move), and **work in efforts** against it. The diagram shows the
+shape; the numbered steps below explain what each box actually does.
+
+```mermaid
+flowchart TD
+    subgraph build ["Phase 1 — build the context"]
+        direction TB
+        C["<b>1 · zentaizo create</b>"] --> A["<b>2 · author the atlas</b><br/><i>zentaizo.atlas.json</i>"]
+        A --> F["<b>3 · zentaizo fetch</b><br/><i>pins repos and docs</i>"]
+        F --> S["<b>4 · zentaizo summarize</b><br/><i>stale-aware, focused<br/>summary prompt</i>"]
+    end
+    subgraph work ["Phase 2 — work in efforts"]
+        direction TB
+        E["<b>zentaizo effort new</b><br/><i>scaffolds the effort plan doc</i>"] --> P["<b>zentaizo next-change</b><br/><i>scaffolds slice plans</i>"]
+        P --> I["<i>implement in the<br/>editable repos;<br/>amend each plan<br/>with its outcome</i>"]
+        I --> X["<b>zentaizo effort close</b>"]
+    end
+    S --> E
+    S -.->|"<b>zentaizo provide-info</b>"| T["<i>or: work from a<br/>target repo, reading<br/>the workspace<br/>as context</i>"]
+```
+
+Three ownership rules make the layout predictable:
+
+- **You hand-edit exactly one JSON file:** `zentaizo.atlas.json`, the
+  human-authored atlas of what the system is and which repos are editable.
+- **The CLI owns the other JSON.** `zentaizo.lock.json` changes only through
+  `zentaizo fetch`, and `sessions/efforts.json` only through `zentaizo
+  effort …` commands — they validate repo names, compute pins and merge bases,
+  and keep timestamps, so hand-editing these files is never needed (or safe).
+- **Markdown is shared:** the CLI allocates every session file (path, counter,
+  frontmatter), then you and the assistant write the content.
+
+### 1 · Create the workspace
+
+Typically you create a `zen-`-prefixed workspace repo that targets a
+particular project where one or more of the fetched repos will be modified:
 
 ```bash
 zentaizo create zen-link-shortener
 cd zen-link-shortener
+```
 
-# Collaborate with your chosen LLM to identify the source material.
-# The generated AGENTS.md explains that the first task is to create zentaizo.atlas.json.
-# Ask: "Use the Zentaizo instructions here to interview me and draft zentaizo.atlas.json."
+This scaffolds the shell: `AGENTS.md` (the assistant's entry point), `skills/`
+(procedures and templates), and `sessions/` seeded with the reserved `main`
+effort. There is no atlas yet — authoring it is the first real task, and the
+generated `AGENTS.md` says exactly that.
 
-# Check the atlas shape.
-zentaizo validate
+### 2 · Author the atlas
 
-# Fetch pinned source snapshots and write zentaizo.lock.json.
+`zentaizo.atlas.json` is the human-authored statement of intent: which repos,
+docs, papers, and notes matter; which repos are *editable* versus *reference*;
+and a description of what you are building (step 4 feeds that description into
+every summary). You don't write it alone — open an AI session in the workspace
+and ask:
+
+> Use the Zentaizo instructions here to interview me and draft
+> `zentaizo.atlas.json`.
+
+The bundled `skills/curate-atlas.md` drives that interview. Check the result
+with `zentaizo validate`.
+
+### 3 · Fetch pinned snapshots
+
+```bash
 zentaizo fetch
+```
 
-# Prepare hierarchical summary prompts and outputs (incremental: only
-# (re)summarizes sources that are new or changed since last time).
-zentaizo summarize
+Resolves every atlas source to an exact identity — repos to commits, doc
+snapshots to content hashes — populates `repos/`, `docs/`, and `papers/`, and
+records the resolution in `zentaizo.lock.json`. The atlas stays declarative
+("track `main`"); the lock records what you actually have, so the context
+behind an answer is reproducible.
 
-# Give another repo instructions for using this context.
+### 4 · Summarize
+
+```bash
+zentaizo summarize                             # incremental
+zentaizo summarize --focus "expiry semantics"  # add a one-run emphasis
+```
+
+This writes `summaries/summarize.prompt.md` — a prompt you hand to your agent
+("run the summarize prompt"), not a finished summary. Two things make it more
+than "summarize these repos":
+
+- **It knows what is stale.** Each existing summary is pinned by frontmatter
+  to the exact locked state it was written from (repo commit, doc content
+  hash). The command diffs those pins against `zentaizo.lock.json` and asks
+  the agent to (re)write only the sources that are new or changed, listing
+  everything else as keep-as-is.
+- **It knows why you are summarizing.** The prompt opens with the workspace's
+  purpose from the atlas, the current effort's description, and any `--focus`
+  text, and tells the agent to weight every summary toward that focus. If the
+  work is about authentication, each repo's summary should explain how that
+  repo handles auth — a pertinent condensation of larger content, not a
+  generic abstract that drops what matters.
+
+The agent then writes one summary per source plus three cross-cutting files —
+`overview.md` (system map), `relationships.md` (how the sources interact), and
+`open-questions.md` (gaps and assumptions) — which future sessions read
+*before* any source code.
+
+### 5 · Work — in the workspace or from a target repo
+
+The built context can be used two ways. Work *inside* the workspace, grouped
+into efforts (next section) — the multi-repo sandbox makes coherent cross-repo
+changes natural. Or inject the context into a single target repo and work from
+there:
+
+```bash
 zentaizo provide-info /path/to/shortener-api
 ```
 
 Then, from `/path/to/shortener-api`, you can ask an AI agent:
 
 > Using the Zentaizo context, inspect the related frontend and client library before changing the API contract for link expiration.
+
+### Working in Efforts
+
+Work in a workspace is grouped into **efforts** — named bodies of work that may
+span several editable repos. An effort lives in two linked places: a registry
+entry holding machine state, and a plan doc holding human intent.
+
+```mermaid
+flowchart LR
+    subgraph effort ["effort: expiry"]
+        REG["<b>registry entry in sessions/efforts.json</b><br/><i>number, status, repos and branches —<br/>change via zentaizo effort … only</i>"]
+        DOC["<b>sessions/efforts/0002-expiry.md</b><br/><i>plan of record — you write this</i>"]
+    end
+    REG -.-> RA["<b>repos/shortener-api</b><br/><i>branch: feat/expiry, base: 1a2b3c4</i>"]
+    REG -.-> RW["<b>repos/shortener-web</b><br/><i>branch: null — touched, no branch yet</i>"]
+    DOC --> S1["<b>sessions/changes/expiry-0001-api-contract.md</b>"]
+    DOC --> S2["<b>sessions/changes/expiry-0002-web-ui.md</b>"]
+```
+
+The usual path is agentic — describe the work to your assistant and it runs
+these commands for you (the bundled `skills/plan-and-implement.md` walks it
+through the lifecycle) — but they are equally drivable by hand:
+
+```bash
+# Reserve the effort, scaffold sessions/efforts/NNNN-expiry.md, make it current.
+zentaizo effort new expiry --describe "Add link expiration across the system"
+```
+
+A repo joins an effort in two steps, because knowing a repo is involved usually
+precedes opening a branch in it:
+
+```bash
+# "this effort will touch shortener-api" — recorded with branch: null
+zentaizo effort set-branch expiry --repo shortener-api
+
+# a working branch exists — record it; the merge base is computed automatically
+zentaizo effort set-branch expiry --repo shortener-web=feat/expiry
+```
+
+Don't hand-edit `sessions/efforts.json` to do this: the commands validate the
+repo name against the workspace, compute the merge base (`--base <sha>`
+overrides it), and bump the effort's timestamp. The bare `--repo NAME` form
+refuses to clobber an already-recorded branch — pass `NAME=BRANCH` to update
+it. Branch names follow each repo's own conventions; they are not derived from
+the effort label. Repos can also be attached at creation time (`--repo` on
+`effort new` is repeatable).
+
+```bash
+zentaizo effort list           # all efforts; the current one is marked
+zentaizo effort show expiry    # plan doc path, description, repos/branches, slices
+zentaizo effort close expiry   # when the work lands
+```
+
+Then write the scaffolded effort doc — the plan of record — and decompose it
+into slice plans with `zentaizo next-change <slug>`. The reserved `main` effort
+is the deliverable trunk: work flows there until it warrants a separate effort.
+See `docs/workspace-format.md` § Sessions and `docs/cli.md` for the full model.
+
+## Beyond the Basics
+
+### Sandboxing the agent
 
 To confine the agent to least-privilege access — writable `sessions/` and editable repos, read-only reference repos — render the atlas-derived policy into your harness's config:
 
@@ -105,6 +271,8 @@ zentaizo sandbox --target claude --check   # CI-style: fail if the config drifte
 ```
 
 This is a guardrail against accidental writes, not an airtight boundary — a shell command can still slip past file-tool denies — so see `docs/changes/2026-05-30-sandboxing.md` for the threat model and the planned container-based enforcement.
+
+### Seeding a workspace from another
 
 To seed a fresh workspace from an existing one that overlaps in scope (same
 repos pinned, same papers, shared design notes), use `seed-from`:
@@ -122,6 +290,8 @@ declaratively in the atlas; the working tree is populated by `zentaizo fetch`
 afterward, not by copying `repos/`. Existing target atlas entries with the same
 name are left untouched.
 
+### Upgrading older workspaces
+
 To bring an older workspace forward when Zentaizo's conventions have changed,
 run an AI session in the workspace and point it at the experimental
 `upgrade-zentaizo` procedure bundled in the global Zentaizo skill. It diffs the
@@ -129,9 +299,9 @@ current templates against the workspace, classifies each delta, and plans any
 artifact migrations (session-file frontmatter, filename conventions) before
 making changes.
 
-## Installing The Command
+## Developing
 
-Develop on zentaizo (editable install in a pixi env):
+Develop on zentaizo itself with an editable install in a pixi env:
 
 ```bash
 pixi install                # bootstrap dev env
@@ -139,15 +309,6 @@ pixi run zentaizo --help
 pixi run check              # ruff lint + tests
 pixi run hooks-install      # one-time: enable pre-commit on `git commit`
 ```
-
-Install for use across other projects (puts `zentaizo` on your `PATH`):
-
-```bash
-pipx install -e /path/to/zentaizo
-zentaizo --help
-```
-
-If you don't have `pipx`: `pixi global install pipx` (or `brew install pipx`, `apt install pipx`).
 
 Release (when ready): `pixi run build` then `pixi run publish`.
 
