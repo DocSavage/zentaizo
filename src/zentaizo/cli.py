@@ -408,6 +408,11 @@ WORKSPACE_POINTER_MD = (
     "model-agnostic source of guidance for this Zentaizo workspace.\n"
 )
 
+# Claude reads CLAUDE.md, not AGENTS.md; an `@AGENTS.md` import loads the full
+# file into context at launch. Unlike a SessionStart hook (output capped at
+# 10k chars), CLAUDE.md and its imports load in full regardless of length.
+CLAUDE_IMPORT_MD = "@AGENTS.md\n"
+
 
 def install_skills_into_workspace(target: pathlib.Path) -> list[str]:
     """Copy the bundled model-agnostic skill files into <target>/skills/.
@@ -779,7 +784,7 @@ def create_workspace(args: argparse.Namespace) -> int:
 
     (target / "README.md").write_text(workspace_readme(name))
     (target / "AGENTS.md").write_text(workspace_agents(name))
-    (target / "CLAUDE.md").write_text(WORKSPACE_POINTER_MD)
+    (target / "CLAUDE.md").write_text(CLAUDE_IMPORT_MD)
     (target / "GEMINI.md").write_text(WORKSPACE_POINTER_MD)
     (target / ".gitignore").write_text(
         "\n".join(

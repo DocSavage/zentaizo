@@ -176,4 +176,6 @@ These are useful for preserving the reasoning behind an answer or implementation
 
 `skills/` holds plain-markdown procedures for any LLM-driven coding tool (Claude Code, Codex CLI, Gemini CLI, Aider, etc.). Each file describes one task. There is no YAML frontmatter and no tool-specific directory layout — discovery happens through `AGENTS.md`, which is the entrypoint every model-agnostic coding assistant reads first.
 
+Host tools are wired to `AGENTS.md` per their own conventions. The generated `CLAUDE.md` is an `@AGENTS.md` import — Claude reads `CLAUDE.md`, not `AGENTS.md`, and loads the import in full at launch (a `SessionStart` hook would cap output at 10k characters, so the import is the reliable path); `GEMINI.md` remains a thin pointer.
+
 The bundled `skills/curate-atlas.md` walks the assistant through interviewing the user and populating `zentaizo.atlas.json`. It explicitly does not write to host-tool memory (CLAUDE.md, GEMINI.md, `.codex/`, `.aider.conf.yml`, etc.); the atlas describes the *system*, while those files describe the *user*.

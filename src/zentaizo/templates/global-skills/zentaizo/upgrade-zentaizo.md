@@ -63,7 +63,11 @@ files Zentaizo owns are:
 
 - `AGENTS.md` — generated from the `workspace_agents()` function in
   `src/zentaizo/cli.py`.
-- `CLAUDE.md`, `GEMINI.md` — the workspace pointer stub.
+- `CLAUDE.md` — `@AGENTS.md` (an import line; Claude reads `CLAUDE.md`, not
+  `AGENTS.md`, and loads the import in full). Workspaces created before
+  2026-06-09 have a prose pointer stub here instead and should be migrated to the
+  `@AGENTS.md` import.
+- `GEMINI.md` — the workspace pointer stub.
 - `.gitignore` — created by `zentaizo create`.
 - `skills/curate-atlas.md`, `skills/plan-and-implement.md`,
   `skills/effort-template.md`, `skills/plan-template.md`, `skills/report-template.md` — copied verbatim from

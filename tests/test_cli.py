@@ -53,12 +53,17 @@ class CliTests(unittest.TestCase):
             self.assertFalse((workspace / "zentaizo.lock.json").exists())
             self.assertTrue((workspace / "AGENTS.md").exists())
 
-            for pointer in ("CLAUDE.md", "GEMINI.md"):
-                pointer_path = workspace / pointer
-                self.assertTrue(pointer_path.exists(), f"missing {pointer}")
-                body = pointer_path.read_text()
-                self.assertIn("[`AGENTS.md`](AGENTS.md)", body)
-                self.assertIn("Zentaizo workspace", body)
+            # Claude reads CLAUDE.md, not AGENTS.md; the @import loads it in full
+            # (CLAUDE.md is exempt from the 10k SessionStart-hook output cap).
+            claude_path = workspace / "CLAUDE.md"
+            self.assertTrue(claude_path.exists(), "missing CLAUDE.md")
+            self.assertEqual(claude_path.read_text().strip(), "@AGENTS.md")
+
+            gemini_path = workspace / "GEMINI.md"
+            self.assertTrue(gemini_path.exists(), "missing GEMINI.md")
+            gemini_body = gemini_path.read_text()
+            self.assertIn("[`AGENTS.md`](AGENTS.md)", gemini_body)
+            self.assertIn("Zentaizo workspace", gemini_body)
 
             agents = (workspace / "AGENTS.md").read_text()
             self.assertIn("If `zentaizo.atlas.json` is missing", agents)
