@@ -27,6 +27,30 @@ diagnose the exact blocker and either request approval or stop before doing
 workaround churn.
 ```
 
+## Autonomous With Commit Access
+
+Use this when you want `--ask-for-approval never`, but still want Codex to be
+able to stage and commit inside one dedicated repo:
+
+```bash
+codex -C /path/to/repo \
+  --sandbox workspace-write \
+  --ask-for-approval never \
+  --add-dir /path/to/repo/.git
+```
+
+This keeps worktree edits scoped to the repo while also making Git metadata
+writable, so Git can create `.git/index.lock`, update the index, write commit
+objects, and move branch refs. The `--add-dir` path should be the actual Git
+directory for the checkout; in unusual worktree setups, use
+`git rev-parse --absolute-git-dir` to find it.
+
+Use this only when the checkout is dedicated to the Codex session or you are
+comfortable with normal Git lock behavior being the concurrency guard. It lets
+Codex commit without prompts, so the `/goal` prompt should still tell Codex to
+check `git status`, stage only intended files, and stop if unrelated changes
+would make the commit ambiguous.
+
 ## Fully Autonomous Setup
 
 Use this only in a disposable clone, VM, container, or other environment that is
@@ -79,6 +103,8 @@ cannot be committed inside the current session.
 ## Rule Of Thumb
 
 - Want commits and occasional approvals: `workspace-write` plus `on-request`.
+- Want commits with no approval prompts in a dedicated checkout:
+  `workspace-write` plus `never` plus `--add-dir /path/to/repo/.git`.
 - Want uninterrupted autonomous execution: disposable environment plus
   `danger-full-access` and `never`.
 - Want maximum safety: `workspace-write` plus `never`, but ask Codex not to
