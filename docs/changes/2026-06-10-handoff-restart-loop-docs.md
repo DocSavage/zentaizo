@@ -59,19 +59,26 @@ Proposed division of knowledge:
   signal into the fresh session.** A fresh session has no memory, so the
   user must say *something* that locates the work. Two complementary
   mitigations:
-  1. **The outgoing agent ends its turn by handing the user the exact
-     one-line restart prompt** (e.g. "Implement the handoff at
-     `sessions/handoffs/dvid-0005a-claude.md`."). This should be a
-     documented obligation in the skill, not folklore — it reduces the
-     user's job to copy/paste.
-  2. **The signal can be as thin as "resume" plus an optional slice
-     label**, because the incoming agent can derive the target: the
-     workspace already exposes `zentaizo path active` (highest open
-     slice), and the latest handoff for a slice is the highest letter in
-     `sessions/handoffs/<label>-NNNN*`. Optionally formalize this with a
-     small CLI addition — `zentaizo path handoff [id]` returning the
-     latest handoff for a slice (default: the active slice) — so the
-     skill can describe discovery as one command instead of a glob.
+  1. **The outgoing agent ends its turn by handing the user a
+     letterless, slice-level restart prompt** (e.g. "Implement the
+     handoff for dvid-0005."). The handoff *letter* is agent-side
+     bookkeeping — the user should never need to know it, and a
+     letter-bearing path in the prompt goes stale the moment a `resume`
+     handoff is written. This should be a documented obligation in the
+     skill, not folklore — it reduces the user's job to copy/paste of a
+     prompt that stays valid across restarts. (The exact file path
+     remains a fallback for driving an agent that lacks the workspace
+     skill.)
+  2. **The signal can be as thin as "implement the handoff"**, because
+     the incoming agent can derive the target: the workspace already
+     exposes `zentaizo path active` (highest open slice for the current
+     effort), and the latest handoff for a slice is the highest letter
+     in `sessions/handoffs/<label>-NNNN*`. The slice label in the prompt
+     ("for dvid-0005") is only needed to disambiguate when several
+     slices are open. Optionally formalize discovery with a small CLI
+     addition — `zentaizo path handoff [id]` returning the
+     latest-lettered handoff for a slice (default: the active slice) —
+     so the skill can describe it as one command instead of a glob.
 
 Conclusion: the loop is agent-mechanics, not user-mechanics — but the
 README should still *show* it once, because users deciding whether to
@@ -84,10 +91,13 @@ designed-for part of the lifecycle, not an improvisation.
    repo style): one subsection showing the loop in dialogue form —
    plan approved → user: "write yourself a handoff and let's implement
    fresh" → agent allocates `handoffs/<label>-NNNNa-….md` and replies
-   with the one-line restart prompt → fresh session implements → context
-   grows long mid-flight → user: "prepare for a restart" → agent writes
-   `…-NNNNb-resume.md`, replies with the new one-liner → fresh session
-   continues. No flag-level detail; point to the skill for mechanics.
+   "on restart, prompt: *Implement the handoff for <label>-NNNN*" →
+   fresh session resolves the latest letter itself and implements →
+   context grows long mid-flight → user: "prepare for a restart" → agent
+   writes `…-NNNNb-resume.md` and replies with the *same* letterless
+   prompt → fresh session continues. The user-visible prompt never
+   changes across restarts; only the agent-side letter advances. No
+   flag-level detail; point to the skill for mechanics.
 2. **Skill changes** (`templates/skills/plan-and-implement.md`):
    - Replace "skip this section" with the three named motivations:
      (a) different implementing agent, (b) same agent, fresh context —
@@ -98,11 +108,14 @@ designed-for part of the lifecycle, not an improvisation.
    - Add the English-trigger mapping ("prepare for a restart" and
      variants → the workflow above).
    - Add the outgoing obligation: after writing any handoff, the agent's
-     final message gives the user the exact one-line restart prompt.
-   - Add the incoming behavior: a fresh session given only "resume"
-     resolves the target via `zentaizo path active` + latest handoff
-     letter (or `zentaizo path handoff` if added), reads `AGENTS.md` +
-     plan + handoff, and continues.
+     final message gives the user the letterless slice-level restart
+     prompt ("Implement the handoff for <label>-NNNN"), stable across
+     restarts.
+   - Add the incoming behavior: a fresh session given "implement the
+     handoff [for <label>-NNNN]" resolves the slice (explicit label, else
+     `zentaizo path active`), picks the highest handoff letter for it
+     (or `zentaizo path handoff` if added), reads `AGENTS.md` + plan +
+     handoff, and continues.
 3. **Optional CLI addition**: `zentaizo path handoff [id]` as described
    above. Docs-only proposals 1–2 do not depend on it.
 
