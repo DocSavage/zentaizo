@@ -362,7 +362,7 @@ edited_by:
   - Thu Jun 4 23:33:15 2026 -0400  Codex gpt-5.5 (reasoning xhigh)
 ```
 
-The scaffolding commands stamp the first entry. After **any** substantive edit to a frontmatter-bearing session file, run `zentaizo edited <path>` to log it. Raw/freeform brainstorming dumps may not have frontmatter; add frontmatter first or leave them as immutable input. **Do not hand-write the identity** — a model can't reliably name its own model id: the CLI resolves it from the same commit-trailer cache the attribution hook uses (falling back to `git config user.name` for a human shell; `--as "<identity>"` overrides).
+The scaffolding commands stamp the first entry. After **any** substantive edit to a frontmatter-bearing session file, run `zentaizo edited <path>` to log it. Raw/freeform brainstorming dumps may not have frontmatter; add frontmatter first or leave them as immutable input. **Do not hand-write the identity** — a model can't reliably name its own model id: the CLI resolves it from the same commit-trailer cache the attribution hook uses, with a Codex config fallback that populates that cache when needed (falling back to `git config user.name` for a human shell; `--as "<identity>"` overrides).
 
 Consecutive edits by the same editor collapse into one entry whose timestamp advances; a different editor appends a new line, so hand-offs between models (or to a human) stay visible. There is no `updated:` field: the most recent `edited_by:` entry *is* the last-modified record (`created:` remains the stable creation timestamp). So at each status transition, run `zentaizo edited <path>` instead of hand-editing a timestamp.
 
@@ -500,14 +500,17 @@ def _write_trailer_cache(provider: str, model: str, effort: str, key: str | None
     """
     base = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
     cache_dir = pathlib.Path(base) / provider / "commit-trailer"
-    cache_dir.mkdir(parents=True, exist_ok=True)
     payload = json.dumps(
         {"provider": provider, "model": model, "effort": effort, "captured_at": utc_now()}
     )
     safe_key = _safe_trailer_cache_key(key)
-    if safe_key:
-        (cache_dir / f"{safe_key}.json").write_text(payload + "\n")
-    (cache_dir / "latest.json").write_text(payload + "\n")
+    try:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        if safe_key:
+            (cache_dir / f"{safe_key}.json").write_text(payload + "\n")
+        (cache_dir / "latest.json").write_text(payload + "\n")
+    except OSError:
+        return
 
 
 def _codex_config_path() -> pathlib.Path:
@@ -617,6 +620,10 @@ def _claude_editor_identity() -> str:
 def _codex_editor_identity() -> str:
     model, effort = _read_trailer_cache("codex", os.environ.get("CODEX_THREAD_ID"))
     if not model:
+        model, effort = _read_codex_commit_trailer_config()
+        if model and effort:
+            _write_trailer_cache("codex", model, effort, os.environ.get("CODEX_THREAD_ID"))
+    if not model:
         return "Codex (model unknown)"
     return f"Codex {model} (reasoning {effort})" if effort else f"Codex {model}"
 
@@ -625,8 +632,9 @@ def agent_editor_identity() -> str | None:
     """The active AI assistant's human-readable identity, or None outside one.
 
     Reuses the commit-trailer cache, so it carries the exact model + reasoning
-    effort rather than the model's own guess. When an assistant environment is
-    detected but nothing is cached yet (the statusline producer hasn't run), it
+    effort rather than the model's own guess. Codex can also populate that cache
+    from its local config when a session starts cold. When an assistant
+    environment is detected but no trusted identity source is available, it
     returns a ``<Provider> (model unknown)`` label rather than None — so an AI's
     edit is never silently misattributed to the human git user.
     """

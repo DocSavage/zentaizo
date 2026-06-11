@@ -116,7 +116,7 @@ Adds a Zentaizo reference block to `TARGET/AGENTS.md` so an assistant working in
 zentaizo edited PATH [--as IDENTITY]
 ```
 
-Records that the current editor touched a frontmatter-bearing session file, appending (or, for a consecutive same-editor edit, refreshing) an entry in its `edited_by:` ledger. The editor identity is resolved deterministically: in an AI session it comes from the commit-trailer cache (the exact model + reasoning effort, the same source the commit-attribution hook reads); in a plain shell it falls back to `git config user.name`; `--as` overrides both. Entries are git-style local timestamps (`Tue Jun 2 12:41:53 2026 -0400  Claude Opus 4.8 (1M context, reasoning xhigh)`). The `effort new`, `next-change`, `next-debugging`, `next-brainstorming`, `next-handoff`, and `next-report` scaffolders stamp the first entry automatically.
+Records that the current editor touched a frontmatter-bearing session file, appending (or, for a consecutive same-editor edit, refreshing) an entry in its `edited_by:` ledger. The editor identity is resolved deterministically: in an AI session it comes from the commit-trailer cache (the exact model + reasoning effort, the same source the commit-attribution hook reads); Codex sessions fall back to local Codex config and populate that cache when it is missing. In a plain shell it falls back to `git config user.name`; `--as` overrides both. Entries are git-style local timestamps (`Tue Jun 2 12:41:53 2026 -0400  Claude Opus 4.8 (1M context, reasoning xhigh)`). The `effort new`, `next-change`, `next-debugging`, `next-brainstorming`, `next-handoff`, and `next-report` scaffolders stamp the first entry automatically.
 
 ```bash
 zentaizo claude-hooks [PATH]

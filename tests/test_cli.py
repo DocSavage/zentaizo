@@ -14,6 +14,7 @@ from unittest import mock
 from zentaizo.cli import (
     HOOK_MARKER,
     CliError,
+    _codex_editor_identity,
     _HttpResult,
     _preserve_unchanged_fetched_at,
     _repo_identity,
@@ -2846,6 +2847,86 @@ class CommitAttributionHookTests(unittest.TestCase):
             ):
                 self.assertEqual(main(["cache-commit-trailer", "--codex"]), 0)
             self.assertFalse((Path(tmp) / "codex").exists())
+
+    def test_codex_editor_identity_prefers_cache(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp) / "cache" / "codex" / "commit-trailer"
+            cache.mkdir(parents=True)
+            (cache / "thread-abc.json").write_text(
+                json.dumps({"provider": "codex", "model": "cached-model", "effort": "high"})
+            )
+            codex_home = Path(tmp) / "codex-home"
+            codex_home.mkdir()
+            (codex_home / "config.toml").write_text(
+                'model = "config-model"\nmodel_reasoning_effort = "xhigh"\n'
+            )
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "CODEX_HOME": str(codex_home),
+                    "CODEX_THREAD_ID": "thread/../abc",
+                    "XDG_CACHE_HOME": str(Path(tmp) / "cache"),
+                },
+                clear=False,
+            ):
+                self.assertEqual(
+                    _codex_editor_identity(),
+                    "Codex cached-model (reasoning high)",
+                )
+
+    def test_codex_editor_identity_falls_back_to_config_and_populates_cache(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            codex_home = Path(tmp) / "codex-home"
+            codex_home.mkdir()
+            (codex_home / "config.toml").write_text(
+                'model = "gpt-5.5"\nmodel_reasoning_effort = "xhigh"\n'
+            )
+            cache_home = Path(tmp) / "cache"
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "CODEX_HOME": str(codex_home),
+                    "CODEX_THREAD_ID": "thread/../abc",
+                    "XDG_CACHE_HOME": str(cache_home),
+                },
+                clear=False,
+            ):
+                self.assertEqual(
+                    _codex_editor_identity(),
+                    "Codex gpt-5.5 (reasoning xhigh)",
+                )
+
+            cache_dir = cache_home / "codex" / "commit-trailer"
+            keyed = cache_dir / "thread-abc.json"
+            latest = cache_dir / "latest.json"
+            self.assertTrue(keyed.exists() and latest.exists())
+            data = json.loads(keyed.read_text())
+            self.assertEqual(data["provider"], "codex")
+            self.assertEqual(data["model"], "gpt-5.5")
+            self.assertEqual(data["effort"], "xhigh")
+
+    def test_codex_editor_identity_tolerates_unwritable_cache(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            codex_home = Path(tmp) / "codex-home"
+            codex_home.mkdir()
+            (codex_home / "config.toml").write_text(
+                'model = "gpt-5.5"\nmodel_reasoning_effort = "xhigh"\n'
+            )
+            cache_home = Path(tmp) / "cache-file"
+            cache_home.write_text("not a directory")
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "CODEX_HOME": str(codex_home),
+                    "CODEX_THREAD_ID": "thread/../abc",
+                    "XDG_CACHE_HOME": str(cache_home),
+                },
+                clear=False,
+            ):
+                self.assertEqual(
+                    _codex_editor_identity(),
+                    "Codex gpt-5.5 (reasoning xhigh)",
+                )
 
 
 class EditedByUnitTests(unittest.TestCase):
