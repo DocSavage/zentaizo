@@ -5,6 +5,8 @@ edited_by:
   - 2026-06-12  Claude Fable 5
   - 2026-06-12  Codex (review)
   - 2026-06-12  Claude Fable 5
+  - 2026-06-12  Codex (review, 2nd pass)
+  - 2026-06-12  Claude Fable 5
 ---
 
 # Graphify as a workspace knowledge-graph layer (`zentaizo graph`)
@@ -43,6 +45,14 @@ _Amended 2026-06-12 (same session): the workspace `.gitignore` stops ignoring
 (papers have no fetcher and were unrecoverable from a clone). The managed
 `.graphifyignore` remains necessary regardless: `repos/` stays gitignored but
 must be graphed, and the committed process trail must not be._
+
+_Second Codex pass 2026-06-12: direction signed off; two should-fixes folded
+in — `fetch` auto-refresh of a `mode: semantic` graph is gated on build step 1
+proving an AST-only `--update` preserves semantic nodes, and the
+commit-`cache/` default is gated on a step-1 inspection of cache contents
+(raw `repos/` source chunks in the cache would flip it). Plus a verified nit:
+Graphify logs every query to `~/.cache/graphify-queries.log` by default; the
+consultation bullet gains the opt-out for sensitive workspaces._
 
 ## Context — what Graphify is
 
@@ -311,7 +321,15 @@ so everyone on the team starts with a map"), ignore `cost.json` (local only),
 cache is what spares a fresh clone from re-paying model-API extraction for
 unchanged sources — `repos/` are re-fetched rather than carried in git, and
 with doc snapshots and papers now committed (§2) the cache keyed to that
-content naturally travels with it. Committing `graph.json` is what makes the layer
+content naturally travels with it. This default is **gated on build step 1
+inspecting the cache** (second Codex pass): its shape, typical size, and
+above all whether semantic entries embed raw source chunks.
+Snapshot/paper chunks would be no new exposure — those sources are committed
+themselves (§2) — but raw `repos/` content in the cache would leak code into
+the workspace git that the workspace deliberately does not carry (a committed
+`graph.json` already carries repo-derived *structure*; raw chunks are a step
+further). If the inspection finds repo source chunks, the default flips to
+gitignoring `cache/` and the warm-clone benefit is dropped. Committing `graph.json` is what makes the layer
 workspace-local in the Zentaizo sense: a fresh clone has the graph
 immediately, `--update` diffs against the committed state instead of
 rebuilding from scratch (upstream's merge driver keeps parallel commits
@@ -396,7 +414,14 @@ failure never fails the fetch — the same best-effort contract as the
 commit-attribution hook installer. `zentaizo fetch --no-graph` opts out.
 Semantic content is never auto-extracted: when changed sources include
 docs/papers/notes of a graph last built `--semantic`, `fetch` prints the
-explicit follow-up (`run 'zentaizo graph --semantic'`). The "graph now stale
+explicit follow-up (`run 'zentaizo graph --semantic'`). And for a graph last
+built `--semantic`, even a pure code change is auto-patched only if build
+step 1 **proves** that an AST-only `--update` patches code nodes without
+pruning or downgrading the semantic doc/paper/note nodes — upstream's
+post-commit hook and team workflow imply exactly this coexistence (AST-only
+rebuilds run routinely on semantically-extracted corpora), but that is
+implied, not demonstrated. Until proven, `fetch` skips auto-refresh for
+`mode: semantic` graphs entirely and prints the follow-up instead. The "graph now stale
 — run `zentaizo graph`" hint also remains the fallback when auto-refresh
 could not run (binary absent); the durable encoding for future sessions is
 the `status` line plus the consultation bullet's rebuild-if-stale clause, so
@@ -425,6 +450,15 @@ with keeping generated instructions lean. The existing untrusted-input section
 already covers the graph with no edit: the graph and report are *derived from*
 untrusted fetched content, so they are evidence to cite, never instructions —
 worth one parenthetical in the new bullet rather than a new section.
+
+One verified operational footnote belongs next to the bullet: Graphify logs
+every `query` / `path` / `explain` / MCP call to
+`~/.cache/graphify-queries.log` by default (JSON Lines: timestamp, question,
+corpus, node counts; full subgraph responses only if opted in). That is a
+per-user file *outside* the workspace — against the "durable context stays
+in the workspace" posture — so the generated bullet gains one clause for
+sensitive workspaces: set `GRAPHIFY_QUERY_LOG_DISABLE=1` (or
+`GRAPHIFY_QUERY_LOG=/dev/null`) when querying.
 
 `zentaizo graph` should also print a post-build hint when the user-level skill
 appears unregistered (best-effort check), pointing at `graphify install` — but
@@ -465,10 +499,13 @@ or egress beyond what the harness already grants.
    rides the same path if it is exposed; otherwise the managed ignore file
    excludes semantic file types); `.graphifyignore` priority/negation
    behavior at the workspace root; `graphify extract` `--update`/`--force`
-   semantics and exit codes with and without a backend configured. The
-   upstream facts above were verified against the raw v8 README on
-   2026-06-12, but the behavioral details need a local pass before any code.
-   Sets the version floor for the extra.
+   semantics and exit codes with and without a backend configured; **whether
+   an AST-only `--update` on a `--semantic`-built graph preserves semantic
+   nodes** (gates §4's auto-refresh for `mode: semantic`); **cache shape,
+   typical size, and whether entries embed raw source chunks** (gates §3's
+   commit-`cache/` default). The upstream facts above were verified against
+   the raw v8 README on 2026-06-12, but the behavioral details need a local
+   pass before any code. Sets the version floor for the extra.
 2. `zentaizo graph [workspace] [--semantic] [--backend …] [--force]`: PATH
    gate, managed `.graphifyignore` generation, deterministic input set (§2,
    with flagged-doc exclusion), invoke `graphify extract` (code-only default
