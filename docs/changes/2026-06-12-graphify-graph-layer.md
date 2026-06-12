@@ -7,6 +7,8 @@ edited_by:
   - 2026-06-12  Claude Fable 5
   - 2026-06-12  Codex (review, 2nd pass)
   - 2026-06-12  Claude Fable 5
+  - 2026-06-12  Codex (review, 3rd pass)
+  - 2026-06-12  Claude Fable 5
 ---
 
 # Graphify as a workspace knowledge-graph layer (`zentaizo graph`)
@@ -53,6 +55,13 @@ commit-`cache/` default is gated on a step-1 inspection of cache contents
 (raw `repos/` source chunks in the cache would flip it). Plus a verified nit:
 Graphify logs every query to `~/.cache/graphify-queries.log` by default; the
 consultation bullet gains the opt-out for sensitive workspaces._
+
+_Third Codex pass 2026-06-12: provenance is now mode-scoped — `built_from`
+records only what Graphify actually read, with semantic-only sources in a
+`not_graphed` list, so a doc hash change cannot stale a code-only graph;
+`--semantic` now requires an explicit `--backend` (recorded in the lock)
+instead of riding key auto-detection; the sandbox build-order step gains the
+managed `.graphifyignore`; and the plan carries a named test plan._
 
 ## Context — what Graphify is
 
@@ -229,12 +238,17 @@ network/cost/data-residency event, which poisons both the fetch auto-refresh
   one is exposed (the hook proves one exists internally; build step 1 pins
   it), else the managed ignore file below excludes the semantic file types.
 - **`zentaizo graph --semantic` — opt-in full-corpus extraction.** Adds
-  docs/papers/notes content via LLM extraction. Requires a backend the user
-  chooses: `--backend` (and `--model`) pass through verbatim — `ollama` is
-  fully local, `claude-cli` needs no key, and remote backends with their
+  docs/papers/notes content via LLM extraction. Requires an **explicit
+  backend**: `--semantic` without `--backend` is an error that lists the
+  options (third Codex pass — Graphify's own auto-detection silently picks a
+  provider by whichever API key happens to be set, and where workspace
+  content gets sent must be stated intent, not ambient environment).
+  `--backend` (and `--model`) pass through verbatim — `ollama` is fully
+  local, `claude-cli` needs no key, and remote backends with their
   data-residency implications (e.g. Kimi routes to Moonshot servers in
-  China) are the user's explicit call; Zentaizo never picks a remote backend
-  beyond Graphify's own key auto-detection. Re-runs are incremental:
+  China) are the user's explicit call; the resolved choice is recorded in
+  the lock (`semantic_backend` / `semantic_model`, §4). Re-runs are
+  incremental:
   Graphify's SHA256 `cache/` means unchanged files are never re-extracted,
   so a refresh only pays for what changed.
 
@@ -367,31 +381,42 @@ after a successful build:
   "report_status": "ok",
   "built_from": {
     "repos/shortener-api": "9f3a1c4e7b…",
-    "docs/api-docs": "sha256:…"
-  }
+    "repos/deployment": "2c61d0aa00…"
+  },
+  "not_graphed": ["docs/api-docs", "papers/whitepaper"]
 }
 ```
 
-`built_from` maps each included source to the same locked identity
-`summarize` pins (`repo` commit/head; doc snapshot `content_hash`) — the lock
-stays the single source-state oracle, no second record is invented. Papers
+(A `--semantic` build adds `"semantic_backend"` / `"semantic_model"`, moves
+the doc into `built_from` keyed by its snapshot `content_hash`, and empties
+`not_graphed`.)
+
+`built_from` maps **each source actually handed to Graphify for the recorded
+`mode`** — only those (third Codex pass) — to the same locked identity
+`summarize` pins (`repo` commit/head; doc snapshot `content_hash`): the lock
+stays the single source-state oracle, no second record is invented. Sources
+the mode excludes (markdown docs, PDFs, notes under `code-only`) go in the
+sibling `not_graphed` list instead — a doc snapshot's `content_hash` moving
+must never stale a code-only graph that never read it. Papers
 and notes have **no locked content identity** today (Codex review finding 3),
 and `summarize` already names this class: its `UNFETCHED_REV` placeholder
 covers "papers, notes, un-snapshotted/reference-only docs" (`cli.py:1810`).
-The graph reuses it verbatim — such sources are recorded as `"unfetched"` in
-`built_from`, never drive rev-diff staleness, and are listed by `status` as
-untracked. Their actual change detection is delegated to Graphify's own
+The graph reuses it verbatim — when such sources are graphed (i.e. under
+`--semantic`), they are recorded as `"unfetched"` in `built_from`, never
+drive rev-diff staleness, and are listed by `status` as untracked. Their actual change detection is delegated to Graphify's own
 SHA256 `cache/` during `--update`, which re-extracts exactly the files whose
 content changed — so nothing goes silently stale; it is just not
 Zentaizo-attested. If `fetch` ever records paper/note content hashes (the
 lock schema's standing TODO in `workspace-format.md`), `built_from` picks
-them up with no schema change. Staleness is then a pure diff: a source whose
-current locked rev differs from its `built_from` entry (or a source absent
-from `built_from`) makes the graph **stale**. `zentaizo status` gains one
-line:
+them up with no schema change. Staleness is then a pure diff **scoped to the
+recorded mode**: recompute the mode's input set, and a source in that set
+whose current locked rev differs from its `built_from` entry (or which is
+missing from `built_from` altogether — a newly added source) makes the graph
+**stale**; `not_graphed` sources never do, and `status` surfaces them as a
+count instead. `zentaizo status` gains one line:
 
 ```text
-graph: built 2026-06-12 (graphify 1.4.2) — stale: 2 sources changed since build
+graph: built 2026-06-12 (graphify 1.4.2, code-only) — stale: 2 sources changed; 3 not graphed (--semantic)
 ```
 
 (or `graph: not built — run 'zentaizo graph'` / `graph: current`). A stale
@@ -521,10 +546,46 @@ or egress beyond what the harness already grants.
    (§2–3).
 6. Docs: `workspace-format.md` (layout tree + a short Graph section beside
    Summaries), `cli.md`, README one-liner.
-7. Sandbox: add `graphify-out/` to the writable set (§6).
+7. Sandbox: add `graphify-out/` **and the managed `.graphifyignore`** to the
+   writable set in both modes, with sandbox-policy tests asserting both
+   (§6).
 8. Convention bump for existing workspaces flows through the existing
    `upgrade-zentaizo` skill path (regenerated `AGENTS.md` picks up §5), per
    the no-`zentaizo update` policy.
+
+## Test plan
+
+Zentaizo's logic is tested against a **stub `graphify` on PATH** — a script
+that records its argv and writes canned `graphify-out/` content; the real
+binary is exercised only in build step 1's manual verification pass. Named
+cases (third Codex pass):
+
+- **Binary gate:** missing `graphify` → nonzero exit, install commands
+  printed, no lock mutation, no `graphify-out/`.
+- **Managed `.graphifyignore`:** generated with marker comment; regenerated,
+  not duplicated, on rebuild; content differs correctly between code-only
+  and `--semantic`; a user-owned `.graphifyignore` without the marker is
+  refused, never overwritten (the hook-installer rule).
+- **`.gitignore` template:** new workspaces get `graphify-out/cost.json` and
+  `docs/snapshots/*.flagged.*`; no longer get `docs/snapshots/` or
+  `papers/*.pdf`; still get `repos/` and `tmp/`.
+- **Lock semantics:** code-only build records `mode`, `built_from` covering
+  exactly the graphed inputs, semantic-only sources in `not_graphed`, no
+  `semantic_backend`; `--semantic` without `--backend` errors; with it,
+  records `semantic_backend`/`semantic_model` and moves doc snapshots into
+  `built_from` by `content_hash`; papers/notes record `"unfetched"`.
+- **Report quarantine:** flagged scan verdict → report moved to
+  `GRAPH_REPORT.flagged.md`, nothing left at `GRAPH_REPORT.md`,
+  `report_status: flagged` plus quarantine path in the lock.
+- **Status line:** not built / current / stale, with the diff mode-scoped (a
+  doc `content_hash` change does **not** stale a code-only graph); untracked
+  and not-graphed counts; flagged-report surfacing.
+- **Fetch integration:** auto-refresh fires only when a graphed source's rev
+  changed; `--no-graph` skips; a failing stub never fails the fetch;
+  `mode: semantic` graphs are skipped (until the step-1 proof lands) with
+  the follow-up hint printed.
+- **Sandbox policy:** `compute_policy` output includes `graphify-out/` and
+  the managed `.graphifyignore` as writable in both modes.
 
 ## Resolved questions (2026-06-12)
 
