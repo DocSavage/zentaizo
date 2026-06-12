@@ -320,7 +320,7 @@ graphify-out/
   GRAPH_REPORT.md   # committed — markdown context, like a summary
   graph.html        # committed — regenerable, but upstream ships it as part of the map
   manifest.json     # committed — portable; avoids a full rebuild on first checkout
-  cache/            # committed — extraction cache; a fresh clone re-extracts nothing unchanged
+  cache/            # committed (provisional, pending step-1 inspection) — extraction cache
   cost.json         # gitignored — local-only
 ```
 
@@ -330,10 +330,11 @@ a verbatim copy of it): commit `graphify-out/`, gitignore only `cost.json`.
 Upstream's own split is: commit the directory ("meant to be committed to git
 so everyone on the team starts with a map"), ignore `cost.json` (local only),
 `cache/` optional ("commit for speed, skip to keep repo small"),
-`manifest.json` safe and worth committing. Zentaizo chooses to **commit
-`cache/`**: workspaces are semantic-heavy (docs, papers, notes), and the
-cache is what spares a fresh clone from re-paying model-API extraction for
-unchanged sources — `repos/` are re-fetched rather than carried in git, and
+`manifest.json` safe and worth committing. Zentaizo's **provisional default
+is to commit `cache/`**, finalized only after the step-1 inspection below:
+workspaces are semantic-heavy (docs, papers, notes), and the cache is what
+spares a fresh clone from re-paying model-API extraction for unchanged
+sources — `repos/` are re-fetched rather than carried in git, and
 with doc snapshots and papers now committed (§2) the cache keyed to that
 content naturally travels with it. This default is **gated on build step 1
 inspecting the cache** (second Codex pass): its shape, typical size, and
@@ -591,9 +592,11 @@ cases (third Codex pass):
 
 1. **Commit `graph.json`?** Yes. It turned out to be upstream's own model
    ("committed to git so everyone on the team starts with a map"), and the
-   committed graph is what `--update` diffs against from a fresh clone. Only
-   `cost.json` is gitignored; `cache/` and `manifest.json` are deliberately
-   committed — a Zentaizo choice on top of upstream's recommendation (§3).
+   committed graph is what `--update` diffs against from a fresh clone.
+   `cost.json` is gitignored and `manifest.json` committed; committing
+   `cache/` is the **provisional default**, finalized after build step 1
+   inspects cache contents — raw `repos/` source chunks flip it to
+   gitignored (§3).
 2. **Safety pass over `GRAPH_REPORT.md`?** Yes — the same docs-scan pass as
    fetched docs, with move-aside quarantine to `GRAPH_REPORT.flagged.md` and
    the verdict recorded as `report_status` in the lock `graph` block (§3).
