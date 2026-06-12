@@ -38,6 +38,12 @@ rather than "exactly upstream's split". Fetch auto-refresh survives, narrowed
 to code-only — the line upstream's own post-commit hook draws ("AST only, no
 API cost")._
 
+_Amended 2026-06-12 (same session): the workspace `.gitignore` stops ignoring
+`docs/snapshots/` and `papers/*.pdf` — that content is committed from now on
+(papers have no fetcher and were unrecoverable from a clone). The managed
+`.graphifyignore` remains necessary regardless: `repos/` stays gitignored but
+must be graphed, and the committed process trail must not be._
+
 ## Context — what Graphify is
 
 Graphify ([repo](https://github.com/safishamsi/graphify),
@@ -236,20 +242,39 @@ nothing records provenance):
   creates edges between text *about* the system and the system), `skills/`,
   `tmp/`, `graphify-out/` itself, and `.git` internals.
 
-**The mechanics must be an ignore file, not a bare `graphify .`** (Codex
-review finding 2). Graphify respects per-directory `.gitignore` automatically
-— and the generated workspace `.gitignore` (`cli.py:798`) ignores `repos/`,
-`docs/snapshots/`, `papers/*.pdf`, and `tmp/`, so a naive workspace-root run
-would skip precisely the source material while graphing the process files. A
-`.graphifyignore` takes priority over the `.gitignore` in its directory, with
-git-style subtree scoping and `!` negation, so `zentaizo graph` writes a
-**managed `.graphifyignore` at the workspace root** (marker comment,
-regenerated per build — the commit-attribution-hook pattern) encoding the
-include/exclude set above; upstream documents exactly this allowlist shape
-(`*` / `!src/` / `!src/**`). Per-directory scoping means each fetched repo's
-own `.gitignore` still applies inside its subtree, which is what we want
-(`node_modules/` and friends stay out). The managed file is deterministic
-output, committed like the lock.
+**The mechanics: a workspace-`.gitignore` change plus a managed ignore file**
+(Codex review finding 2). Graphify respects per-directory `.gitignore`
+automatically — and the generated workspace `.gitignore` (`cli.py:798`) hides
+`repos/`, `docs/snapshots/`, and `papers/*.pdf` from it, so a naive
+workspace-root run would skip precisely the source material while graphing
+the process files. Two-part resolution, the first part decided 2026-06-12:
+
+- **The workspace `.gitignore` stops ignoring `docs/snapshots/` and
+  `papers/*.pdf` — that content is committed.** This is a workspace policy
+  change in its own right, not just a graphing fix: papers are hand-placed
+  (`fetch` only records them in the lock and defers snapshotting,
+  `cli.py:1396` — there is no paper fetcher), so a gitignored `papers/` was
+  simply unrecoverable from a clone; and a committed doc snapshot pins the
+  exact sanitized text that the safety pass reviewed and that the
+  `content_hash` in the lock, summaries, and graph `built_from` refers to.
+  It also repairs an odd posture: committing `graphify-out/` (the
+  derivative) while gitignoring its sources. Quarantined files stay out —
+  `docs/snapshots/*.flagged.*` is added to the template, so flagged content
+  is never committed and pulled onto another machine.
+- **`repos/` stays gitignored — and must still be graphed.** That conflict
+  cannot be resolved in `.gitignore` (fetched repos do not belong in the
+  workspace's git), so `zentaizo graph` writes a **managed `.graphifyignore`
+  at the workspace root** (marker comment, regenerated per build — the
+  commit-attribution-hook pattern). `.graphifyignore` is Graphify's own
+  ignore format — same syntax as `.gitignore` including `!` negation, applied
+  per directory with git-style subtree scoping, and taking priority over that
+  directory's `.gitignore`. The managed one un-hides `repos/` and excludes
+  the *committed* process trail (`sessions/`, `summaries/`, `skills/`) that a
+  gitignore-respecting walk would otherwise graph; upstream documents exactly
+  this allowlist shape (`*` / `!src/` / `!src/**`). Because scoping is
+  per-subtree, each fetched repo's own `.gitignore` still applies inside that
+  repo (`node_modules/` and friends stay out). The managed file is
+  deterministic output, committed like the lock.
 
 One graph for the whole workspace, not per-source subgraphs — the cross-source
 edges are the point (§ Why this maps). A per-source opt-out knob in the atlas
@@ -282,15 +307,17 @@ Upstream's own split is: commit the directory ("meant to be committed to git
 so everyone on the team starts with a map"), ignore `cost.json` (local only),
 `cache/` optional ("commit for speed, skip to keep repo small"),
 `manifest.json` safe and worth committing. Zentaizo chooses to **commit
-`cache/`**: workspaces are semantic-heavy (docs, papers, notes), the cache is
-what spares a fresh clone from re-paying model-API extraction for unchanged
-sources, and workspace clones already re-fetch their content rather than
-carrying it in git. Committing `graph.json` is what makes the layer
+`cache/`**: workspaces are semantic-heavy (docs, papers, notes), and the
+cache is what spares a fresh clone from re-paying model-API extraction for
+unchanged sources — `repos/` are re-fetched rather than carried in git, and
+with doc snapshots and papers now committed (§2) the cache keyed to that
+content naturally travels with it. Committing `graph.json` is what makes the layer
 workspace-local in the Zentaizo sense: a fresh clone has the graph
 immediately, `--update` diffs against the committed state instead of
 rebuilding from scratch (upstream's merge driver keeps parallel commits
 union-merged), and the graph travels with the lock that vouches for it. The
-workspace `.gitignore` template gains one entry: `graphify-out/cost.json`.
+workspace `.gitignore` template gains `graphify-out/cost.json` here; the
+snapshot/papers un-ignoring lives in §2.
 
 **`GRAPH_REPORT.md` goes through the same docs-scan safety pass** that
 `fetch-docs` applies (decided 2026-06-12; no exception for locally-generated
@@ -452,7 +479,9 @@ or egress beyond what the harness already grants.
 4. `fetch` best-effort **code-only** auto-refresh + `--no-graph` + the
    semantic follow-up and fallback hints (§4).
 5. `workspace_agents()` consultation-order bullet (§5) and the `.gitignore`
-   template entries (§3).
+   template changes: add `graphify-out/cost.json` and
+   `docs/snapshots/*.flagged.*`; drop `docs/snapshots/` and `papers/*.pdf`
+   (§2–3).
 6. Docs: `workspace-format.md` (layout tree + a short Graph section beside
    Summaries), `cli.md`, README one-liner.
 7. Sandbox: add `graphify-out/` to the writable set (§6).
@@ -475,3 +504,9 @@ or egress beyond what the harness already grants.
    graph best-effort **in code-only mode** when included revs actually
    changed; semantic re-extraction is always an explicit command, and the
    printed hint survives as the fallback when the binary is missing (§4).
+4. **Commit fetched doc snapshots and papers?** (raised while resolving
+   finding 2) Yes — the workspace `.gitignore` drops `docs/snapshots/` and
+   `papers/*.pdf` and adds `docs/snapshots/*.flagged.*`. Papers have no
+   fetcher, so gitignored papers were unrecoverable from a clone; committed
+   snapshots pin exactly what the safety pass reviewed. `repos/` stays
+   gitignored and is reached via the managed `.graphifyignore` instead (§2).
