@@ -9,6 +9,7 @@ edited_by:
   - 2026-06-12  Claude Fable 5
   - 2026-06-12  Codex (review, 3rd pass)
   - 2026-06-12  Claude Fable 5
+  - 2026-06-12  Claude Fable 5 (step-1 verification against graphifyy 0.8.39)
 ---
 
 # Graphify as a workspace knowledge-graph layer (`zentaizo graph`)
@@ -62,6 +63,22 @@ records only what Graphify actually read, with semantic-only sources in a
 `--semantic` now requires an explicit `--backend` (recorded in the lock)
 instead of riding key auto-detection; the sandbox build-order step gains the
 managed `.graphifyignore`; and the plan carries a named test plan._
+
+_Step-1 verification 2026-06-12, against **graphifyy 0.8.39** (installed via
+pipx; version floor for the extra). All five gated questions answered — see
+**Step-1 findings** below. Both provisional defaults resolved: `cache/` is
+**committed** (entries hold extracted nodes/edges only, no raw source chunks;
+`cache/stat-index.json` is the one exception — machine-local stat memo,
+gitignored), and fetch auto-refresh **extends to `mode: semantic` graphs**
+(an AST-only `graphify update` provably preserves semantic nodes and edges).
+Two findings the plan did not anticipate: per directory, `.graphifyignore`
+**replaces** `.gitignore` rather than overlaying it, so the managed file must
+carry the workspace's full graph-exclusion set itself (and needs no `!repos/`
+negation at all); and Graphify hard-skips any directory named `snapshots`
+(a Jest/Vitest convention baked into its `_SKIP_DIRS`), which makes
+`docs/snapshots/` **ungraphable in 0.8.39 in either mode** — doc snapshots
+are recorded under `not_graphed` with an explicit reason until upstream
+offers an escape hatch._
 
 ## Context — what Graphify is
 
@@ -189,7 +206,7 @@ Unlike chub (npm), `graphifyy` is pip-installable, so a real extra is possible:
 
 ```toml
 [project.optional-dependencies]
-graph = ["graphifyy>=X.Y"]   # pin the floor once the CLI surface is verified
+graph = ["graphifyy>=0.8.39"]   # floor = the version step 1 verified
 ```
 
 The **runtime gate is still "is `graphify` on PATH"**, not "is the extra
@@ -234,9 +251,11 @@ network/cost/data-residency event, which poisons both the fetch auto-refresh
   over the source trees: no key, no network. This is the only mode `fetch`
   may auto-refresh and the mode that is sandbox-clean — the same line
   upstream's own post-commit hook draws ("auto-rebuild after each commit —
-  AST only, no API cost"). Mechanism: an upstream AST-only invocation path if
-  one is exposed (the hook proves one exists internally; build step 1 pins
-  it), else the managed ignore file below excludes the semantic file types.
+  AST only, no API cost"). Mechanism (pinned by step 1): **`graphify update
+  .`** — the CLI verb backed by the same `_rebuild_code()` engine the hook
+  launches. Note it is "offline", not strictly "code-files-only": markdown
+  gets shallow structural extraction (file + headings, zero tokens) on the
+  same pass.
 - **`zentaizo graph --semantic` — opt-in full-corpus extraction.** Adds
   docs/papers/notes content via LLM extraction. Requires an **explicit
   backend**: `--semantic` without `--backend` is an error that lists the
@@ -259,8 +278,10 @@ design; without the verb every agent re-derives the include/exclude list and
 nothing records provenance):
 
 - **Included:** `repos/`, `docs/`, `papers/`, `notes/` — the four primary
-  source trees (in full under `--semantic`; the default mode reaches their
-  code subset).
+  source trees (in full under `--semantic`; the default mode reaches code
+  plus shallow markdown structure). Caveat from step 1: under graphifyy
+  0.8.39, `docs/snapshots/` is pruned by the tool's built-in skip list in
+  either mode and lands in `not_graphed` (findings, item 4).
 - **Excluded:** `sessions/` (workspace process trail, not the system),
   `summaries/` (derived prose; graphing a derivative alongside its sources
   creates edges between text *about* the system and the system), `skills/`,
@@ -290,15 +311,24 @@ the process files. Two-part resolution, the first part decided 2026-06-12:
   workspace's git), so `zentaizo graph` writes a **managed `.graphifyignore`
   at the workspace root** (marker comment, regenerated per build — the
   commit-attribution-hook pattern). `.graphifyignore` is Graphify's own
-  ignore format — same syntax as `.gitignore` including `!` negation, applied
-  per directory with git-style subtree scoping, and taking priority over that
-  directory's `.gitignore`. The managed one un-hides `repos/` and excludes
-  the *committed* process trail (`sessions/`, `summaries/`, `skills/`) that a
-  gitignore-respecting walk would otherwise graph; upstream documents exactly
-  this allowlist shape (`*` / `!src/` / `!src/**`). Because scoping is
-  per-subtree, each fetched repo's own `.gitignore` still applies inside that
-  repo (`node_modules/` and friends stay out). The managed file is
-  deterministic output, committed like the lock.
+  ignore format — same syntax as `.gitignore` including `!` negation —
+  but step 1 corrected the plan's model of how it combines: per directory it
+  **replaces** that directory's `.gitignore` (the fallback reads
+  `.gitignore` only when no `.graphifyignore` exists), and only the scan
+  root's (and its ancestors') ignore files are loaded — nested ignore files
+  inside subtrees are never read. So the managed file needs no `!repos/`
+  negation (with it present, the root `.gitignore` is simply not consulted
+  and `repos/` is visible), and it must instead carry the workspace's full
+  graph-exclusion set itself: `sessions/`, `summaries/`, `skills/`, `tmp/`,
+  the atlas and lock, and `docs/snapshots/*.flagged.*`. A fetched repo's own
+  `.gitignore` does **not** apply inside `repos/`; artifact hygiene there
+  rests on Graphify's built-in skip list (node_modules, dist, build, target,
+  venvs, framework caches, …), which covers the heavy cases. The managed
+  file is deterministic output, committed like the lock. One upstream
+  collision discovered here: that built-in skip list hard-prunes any
+  directory named `snapshots`, so **`docs/snapshots/` is ungraphable in
+  0.8.39 in either mode** — doc snapshots land in `not_graphed` with an
+  explicit reason (see Step-1 findings, item 4).
 
 One graph for the whole workspace, not per-source subgraphs — the cross-source
 edges are the point (§ Why this maps). A per-source opt-out knob in the atlas
@@ -308,20 +338,25 @@ JSON.
 
 ### 3. Output location and commit policy
 
-Graphify's build output location is not configurable, so the workspace adopts
-**`graphify-out/` at the workspace root** as-is rather than fighting the tool
-(`zentaizo graph` runs from the root; the lock records the observed
-`output_dir`, and build step 1 confirms exactly where the directory lands
-relative to the scanned paths):
+The workspace adopts **`graphify-out/` at the workspace root** — step 1
+found the location *is* configurable in 0.8.39 (`extract --out`,
+`GRAPHIFY_OUT` env var), but there is no reason to diverge from upstream's
+default. `zentaizo graph` runs the binary with CWD = workspace root scanning
+`.`: step 1 caught a 0.8.39 quirk where `manifest.json` is written to
+`$CWD/graphify-out/` while everything else goes to the scanned path's
+`graphify-out/`, and CWD = scanned path is what coalesces them. The lock
+records the observed `output_dir`:
 
 ```text
 graphify-out/
-  graph.json        # committed — machine-derived, like the lock
-  GRAPH_REPORT.md   # committed — markdown context, like a summary
-  graph.html        # committed — regenerable, but upstream ships it as part of the map
-  manifest.json     # committed — portable; avoids a full rebuild on first checkout
-  cache/            # committed (provisional, pending step-1 inspection) — extraction cache
-  cost.json         # gitignored — local-only
+  graph.json              # committed — machine-derived, like the lock
+  GRAPH_REPORT.md         # committed — markdown context, like a summary
+  graph.html              # committed — regenerable, but upstream ships it as part of the map
+  manifest.json           # committed — portable; avoids a full rebuild on first checkout
+  cache/                  # committed (finalized by step 1: entries hold extracted
+                          #   nodes/edges only, no raw source chunks)
+  cache/stat-index.json   # gitignored — machine-local stat memo (absolute paths, mtimes)
+  cost.json               # gitignored — local-only
 ```
 
 Commit policy (decided 2026-06-12; phrasing corrected after the Codex review —
@@ -330,27 +365,31 @@ a verbatim copy of it): commit `graphify-out/`, gitignore only `cost.json`.
 Upstream's own split is: commit the directory ("meant to be committed to git
 so everyone on the team starts with a map"), ignore `cost.json` (local only),
 `cache/` optional ("commit for speed, skip to keep repo small"),
-`manifest.json` safe and worth committing. Zentaizo's **provisional default
-is to commit `cache/`**, finalized only after the step-1 inspection below:
-workspaces are semantic-heavy (docs, papers, notes), and the cache is what
-spares a fresh clone from re-paying model-API extraction for unchanged
-sources — `repos/` are re-fetched rather than carried in git, and
-with doc snapshots and papers now committed (§2) the cache keyed to that
-content naturally travels with it. This default is **gated on build step 1
-inspecting the cache** (second Codex pass): its shape, typical size, and
-above all whether semantic entries embed raw source chunks.
-Snapshot/paper chunks would be no new exposure — those sources are committed
-themselves (§2) — but raw `repos/` content in the cache would leak code into
-the workspace git that the workspace deliberately does not carry (a committed
-`graph.json` already carries repo-derived *structure*; raw chunks are a step
-further). If the inspection finds repo source chunks, the default flips to
-gitignoring `cache/` and the warm-clone benefit is dropped. Committing `graph.json` is what makes the layer
+`manifest.json` safe and worth committing. Zentaizo **commits `cache/`** —
+the provisional default, finalized by the step-1 inspection: AST entries
+(`cache/ast/v<version>/`, version-namespaced) and semantic entries
+(`cache/semantic/`) both contain extracted nodes/edges only, **no raw source
+chunks** (verified in source and empirically), so committing the cache leaks
+nothing beyond what the committed `graph.json` already carries. The cache is
+what spares a fresh clone from re-paying model-API extraction for unchanged
+sources — `repos/` are re-fetched rather than carried in git, and with doc
+snapshots and papers now committed (§2) the cache keyed to that content
+naturally travels with it. One carve-out from the same inspection:
+`cache/stat-index.json` is a rebuildable stat memo holding absolute paths
+and nanosecond mtimes — pure machine-local churn — and is gitignored. Two
+invocation details also land here (step-1 findings 2 and 8): `zentaizo
+graph` runs Graphify with `PYTHONHASHSEED=0` (deterministic community
+clustering, so the committed `graph.json` is reproducible) and
+`GRAPHIFY_NO_BACKUP=1` (Graphify otherwise snapshots semantic graphs to
+dated `graphify-out/<YYYY-MM-DD>/` dirs before overwrite; in a workspace,
+git history is that backup). Committing `graph.json` is what makes the layer
 workspace-local in the Zentaizo sense: a fresh clone has the graph
 immediately, `--update` diffs against the committed state instead of
 rebuilding from scratch (upstream's merge driver keeps parallel commits
 union-merged), and the graph travels with the lock that vouches for it. The
-workspace `.gitignore` template gains `graphify-out/cost.json` here; the
-snapshot/papers un-ignoring lives in §2.
+workspace `.gitignore` template gains `graphify-out/cost.json` and
+`graphify-out/cache/stat-index.json` here; the snapshot/papers un-ignoring
+lives in §2.
 
 **`GRAPH_REPORT.md` goes through the same docs-scan safety pass** that
 `fetch-docs` applies (decided 2026-06-12; no exception for locally-generated
@@ -382,15 +421,25 @@ after a successful build:
   "report_status": "ok",
   "built_from": {
     "repos/shortener-api": "9f3a1c4e7b…",
-    "repos/deployment": "2c61d0aa00…"
+    "repos/deployment": "2c61d0aa00…",
+    "notes": "unfetched"
   },
-  "not_graphed": ["docs/api-docs", "papers/whitepaper"]
+  "not_graphed": {
+    "docs/api-docs": "skipped by graphify (snapshots dir)",
+    "papers/whitepaper": "semantic-only source (code-only build)"
+  }
 }
 ```
 
-(A `--semantic` build adds `"semantic_backend"` / `"semantic_model"`, moves
-the doc into `built_from` keyed by its snapshot `content_hash`, and empties
-`not_graphed`.)
+(`not_graphed` maps each excluded source to the reason, so `status` can say
+why. Notes appear in `built_from` in **both** modes — step 1 found that the
+AST-only path performs shallow markdown extraction (file + heading nodes,
+offline), so notes are genuinely read even code-only; as `"unfetched"`
+sources they never drive staleness. A `--semantic` build adds
+`"semantic_backend"` / `"semantic_model"` and moves papers into `built_from`
+as `"unfetched"`. Doc snapshots stay in `not_graphed` in both modes under
+graphifyy 0.8.39 — its built-in skip list prunes any `snapshots` directory
+(Step-1 findings, item 4).)
 
 `built_from` maps **each source actually handed to Graphify for the recorded
 `mode`** — only those (third Codex pass) — to the same locked identity
@@ -440,18 +489,17 @@ failure never fails the fetch — the same best-effort contract as the
 commit-attribution hook installer. `zentaizo fetch --no-graph` opts out.
 Semantic content is never auto-extracted: when changed sources include
 docs/papers/notes of a graph last built `--semantic`, `fetch` prints the
-explicit follow-up (`run 'zentaizo graph --semantic'`). And for a graph last
-built `--semantic`, even a pure code change is auto-patched only if build
-step 1 **proves** that an AST-only `--update` patches code nodes without
-pruning or downgrading the semantic doc/paper/note nodes — upstream's
-post-commit hook and team workflow imply exactly this coexistence (AST-only
-rebuilds run routinely on semantically-extracted corpora), but that is
-implied, not demonstrated. Until proven, `fetch` skips auto-refresh for
-`mode: semantic` graphs entirely and prints the follow-up instead. The "graph now stale
-— run `zentaizo graph`" hint also remains the fallback when auto-refresh
-could not run (binary absent); the durable encoding for future sessions is
-the `status` line plus the consultation bullet's rebuild-if-stale clause, so
-the gap never silently widens.
+explicit follow-up (`run 'zentaizo graph --semantic'`). The step-1 gate on
+auto-patching `mode: semantic` graphs is **satisfied**: an AST-only
+`graphify update` on a semantically-built graph was demonstrated to patch
+code nodes while preserving every semantic node and edge — even with the
+semantic cache deleted (preservation comes from incremental patching of the
+existing `graph.json`). So `fetch` auto-refreshes code changes for graphs of
+**either mode**; only semantic re-extraction stays explicit. The "graph now
+stale — run `zentaizo graph`" hint also remains the fallback when
+auto-refresh could not run (binary absent); the durable encoding for future
+sessions is the `status` line plus the consultation bullet's
+rebuild-if-stale clause, so the gap never silently widens.
 
 Doc snapshots that are `flagged` by the safety pass are **excluded from the
 input set** (and listed in the command output), matching `summarize`'s
@@ -532,11 +580,14 @@ or egress beyond what the harness already grants.
    commit-`cache/` default). The upstream facts above were verified against
    the raw v8 README on 2026-06-12, but the behavioral details need a local
    pass before any code. Sets the version floor for the extra.
+   **Done 2026-06-12 — see "Step-1 findings (graphifyy 0.8.39)" below.**
 2. `zentaizo graph [workspace] [--semantic] [--backend …] [--force]`: PATH
    gate, managed `.graphifyignore` generation, deterministic input set (§2,
-   with flagged-doc exclusion), invoke `graphify extract` (code-only default
-   / semantic opt-in), run the docs-scan pass over `GRAPH_REPORT.md` with
-   move-aside quarantine, write the lock `graph` block (§3–4).
+   with flagged-doc exclusion), invoke `graphify update .` (code-only
+   default) or `graphify extract . --backend …` + `cluster-only` (semantic
+   opt-in), with `PYTHONHASHSEED=0` and `GRAPHIFY_NO_BACKUP=1` in the child
+   env; run the docs-scan pass over `GRAPH_REPORT.md` with move-aside
+   quarantine, write the lock `graph` block (§3–4).
 3. `zentaizo status` graph line incl. mode, untracked sources, and
    `report_status` (§4) — `status_workspace`, `cli.py:1134`.
 4. `fetch` best-effort **code-only** auto-refresh + `--no-graph` + the
@@ -554,6 +605,104 @@ or egress beyond what the harness already grants.
    `upgrade-zentaizo` skill path (regenerated `AGENTS.md` picks up §5), per
    the no-`zentaizo update` policy.
 
+## Step-1 findings (graphifyy 0.8.39, verified 2026-06-12)
+
+Verified locally against a scratch workspace mimicking the Zentaizo layout
+(`repos/` with two repos incl. a nested `.gitignore`, `docs/snapshots/`,
+`papers/`, `notes/`, `sessions/`, `summaries/`, `skills/`, `tmp/`), plus a
+read of the installed package source where behavior needed a definitive
+answer. Version floor: `graphifyy>=0.8.39`.
+
+1. **Output placement.** `graphify update <path>` writes graph, report, html,
+   and `cache/` to `<path>/graphify-out/`, but writes `manifest.json` to
+   `$CWD/graphify-out/` keyed by CWD-relative paths — a 0.8.39 quirk that
+   splits the output across two directories when CWD ≠ scanned path. With
+   CWD = scanned path (`graphify update .`) everything coalesces, so
+   **`zentaizo graph` runs the binary with CWD = workspace root and path
+   `.`**. There is no multi-path invocation (one positional path); scoping is
+   ignore-file-only. The output location is in fact configurable now
+   (`extract --out DIR`, `GRAPHIFY_OUT` env var) — the plan's "upstream-fixed"
+   premise is outdated — but Zentaizo still adopts the default
+   `graphify-out/`: no reason to diverge.
+2. **AST-only invocation path.** The post-commit hook launches
+   `graphify.watch._rebuild_code()` — the same engine behind the
+   **`graphify update <path>`** CLI verb ("re-extract code files... no LLM
+   needed"). The default (code-only) mode invokes exactly that. Two
+   refinements: `update` also performs **shallow markdown extraction**
+   (file + heading nodes, zero tokens, fully offline), so the default mode is
+   really "offline/no-LLM" rather than "code files only" — notes get
+   structural nodes in both modes (and enter `built_from` as `"unfetched"` in
+   both); PDFs and images are untouched without a backend. And the bare CLI
+   does **not** pin `PYTHONHASHSEED` (the hook does, for deterministic
+   louvain clustering), so `zentaizo graph` sets `PYTHONHASHSEED=0` in the
+   child env to keep the committed `graph.json` reproducible.
+3. **Ignore mechanics.** Per directory, `.graphifyignore` **replaces**
+   `.gitignore` — the fallback reads `.gitignore` only when no
+   `.graphifyignore` exists; they never merge. Consequently the managed file
+   needs **no `!repos/` negation**: once it exists at the workspace root, the
+   root `.gitignore` is simply not consulted, and `repos/` is visible by
+   default. The flip side: the managed file must carry the workspace's full
+   graph-exclusion set itself (`sessions/`, `summaries/`, `skills/`, `tmp/`,
+   atlas + lock, `docs/snapshots/*.flagged.*`). Negation (`!`) does work
+   (last-match-wins, with the gitignore parent-exclusion rule), and only the
+   scan root's and its ancestors' ignore files are loaded — **nested ignore
+   files are never read**, so a fetched repo's own `.gitignore` does not
+   apply inside `repos/`; hygiene there rests on Graphify's built-in
+   `_SKIP_DIRS` (node_modules, dist, build, target, venvs, framework caches,
+   …), which in practice covers the heavy artifacts.
+4. **The `snapshots` collision.** `_SKIP_DIRS` includes the literal names
+   `snapshots` and `__snapshots__` (Jest/Vitest snapshot dirs). Skip-dir
+   pruning runs before ignore evaluation and is unconditional: no
+   `.graphifyignore` negation rescues it, `.graphifyinclude` is loaded but
+   never applied in 0.8.39 (dead code), and there is no env override. So
+   **`docs/snapshots/` cannot be graphed in 0.8.39 in either mode**. Doc
+   snapshots are recorded in `not_graphed` with an explicit reason
+   (`"skipped by graphify (snapshots dir)"`), `status` surfaces them in the
+   not-graphed count, and the §2 input-set description is narrowed
+   accordingly: the cross-source value in 0.8.39 is repos ↔ notes (+ papers
+   under `--semantic`). Revisit when upstream wires `.graphifyinclude` or
+   un-hardcodes the skip list.
+5. **Semantic preservation — proven.** Built a semantic graph
+   (`extract --backend claude-cli` over the scratch corpus), then modified
+   code and ran AST-only `graphify update .`: all semantic nodes (rationale/
+   concept) and their edges survived while the new code node appeared.
+   Preservation holds **even with `cache/semantic/` deleted** — it comes
+   from incremental patching of the existing `graph.json`, not the cache.
+   **The §4 gate is satisfied: `fetch` auto-refresh applies to
+   `mode: semantic` graphs too** (still code-only refresh; semantic
+   re-extraction stays explicit).
+6. **Cache contents — commit default finalized.** AST entries
+   (`cache/ast/v<version>/<sha256>.json`, version-namespaced, auto-swept on
+   upgrade) and semantic entries (`cache/semantic/<sha256>.json`,
+   deliberately unversioned) both contain **extracted nodes/edges only — no
+   raw source chunks** (verified in source and empirically). So `cache/` is
+   **committed**, with one carve-out: `cache/stat-index.json` is a
+   rebuildable stat memo holding absolute paths and nanosecond mtimes —
+   machine-specific churn — and is **gitignored** alongside `cost.json`.
+   Md content hashes strip YAML frontmatter before hashing.
+7. **Reports.** `graphify update` writes `GRAPH_REPORT.md` on every build
+   (offline, placeholder community names). Headless `graphify extract` does
+   **not** write the report — it defers to `graphify cluster-only`, whose
+   community naming wants an LLM. So `zentaizo graph --semantic` runs
+   `extract --backend B` followed by `cluster-only . --backend B` (one small
+   naming pass on the same explicit backend); the code-only path needs no
+   second step.
+8. **Dated backups.** Before overwriting a graph that is semantic
+   (`.graphify_semantic_marker`) or human-curated, Graphify snapshots
+   artifacts to `graphify-out/<YYYY-MM-DD>/`. In a workspace the committed
+   graph's git history already serves that purpose, so `zentaizo graph` (and
+   the fetch auto-refresh) set `GRAPHIFY_NO_BACKUP=1` to keep the output
+   tree deterministic.
+9. **Misc verified.** `extract` with no backend and no key exits 1 with a
+   clear message ("A code-only corpus needs no key"); `--backend claude-cli`
+   works against the local `claude` CLI with no API key; query logging
+   defaults to `~/.cache/graphify-queries.log` with
+   `GRAPHIFY_QUERY_LOG_DISABLE=1` / `GRAPHIFY_QUERY_LOG=<path>` overrides
+   exactly as §5 describes; `GRAPHIFY_SKIP_HOOK=1` skips upstream's git
+   hooks; `graphify-out/memory/` is force-included in scans; `update
+   --force` / `GRAPHIFY_FORCE=1` covers the shrinking-graph case; a
+   sensitive-file skip pass (`security.py`) runs during detection.
+
 ## Test plan
 
 Zentaizo's logic is tested against a **stub `graphify` on PATH** — a script
@@ -564,17 +713,22 @@ cases (third Codex pass):
 - **Binary gate:** missing `graphify` → nonzero exit, install commands
   printed, no lock mutation, no `graphify-out/`.
 - **Managed `.graphifyignore`:** generated with marker comment; regenerated,
-  not duplicated, on rebuild; content differs correctly between code-only
-  and `--semantic`; a user-owned `.graphifyignore` without the marker is
+  not duplicated, on rebuild; carries the full workspace exclusion set
+  (process trail, `tmp/`, atlas + lock, flagged snapshots — same content in
+  both modes, since `.graphifyignore` replaces the root `.gitignore`
+  wholesale); a user-owned `.graphifyignore` without the marker is
   refused, never overwritten (the hook-installer rule).
-- **`.gitignore` template:** new workspaces get `graphify-out/cost.json` and
-  `docs/snapshots/*.flagged.*`; no longer get `docs/snapshots/` or
-  `papers/*.pdf`; still get `repos/` and `tmp/`.
+- **`.gitignore` template:** new workspaces get `graphify-out/cost.json`,
+  `graphify-out/cache/stat-index.json`, and `docs/snapshots/*.flagged.*`;
+  no longer get `docs/snapshots/` or `papers/*.pdf`; still get `repos/`
+  and `tmp/`.
 - **Lock semantics:** code-only build records `mode`, `built_from` covering
-  exactly the graphed inputs, semantic-only sources in `not_graphed`, no
+  exactly the graphed inputs (repos by rev, notes as `"unfetched"`),
+  excluded sources in `not_graphed` mapped to reasons, no
   `semantic_backend`; `--semantic` without `--backend` errors; with it,
-  records `semantic_backend`/`semantic_model` and moves doc snapshots into
-  `built_from` by `content_hash`; papers/notes record `"unfetched"`.
+  records `semantic_backend`/`semantic_model` and moves papers into
+  `built_from` as `"unfetched"`; doc snapshots stay in `not_graphed` in
+  both modes (0.8.39 `snapshots` skip) with the skip reason.
 - **Report quarantine:** flagged scan verdict → report moved to
   `GRAPH_REPORT.flagged.md`, nothing left at `GRAPH_REPORT.md`,
   `report_status: flagged` plus quarantine path in the lock.
@@ -583,8 +737,8 @@ cases (third Codex pass):
   and not-graphed counts; flagged-report surfacing.
 - **Fetch integration:** auto-refresh fires only when a graphed source's rev
   changed; `--no-graph` skips; a failing stub never fails the fetch;
-  `mode: semantic` graphs are skipped (until the step-1 proof lands) with
-  the follow-up hint printed.
+  `mode: semantic` graphs auto-refresh too (step-1 proof landed), with the
+  semantic follow-up hint printed when semantic-typed sources changed.
 - **Sandbox policy:** `compute_policy` output includes `graphify-out/` and
   the managed `.graphifyignore` as writable in both modes.
 
@@ -594,9 +748,9 @@ cases (third Codex pass):
    ("committed to git so everyone on the team starts with a map"), and the
    committed graph is what `--update` diffs against from a fresh clone.
    `cost.json` is gitignored and `manifest.json` committed; committing
-   `cache/` is the **provisional default**, finalized after build step 1
-   inspects cache contents — raw `repos/` source chunks flip it to
-   gitignored (§3).
+   `cache/` is **finalized** by the step-1 inspection — entries hold
+   extracted nodes/edges only, no raw source chunks — with
+   `cache/stat-index.json` (machine-local stat memo) gitignored (§3).
 2. **Safety pass over `GRAPH_REPORT.md`?** Yes — the same docs-scan pass as
    fetched docs, with move-aside quarantine to `GRAPH_REPORT.flagged.md` and
    the verdict recorded as `report_status` in the lock `graph` block (§3).
