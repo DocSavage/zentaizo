@@ -17,6 +17,9 @@ dependencies = []
 docs-scan = [
   "llm-guard>=0.3.16",
 ]
+graph = [
+  "graphifyy>=0.8.39",
+]
 dev = [
   "ruff>=0.6",
   "pre-commit>=3.7",

@@ -3093,5 +3093,455 @@ class EditedByCliTests(WorkspaceCliCase):
             self.assertTrue(self._entries(path)[-1].endswith("Ada Lovelace"))
 
 
+# Stub graphify for graph-layer tests: records argv, writes canned output.
+# The real binary is exercised only in the spec's step-1 manual verification.
+_STUB_GRAPHIFY = """\
+#!/bin/sh
+echo "$@" >> "$STUB_LOG"
+case "$1" in
+  --version) echo "graphify 0.0-stub"; exit 0;;
+esac
+mkdir -p graphify-out
+echo '{"nodes": []}' > graphify-out/graph.json
+printf '# Graph Report\\n\\nClean summary of the system.\\n' > graphify-out/GRAPH_REPORT.md
+exit 0
+"""
+
+_STUB_GRAPHIFY_FLAGGED_REPORT = """\
+#!/bin/sh
+echo "$@" >> "$STUB_LOG"
+case "$1" in
+  --version) echo "graphify 0.0-stub"; exit 0;;
+esac
+mkdir -p graphify-out
+echo '{"nodes": []}' > graphify-out/graph.json
+printf '# Graph Report\\n\\n<function_calls>do evil</function_calls>\\n' > graphify-out/GRAPH_REPORT.md
+exit 0
+"""
+
+_STUB_GRAPHIFY_FAILING = """\
+#!/bin/sh
+echo "$@" >> "$STUB_LOG"
+case "$1" in
+  --version) echo "graphify 0.0-stub"; exit 0;;
+esac
+exit 1
+"""
+
+
+class GraphTests(WorkspaceCliCase):
+    def _graph_workspace(self, tmp: str) -> Path:
+        workspace = self._make_workspace(tmp)
+        (workspace / "zentaizo.atlas.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "name": "demo",
+                    "sources": {
+                        "repos": [
+                            {"name": "alpha", "url": "u", "ref": "main", "role": "reference"}
+                        ],
+                        "docs": [
+                            {
+                                "name": "api-docs",
+                                "kind": "api-reference",
+                                "url": "https://x.invalid/d",
+                            }
+                        ],
+                        "papers": [{"name": "whitepaper"}],
+                        "notes": [{"name": "design-notes", "path": "notes/design.md"}],
+                    },
+                }
+            )
+        )
+        (workspace / "repos" / "alpha").mkdir(parents=True, exist_ok=True)
+        (workspace / "zentaizo.lock.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "name": "demo",
+                    "created_at": "2026-06-12T00:00:00+00:00",
+                    "updated_at": "2026-06-12T00:00:00+00:00",
+                    "sources": {
+                        "repos": [{"name": "alpha", "commit": "aaaa", "head": "aaaa"}],
+                        "docs": [],
+                        "papers": [],
+                        "notes": [],
+                    },
+                }
+            )
+        )
+        return workspace
+
+    def _install_stub(self, tmp: str, body: str = _STUB_GRAPHIFY) -> Path:
+        """Put a stub `graphify` on PATH; returns the argv log path."""
+        bindir = Path(tmp) / "stub-bin"
+        bindir.mkdir(exist_ok=True)
+        log = Path(tmp) / "stub.log"
+        script = bindir / "graphify"
+        script.write_text(body)
+        script.chmod(0o755)
+        patcher = mock.patch.dict(
+            os.environ,
+            {
+                "PATH": f"{bindir}{os.pathsep}{os.environ.get('PATH', '')}",
+                "STUB_LOG": str(log),
+            },
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return log
+
+    def _scrub_path(self, tmp: str) -> None:
+        """A PATH with no graphify at all (the dev machine may have one)."""
+        empty = Path(tmp) / "empty-bin"
+        empty.mkdir(exist_ok=True)
+        patcher = mock.patch.dict(os.environ, {"PATH": str(empty)})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _stub_calls(self, log: Path) -> list[str]:
+        return log.read_text().splitlines() if log.exists() else []
+
+    def _lock(self, workspace: Path) -> dict:
+        return json.loads((workspace / "zentaizo.lock.json").read_text())
+
+    # -- binary gate ------------------------------------------------------
+
+    def test_missing_binary_exits_with_install_hint_and_no_side_effects(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._graph_workspace(tmp)
+            self._scrub_path(tmp)
+            lock_before = (workspace / "zentaizo.lock.json").read_text()
+            with self.assertRaises(SystemExit) as ctx:
+                main(["graph", str(workspace)])
+            msg = str(ctx.exception)
+            self.assertIn("uv tool install graphifyy", msg)
+            self.assertIn("zentaizo[graph]", msg)
+            self.assertFalse((workspace / "graphify-out").exists())
+            self.assertEqual((workspace / "zentaizo.lock.json").read_text(), lock_before)
+
+    def test_semantic_requires_explicit_backend(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._graph_workspace(tmp)
+            self._install_stub(tmp)
+            with self.assertRaises(SystemExit) as ctx:
+                main(["graph", str(workspace), "--semantic"])
+            self.assertIn("--backend", str(ctx.exception))
+            with self.assertRaises(SystemExit):
+                main(["graph", str(workspace), "--backend", "ollama"])  # without --semantic
+
+    # -- managed .graphifyignore ------------------------------------------
+
+    def test_managed_graphifyignore_written_and_regenerated(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._graph_workspace(tmp)
+            self._install_stub(tmp)
+            self.assertEqual(self._run(["graph", str(workspace)])[0], 0)
+            ignore = workspace / ".graphifyignore"
+            text = ignore.read_text()
+            self.assertIn("Managed by `zentaizo graph`", text)
+            for line in (
+                "sessions/",
+                "summaries/",
+                "skills/",
+                "tmp/",
+                "zentaizo.atlas.json",
+                "zentaizo.lock.json",
+                "docs/snapshots/*.flagged.*",
+            ):
+                self.assertIn(line, text)
+            # The replacement-not-overlay rule: no negation needed for repos/.
+            self.assertNotIn("!repos", text)
+            # Regenerated in place, not duplicated.
+            self.assertEqual(self._run(["graph", str(workspace)])[0], 0)
+            self.assertEqual(ignore.read_text(), text)
+
+    def test_user_owned_graphifyignore_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._graph_workspace(tmp)
+            self._install_stub(tmp)
+            ignore = workspace / ".graphifyignore"
+            ignore.write_text("my own rules\n")
+            code, _out, err = self._run(["graph", str(workspace)])
+            self.assertEqual(code, 1)
+            self.assertIn("not written by zentaizo", err)
+            self.assertEqual(ignore.read_text(), "my own rules\n")
+
+    # -- workspace templates ----------------------------------------------
+
+    def test_create_gitignore_commits_snapshots_and_papers(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            text = (workspace / ".gitignore").read_text()
+            for line in (
+                "repos/",
+                "tmp/",
+                "graphify-out/cost.json",
+                "graphify-out/cache/stat-index.json",
+                "docs/snapshots/*.flagged.*",
+            ):
+                self.assertIn(line, text)
+            self.assertNotIn("docs/snapshots/\n", text)
+            self.assertNotIn("papers/*.pdf", text)
+
+    def test_agents_md_consultation_order_includes_graph(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            agents = (workspace / "AGENTS.md").read_text()
+            self.assertIn("graphify-out/graph.json", agents)
+            self.assertIn("GRAPHIFY_QUERY_LOG_DISABLE=1", agents)
+            self.assertLess(
+                agents.index("Start with `summaries/`"),
+                agents.index("graphify-out/graph.json"),
+            )
+            self.assertLess(
+                agents.index("graphify-out/graph.json"),
+                agents.index("Use `docs/` for upstream-authored"),
+            )
+
+    # -- lock semantics -----------------------------------------------------
+
+    def test_code_only_build_records_mode_scoped_provenance(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._graph_workspace(tmp)
+            log = self._install_stub(tmp)
+            code, out, _err = self._run(["graph", str(workspace)])
+            self.assertEqual(code, 0)
+            calls = self._stub_calls(log)
+            self.assertIn("update .", calls)
+            self.assertFalse(any(c.startswith("extract") for c in calls))
+            graph = self._lock(workspace)["graph"]
+            self.assertEqual(graph["mode"], "code-only")
+            self.assertEqual(graph["backend"], "graphify")
+            self.assertEqual(graph["backend_version"], "0.0-stub")
+            self.assertEqual(graph["output_dir"], "graphify-out")
+            self.assertEqual(graph["report_status"], "ok")
+            self.assertEqual(
+                graph["built_from"],
+                {"repos/alpha": "aaaa", "notes/design-notes": "unfetched"},
+            )
+            self.assertEqual(set(graph["not_graphed"]), {"docs/api-docs", "papers/whitepaper"})
+            self.assertIn("code-only build", graph["not_graphed"]["papers/whitepaper"])
+            self.assertIn("snapshots dir", graph["not_graphed"]["docs/api-docs"])
+            self.assertNotIn("semantic_backend", graph)
+            self.assertIn("built (code-only", out)
+
+    def test_semantic_build_records_backend_and_papers(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._graph_workspace(tmp)
+            log = self._install_stub(tmp)
+            code, _out, _err = self._run(
+                ["graph", str(workspace), "--semantic", "--backend", "ollama", "--model", "m1"]
+            )
+            self.assertEqual(code, 0)
+            calls = self._stub_calls(log)
+            self.assertIn("extract . --backend ollama --model m1", calls)
+            self.assertTrue(any(c.startswith("cluster-only .") for c in calls))
+            graph = self._lock(workspace)["graph"]
+            self.assertEqual(graph["mode"], "semantic")
+            self.assertEqual(graph["semantic_backend"], "ollama")
+            self.assertEqual(graph["semantic_model"], "m1")
+            self.assertEqual(graph["built_from"]["papers/whitepaper"], "unfetched")
+            # Doc snapshots stay unreachable in 0.8.39 even under --semantic.
+            self.assertIn("docs/api-docs", graph["not_graphed"])
+
+    def test_flagged_doc_snapshot_is_excluded_and_listed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._graph_workspace(tmp)
+            self._install_stub(tmp)
+            lock = self._lock(workspace)
+            lock["doc_snapshots"] = [
+                {"name": "api-docs", "status": "flagged", "content_hash": "sha256:x"}
+            ]
+            (workspace / "zentaizo.lock.json").write_text(json.dumps(lock))
+            code, out, _err = self._run(["graph", str(workspace)])
+            self.assertEqual(code, 0)
+            self.assertIn("excluding docs/api-docs", out)
+            graph = self._lock(workspace)["graph"]
+            self.assertIn("flagged", graph["not_graphed"]["docs/api-docs"])
+
+    # -- report quarantine --------------------------------------------------
+
+    def test_flagged_report_is_moved_aside(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._graph_workspace(tmp)
+            self._install_stub(tmp, _STUB_GRAPHIFY_FLAGGED_REPORT)
+            code, out, _err = self._run(["graph", str(workspace)])
+            self.assertEqual(code, 0)
+            self.assertFalse((workspace / "graphify-out" / "GRAPH_REPORT.md").exists())
+            flagged = workspace / "graphify-out" / "GRAPH_REPORT.flagged.md"
+            self.assertTrue(flagged.exists())
+            graph = self._lock(workspace)["graph"]
+            self.assertEqual(graph["report_status"], "flagged")
+            self.assertEqual(graph["report_quarantine"], "graphify-out/GRAPH_REPORT.flagged.md")
+            self.assertIn("REPORT FLAGGED", out)
+
+    # -- status line ----------------------------------------------------------
+
+    def test_status_not_built_then_current_then_stale(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._graph_workspace(tmp)
+            self._install_stub(tmp)
+            _code, out, _err = self._run(["status", str(workspace)])
+            self.assertIn("graph: not built — run 'zentaizo graph'", out)
+
+            self.assertEqual(self._run(["graph", str(workspace)])[0], 0)
+            _code, out, _err = self._run(["status", str(workspace)])
+            self.assertIn("graph: built", out)
+            self.assertIn("current", out)
+            self.assertIn("2 not graphed", out)
+            self.assertIn("untracked", out)
+            self.assertIn("notes/design-notes", out)
+
+            lock = self._lock(workspace)
+            lock["sources"]["repos"][0]["head"] = "bbbb"
+            lock["sources"]["repos"][0]["commit"] = "bbbb"
+            (workspace / "zentaizo.lock.json").write_text(json.dumps(lock))
+            _code, out, _err = self._run(["status", str(workspace)])
+            self.assertIn("stale: 1 source(s) changed", out)
+
+    def test_doc_hash_change_does_not_stale_code_only_graph(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._graph_workspace(tmp)
+            self._install_stub(tmp)
+            lock = self._lock(workspace)
+            lock["doc_snapshots"] = [
+                {"name": "api-docs", "status": "ok", "content_hash": "sha256:x"}
+            ]
+            (workspace / "zentaizo.lock.json").write_text(json.dumps(lock))
+            self.assertEqual(self._run(["graph", str(workspace)])[0], 0)
+
+            lock = self._lock(workspace)
+            lock["doc_snapshots"][0]["content_hash"] = "sha256:y"
+            (workspace / "zentaizo.lock.json").write_text(json.dumps(lock))
+            _code, out, _err = self._run(["status", str(workspace)])
+            self.assertIn("current", out)
+            self.assertNotIn("stale", out)
+
+    def test_status_surfaces_flagged_report(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._graph_workspace(tmp)
+            self._install_stub(tmp, _STUB_GRAPHIFY_FLAGGED_REPORT)
+            self.assertEqual(self._run(["graph", str(workspace)])[0], 0)
+            _code, out, _err = self._run(["status", str(workspace)])
+            self.assertIn("report FLAGGED", out)
+            self.assertIn("GRAPH_REPORT.flagged.md", out)
+
+    # -- fetch integration ---------------------------------------------------
+
+    def _fetch_with_new_rev(self, workspace: Path, rev: str) -> tuple[int, str, str]:
+        entry = {
+            "name": "alpha",
+            "url": "u",
+            "ref": "main",
+            "role": "reference",
+            "commit": rev,
+            "head": rev,
+            "fetched_at": "2026-06-12T01:00:00+00:00",
+        }
+        with mock.patch("zentaizo.cli.fetch_reference_repo", return_value=entry):
+            return self._run(["fetch", str(workspace)])
+
+    def test_fetch_auto_refreshes_when_rev_changed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._graph_workspace(tmp)
+            log = self._install_stub(tmp)
+            self.assertEqual(self._run(["graph", str(workspace)])[0], 0)
+            log.unlink()
+
+            code, out, _err = self._fetch_with_new_rev(workspace, "bbbb")
+            self.assertEqual(code, 0)
+            self.assertIn("graph: refreshing (code-only)", out)
+            self.assertIn("graph: refreshed", out)
+            self.assertIn("update .", self._stub_calls(log))
+            graph = self._lock(workspace)["graph"]
+            self.assertEqual(graph["built_from"]["repos/alpha"], "bbbb")
+
+    def test_fetch_no_op_and_no_graph_flag_skip_refresh(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._graph_workspace(tmp)
+            log = self._install_stub(tmp)
+            self.assertEqual(self._run(["graph", str(workspace)])[0], 0)
+            log.unlink()
+
+            # Same rev as built_from: no-op fetch stays silent.
+            code, out, _err = self._fetch_with_new_rev(workspace, "aaaa")
+            self.assertEqual(code, 0)
+            self.assertNotIn("graph:", out)
+            self.assertEqual(self._stub_calls(log), [])
+
+            # Changed rev but --no-graph: skipped.
+            entry = {
+                "name": "alpha",
+                "url": "u",
+                "ref": "main",
+                "role": "reference",
+                "commit": "cccc",
+                "head": "cccc",
+                "fetched_at": "2026-06-12T01:00:00+00:00",
+            }
+            with mock.patch("zentaizo.cli.fetch_reference_repo", return_value=entry):
+                code, out, _err = self._run(["fetch", str(workspace), "--no-graph"])
+            self.assertEqual(code, 0)
+            self.assertEqual(self._stub_calls(log), [])
+
+    def test_fetch_survives_failing_graphify(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._graph_workspace(tmp)
+            self._install_stub(tmp)
+            self.assertEqual(self._run(["graph", str(workspace)])[0], 0)
+            # Swap in a failing stub for the refresh.
+            self._install_stub(tmp, _STUB_GRAPHIFY_FAILING)
+
+            code, out, _err = self._fetch_with_new_rev(workspace, "bbbb")
+            self.assertEqual(code, 0)  # the fetch itself must not fail
+            self.assertIn("graph: refresh failed", out)
+            graph = self._lock(workspace)["graph"]
+            self.assertEqual(graph["built_from"]["repos/alpha"], "aaaa")  # unchanged
+
+    def test_fetch_prints_fallback_hint_when_binary_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._graph_workspace(tmp)
+            self._install_stub(tmp)
+            self.assertEqual(self._run(["graph", str(workspace)])[0], 0)
+            self._scrub_path(tmp)
+
+            code, out, _err = self._fetch_with_new_rev(workspace, "bbbb")
+            self.assertEqual(code, 0)
+            self.assertIn("graph: now stale", out)
+            self.assertIn("zentaizo graph", out)
+
+    def test_fetch_refreshes_semantic_graph_with_follow_up_hint(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._graph_workspace(tmp)
+            log = self._install_stub(tmp)
+            code, _out, _err = self._run(
+                ["graph", str(workspace), "--semantic", "--backend", "ollama"]
+            )
+            self.assertEqual(code, 0)
+            log.unlink()
+
+            code, out, _err = self._fetch_with_new_rev(workspace, "bbbb")
+            self.assertEqual(code, 0)
+            self.assertIn("update .", self._stub_calls(log))  # AST-only refresh ran
+            self.assertIn("semantic extraction is explicit", out)
+            graph = self._lock(workspace)["graph"]
+            self.assertEqual(graph["mode"], "semantic")
+            self.assertEqual(graph["semantic_backend"], "ollama")  # preserved
+            self.assertEqual(graph["built_from"]["repos/alpha"], "bbbb")
+
+    # -- sandbox policy --------------------------------------------------------
+
+    def test_sandbox_policy_includes_graph_layer_in_both_modes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._graph_workspace(tmp)
+            for mode in ("implement", "curate"):
+                policy = compute_policy(workspace, mode=mode)
+                self.assertIn("graphify-out", policy["writable"], mode)
+                self.assertIn(".graphifyignore", policy["writable"], mode)
+                self.assertNotIn("graphify-out", policy["readonly"], mode)
+
+
 if __name__ == "__main__":
     unittest.main()
