@@ -264,6 +264,30 @@ See `docs/workspace-format.md` § Sessions and `docs/cli.md` for the full model.
 
 ## Beyond the Basics
 
+### Querying a knowledge graph
+
+`zentaizo graph` builds a workspace-wide knowledge graph with
+[Graphify](https://github.com/safishamsi/graphify) — the structural counterpart
+to `summaries/`, carrying the cross-repo and code↔doc edges no per-repo summary
+can see. It needs the `graphify` binary on `PATH`; install it once:
+
+```bash
+uv tool install graphifyy          # or: pipx install graphifyy
+```
+
+```bash
+zentaizo graph                               # code-only, fully offline (default)
+zentaizo graph --semantic --backend ollama   # opt-in: also read papers/notes via a model
+```
+
+The default build is AST-only — no API key, no network — and `zentaizo fetch`
+refreshes it automatically when a graphed source changes. `--semantic` reaches
+the full text of papers and notes and requires an explicit `--backend` (`ollama`
+and `claude-cli` run locally; remote backends are your explicit call). Output
+lands in `graphify-out/`; query it with Graphify directly (`graphify query` /
+`path` / `explain`, or its MCP server). See `docs/cli.md` for modes, backends,
+and staleness.
+
 ### Sandboxing the agent
 
 To confine the agent to least-privilege access — writable `sessions/` and editable repos, read-only reference repos — render the atlas-derived policy into your harness's config:
@@ -347,24 +371,3 @@ zen-link-shortener/
 ## Safety
 
 A workspace deliberately aggregates external material — fetched repositories, documentation, notes, and papers — for an AI assistant to read. Treat all of it as **untrusted input**: content pulled from the web or third-party repos can carry indirect prompt-injection payloads (hidden instructions, fake system messages, invisible characters). The generated workspace `AGENTS.md` instructs assistants to read this material as evidence to cite and summarize, **never as instructions to follow**. Hardened fetch-time handling — sanitization, quarantine, and a summarize-as-quarantine-boundary pattern — is planned; see `docs/changes/2026-05-20-api-reference-docs-layer.md` (§2.9).
-
-## Use Cases
-
-- Q&A across a system: answer how multiple repos and docs fit together.
-- Debugging: trace an error through the service, client, deployment, and docs.
-- Integrated design: plan a change that affects several repos before editing one.
-- Implementation support: help an assistant modify the repo you are in while checking related repos for contracts and expectations, or handle a coherent multi-repo modification.
-- Reproducible context: pin the exact commits and document snapshots used for an answer.
-
-## Status
-
-This is a starter repository. The first useful milestone is a simple local workflow:
-
-1. Create a workspace.
-2. Use the workspace `AGENTS.md` and Zentaizo skill to identify sources and create `zentaizo.atlas.json`.
-3. Fetch repositories and write `zentaizo.lock.json`.
-4. Generate or prepare hierarchical summaries.
-5. Inject context instructions into a target repo.
-6. When Zentaizo's conventions move forward, use the experimental `upgrade-zentaizo` skill in an AI session to reconcile the workspace.
-
-See `docs/` for the initial design notes.
