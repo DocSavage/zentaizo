@@ -3246,6 +3246,7 @@ class GraphTests(WorkspaceCliCase):
                 "summaries/",
                 "skills/",
                 "tmp/",
+                "graphify-out/",
                 "zentaizo.atlas.json",
                 "zentaizo.lock.json",
                 "docs/snapshots/*.flagged.*",
@@ -3346,6 +3347,24 @@ class GraphTests(WorkspaceCliCase):
             # Doc snapshots stay unreachable in 0.8.39 even under --semantic.
             self.assertIn("docs/api-docs", graph["not_graphed"])
 
+    def test_code_only_rebuild_drops_prior_semantic_backend_fields(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._graph_workspace(tmp)
+            self._install_stub(tmp)
+            self.assertEqual(
+                self._run(
+                    ["graph", str(workspace), "--semantic", "--backend", "ollama", "--model", "m1"]
+                )[0],
+                0,
+            )
+
+            code, _out, _err = self._run(["graph", str(workspace)])
+            self.assertEqual(code, 0)
+            graph = self._lock(workspace)["graph"]
+            self.assertEqual(graph["mode"], "code-only")
+            self.assertNotIn("semantic_backend", graph)
+            self.assertNotIn("semantic_model", graph)
+
     def test_flagged_doc_snapshot_is_excluded_and_listed(self):
         with tempfile.TemporaryDirectory() as tmp:
             workspace = self._graph_workspace(tmp)
@@ -3398,6 +3417,19 @@ class GraphTests(WorkspaceCliCase):
             lock["sources"]["repos"][0]["head"] = "bbbb"
             lock["sources"]["repos"][0]["commit"] = "bbbb"
             (workspace / "zentaizo.lock.json").write_text(json.dumps(lock))
+            _code, out, _err = self._run(["status", str(workspace)])
+            self.assertIn("stale: 1 source(s) changed", out)
+
+    def test_status_stale_when_graphed_source_removed_from_atlas(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._graph_workspace(tmp)
+            self._install_stub(tmp)
+            self.assertEqual(self._run(["graph", str(workspace)])[0], 0)
+
+            atlas = json.loads((workspace / "zentaizo.atlas.json").read_text())
+            atlas["sources"]["repos"] = []
+            (workspace / "zentaizo.atlas.json").write_text(json.dumps(atlas))
+
             _code, out, _err = self._run(["status", str(workspace)])
             self.assertIn("stale: 1 source(s) changed", out)
 

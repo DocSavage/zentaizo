@@ -2245,6 +2245,7 @@ sessions/
 summaries/
 skills/
 tmp/
+{GRAPH_OUTPUT_DIR}/
 .zentaizo/
 .claude/
 {ATLAS_NAME}
@@ -2408,7 +2409,8 @@ def _graph_staleness(workspace: pathlib.Path, config: dict, lock: dict | None) -
     ``graph`` block exists in the lock.
 
     A source is stale when its current locked rev differs from its
-    ``built_from`` entry or it is newly in the mode's input set; ``unfetched``
+    ``built_from`` entry, it is newly in the mode's input set, or a previously
+    recorded graphed source is no longer in that input set. ``unfetched``
     sources never drive staleness (Graphify's own cache detects their changes).
     """
     graph = (lock or {}).get("graph")
@@ -2423,6 +2425,7 @@ def _graph_staleness(workspace: pathlib.Path, config: dict, lock: dict | None) -
         for key, rev in current_built.items()
         if rev != UNFETCHED_REV and recorded.get(key) != rev
     )
+    stale.extend(sorted(key for key in recorded if key not in current_built))
     untracked = sorted(key for key, rev in current_built.items() if rev == UNFETCHED_REV)
     return {
         "graph": graph,
@@ -2441,6 +2444,8 @@ def _record_graph_build(
     not_graphed: dict[str, str],
     report_status: str,
     quarantine: str | None,
+    semantic_backend: str | None = None,
+    semantic_model: str | None = None,
 ) -> dict:
     """Write the ``graph`` block into ``lock`` (in memory) and return it."""
     graph_block = {
@@ -2453,10 +2458,11 @@ def _record_graph_build(
         "built_from": built_from,
         "not_graphed": not_graphed,
     }
-    prior = lock.get("graph") or {}
-    for key in ("semantic_backend", "semantic_model"):
-        if key in prior:
-            graph_block[key] = prior[key]
+    if mode == "semantic":
+        if semantic_backend:
+            graph_block["semantic_backend"] = semantic_backend
+        if semantic_model:
+            graph_block["semantic_model"] = semantic_model
     if quarantine:
         graph_block["report_quarantine"] = quarantine
     lock["graph"] = graph_block
@@ -2538,13 +2544,9 @@ def graph_workspace(args: argparse.Namespace) -> int:
         not_graphed=not_graphed,
         report_status=report_status,
         quarantine=quarantine,
+        semantic_backend=backend if semantic else None,
+        semantic_model=model if semantic else None,
     )
-    if semantic:
-        graph_block["semantic_backend"] = backend
-        if model:
-            graph_block["semantic_model"] = model
-        else:
-            graph_block.pop("semantic_model", None)
     write_json(workspace / LOCK_NAME, lock)
 
     print(
@@ -2608,6 +2610,12 @@ def _auto_refresh_graph(workspace: pathlib.Path, config: dict, lock: dict) -> No
             not_graphed=not_graphed,
             report_status=report_status,
             quarantine=quarantine,
+            semantic_backend=(
+                graph.get("semantic_backend") if graph.get("mode") == "semantic" else None
+            ),
+            semantic_model=(
+                graph.get("semantic_model") if graph.get("mode") == "semantic" else None
+            ),
         )
         write_json(workspace / LOCK_NAME, lock)
         print("graph: refreshed")
