@@ -1163,10 +1163,11 @@ packages:
   requires_python: '>=3.8'
 - pypi: ./
   name: zentaizo
-  version: 0.1.0
-  sha256: 946e333b0abf7ed32f1144c1bf9553cf23d5420f3d78eb82f0d240f16f7e0238
+  version: 0.8.0
+  sha256: c5b92cd7bec5dcda489c96694243387b9ef12902b5edd34172e2ae84ac76ee72
   requires_dist:
   - llm-guard>=0.3.16 ; extra == 'docs-scan'
+  - graphifyy>=0.8.39 ; extra == 'graph'
   - ruff>=0.6 ; extra == 'dev'
   - pre-commit>=3.7 ; extra == 'dev'
   - build>=1.2 ; extra == 'dev'

@@ -186,6 +186,10 @@ The agent then writes one summary per source plus three cross-cutting files —
 `open-questions.md` (gaps and assumptions) — which future sessions read
 *before* any source code.
 
+`zentaizo graph` builds the structural counterpart: a queryable cross-source
+knowledge graph via [Graphify](https://github.com/safishamsi/graphify)
+(optional; code-only and offline by default — see `docs/cli.md`).
+
 ### 5 · Work — in the workspace or from a target repo
 
 The built context can be used two ways. Work *inside* the workspace, grouped
@@ -327,6 +331,7 @@ zen-link-shortener/
   papers/                   # PDFs and specs
   notes/                    # issue reports, traces, design notes
   summaries/                # generated hierarchical summaries
+  graphify-out/             # optional knowledge graph (written by `zentaizo graph`)
   skills/                   # model-agnostic procedures and session templates
   sessions/
     efforts.json            # effort registry: labels, numbers, current pointer, repo/branch map

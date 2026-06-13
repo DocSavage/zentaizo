@@ -189,10 +189,11 @@ A workspace organizes knowledge as a level-of-detail spine — start at `summari
 
   repos/                    # fetched source repositories (deepest detail)
   docs/                     # upstream-authored docs: API references, guides, specs
-    snapshots/              #   fetched doc-site / spec snapshots (gitignored)
+    snapshots/              #   fetched doc-site / spec snapshots (committed; flagged ones stay out)
   papers/                   # PDFs and specs (design rationale)
   notes/                    # issue reports, traces, local design notes
   summaries/                # generated hierarchical summaries (start here)
+  graphify-out/             # optional knowledge graph (written by `zentaizo graph`)
   skills/                   # model-agnostic procedures and session templates
   sessions/
     efforts.json            # effort registry: labels, current pointer, repo/branch map
@@ -248,6 +249,8 @@ zentaizo summarize
 ```
 
 This writes a prompt under `summaries/`. Hand the prompt back to your AI to populate `summaries/overview.md`, `summaries/sources/`, and `summaries/relationships.md`. The command is **incremental**: each `summaries/sources/<name>.md` records the locked `source_rev` it was made from, so re-running only asks for sources that are new or changed and keeps the rest. Pass `--force` to regenerate everything, or `--focus "<text>"` to bias the prompt toward a specific concern.
+
+Optionally, build the structural counterpart with `zentaizo graph` — a queryable cross-source knowledge graph (requires the `graphify` CLI; code-only and offline by default). Agents then answer relationship questions with `graphify query` instead of re-scanning sources.
 
 ### 5. Plan and implement changes
 

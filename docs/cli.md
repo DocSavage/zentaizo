@@ -66,16 +66,18 @@ Checks that `zentaizo.atlas.json` exists and has the required shape. It also run
 zentaizo status [PATH]
 ```
 
-Shows source counts (split by role: edit vs reference) and the lock status. For each repo it inspects the working tree: edit repos report the current branch and whether they are at the locked SHA or have diverged; reference repos flag drift between HEAD and the locked SHA. When an edit repo is clean and behind its upstream, `status` prints the rebase command. If the atlas is missing, shows the setup prompt instead of failing.
+Shows source counts (split by role: edit vs reference) and the lock status. For each repo it inspects the working tree: edit repos report the current branch and whether they are at the locked SHA or have diverged; reference repos flag drift between HEAD and the locked SHA. When an edit repo is clean and behind its upstream, `status` prints the rebase command. Also prints one knowledge-graph line (`graph: not built` / `current` / `stale` — see `zentaizo graph`). If the atlas is missing, shows the setup prompt instead of failing.
 
 ```bash
-zentaizo fetch [PATH] [--rebase]
+zentaizo fetch [PATH] [--rebase] [--no-graph]
 ```
 
 Fetches repositories listed in `zentaizo.atlas.json` and records resolved commits in `zentaizo.lock.json`. Behavior depends on each repo's `role`:
 
 - `role: "reference"` — re-resolves the pin (`ref`), checks it out, refuses to overwrite a dirty working tree.
 - `role: "edit"` — clones and checks out `ref` on first fetch only; on subsequent fetches refreshes remotes (`git fetch --tags --prune`) but leaves HEAD and the working tree alone. If the tree is clean and HEAD is behind the freshly-resolved upstream, `fetch` prints the exact rebase command. `--rebase` runs the rebase for every clean+behind edit repo.
+
+When the lock records a graph (see `zentaizo graph`) and a graphed source's rev changed, `fetch` also refreshes the knowledge graph best-effort — code-only (AST, offline, no model API), never failing the fetch. `--no-graph` skips it; if `graphify` is missing the fallback is a printed stale hint.
 
 ```bash
 zentaizo fetch-docs [PATH]
@@ -105,6 +107,21 @@ zentaizo summarize [PATH] [--force|--all] [--focus TEXT]
 ```
 
 Writes a prompt for hierarchical summarization. **Incremental:** each `summaries/sources/<name>.md` carries a `source_rev` frontmatter line pinning it to the source's locked identity (repo `commit`/`head`, doc `content_hash`); the command diffs that against `zentaizo.lock.json` and asks only for sources that are new or changed, keeping the rest. Legacy summaries without `source_rev` fall back to a timestamp check (source `fetched_at` vs the summary's git/mtime). Flagged doc snapshots are surfaced for review rather than summarized. `--force`/`--all` regenerates everything; `--focus TEXT` adds a per-run framing emphasis. A later version can run a configured LLM directly.
+
+```bash
+zentaizo graph [PATH] [--semantic --backend NAME [--model NAME]] [--force] [--no-deep-scan]
+```
+
+Builds (or incrementally refreshes) a workspace-wide knowledge graph with [Graphify](https://github.com/safishamsi/graphify) — the structural counterpart to `summaries/`: one graph over `repos/`, `papers/`, and `notes/` whose cross-repo and code↔doc edges no per-repo run can see. The `graphify` binary must already be on `PATH` (`uv tool install graphifyy`, or `pip install "zentaizo[graph]"`); the command never installs it, and Graphify's query surface (`graphify query` / `path` / `explain`, MCP) is used directly, never wrapped.
+
+Two modes:
+
+- **Default — code-only, fully offline.** AST extraction (`graphify update`): no key, no network. Markdown gets shallow structural nodes (file + headings) on the same pass.
+- **`--semantic` — opt-in full-corpus extraction** of papers and notes through a model API. Requires an explicit `--backend` (`ollama` is fully local, `claude-cli` uses the local Claude Code CLI with no key; remote backends are your explicit call) — `--semantic` without `--backend` is an error, never key auto-detection. The backend (and `--model`, if given) is recorded in the lock.
+
+Mechanics: the command writes a managed `.graphifyignore` at the workspace root (marker comment, regenerated per build; a user-owned file without the marker is refused) that scopes Graphify to the source trees — Graphify reads it *instead of* the workspace `.gitignore`, which is what makes the gitignored `repos/` graphable. Output lands in upstream-fixed `graphify-out/` and is committed except `cost.json` and `cache/stat-index.json`. `GRAPH_REPORT.md` goes through the same safety pass as fetched docs; a flagged report is moved aside to `GRAPH_REPORT.flagged.md` (nothing left in place) and recorded as `report_status: flagged`. The lock gains a `graph` block — mode, backend version, and a mode-scoped `built_from` (each graphed source's locked identity) plus `not_graphed` (excluded sources mapped to reasons). Known upstream limit (graphifyy 0.8.39): any directory named `snapshots` is skip-listed, so `docs/snapshots/` cannot be graphed in either mode and is always listed under `not_graphed`.
+
+`zentaizo status` reports the graph line (`not built` / `current` / `stale: N source(s) changed`), counting `not_graphed` sources and surfacing a flagged report; staleness is a pure lock diff scoped to the recorded mode, so a doc hash change never stales a code-only graph. `--force` passes Graphify's own `--force` (from-scratch rebuild; covers a shrinking graph).
 
 ```bash
 zentaizo provide-info TARGET [PATH]

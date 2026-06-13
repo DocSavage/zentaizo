@@ -14,6 +14,8 @@ my-system-atlas/
   papers/
   notes/
   summaries/
+  graphify-out/             # derived knowledge graph (written by `zentaizo graph`)
+  .graphifyignore           # managed graph-scoping file (regenerated per build)
   sessions/
     efforts.json            # effort registry (seeded with numbered `main`)
     efforts/                # effort-level plan docs
@@ -117,6 +119,8 @@ For docs and papers, future versions should record:
 - fetch time
 - conversion metadata, if HTML or PDF was converted for summarization
 
+After `zentaizo graph` runs, the lock also carries a top-level `graph` block: the backend (`graphify`) and its version, the build `mode` (`code-only` or `semantic`, plus `semantic_backend`/`semantic_model` for the latter), `built_from` (each graphed source mapped to the locked identity it was built from), `not_graphed` (excluded sources mapped to reasons), and the safety verdict for `GRAPH_REPORT.md` (`report_status`). Staleness is a pure diff of `built_from` against the current lock, scoped to the recorded mode.
+
 ## Summaries
 
 Summaries should form a level-of-detail hierarchy:
@@ -133,6 +137,37 @@ summaries/
 ```
 
 The assistant should read summaries before scanning source code.
+
+## Graph
+
+`graphify-out/` is the structural counterpart to `summaries/`: a queryable
+knowledge graph over the whole workspace, built by `zentaizo graph` with
+[Graphify](https://github.com/safishamsi/graphify) (optional tier — the
+workspace works without it). Summaries are the prose level-of-detail spine;
+the graph answers structural questions (`graphify query` / `path` /
+`explain`), especially cross-repo relationships.
+
+```text
+graphify-out/
+  graph.json              # committed — machine-derived, like the lock
+  GRAPH_REPORT.md         # committed — markdown context, like a summary
+  graph.html              # committed — interactive visualization
+  manifest.json           # committed — portable; spares a fresh clone a full rebuild
+  cache/                  # committed — extraction cache (no raw source chunks)
+  cache/stat-index.json   # gitignored — machine-local stat memo
+  cost.json               # gitignored — local-only run costs
+```
+
+The default build is code-only and fully offline; `zentaizo graph --semantic
+--backend …` opts into model-API extraction of papers and notes. The managed
+`.graphifyignore` at the workspace root scopes Graphify to the source trees
+(it replaces the workspace `.gitignore` in Graphify's walk, which is what
+makes the gitignored `repos/` graphable); it is deterministic output,
+committed like the lock, and regenerated on every build. A flagged
+`GRAPH_REPORT.md` is quarantined as `GRAPH_REPORT.flagged.md` — absence of
+the report *is* the quarantine. Provenance and staleness live in the lock's
+`graph` block (see above); `zentaizo status` reports them, and `zentaizo
+fetch` keeps the code side of the graph fresh best-effort.
 
 ## Sessions
 

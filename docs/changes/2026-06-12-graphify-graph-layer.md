@@ -1,6 +1,6 @@
 ---
 created: 2026-06-12
-status: proposed
+status: implemented
 edited_by:
   - 2026-06-12  Claude Fable 5
   - 2026-06-12  Codex (review)
@@ -10,6 +10,7 @@ edited_by:
   - 2026-06-12  Codex (review, 3rd pass)
   - 2026-06-12  Claude Fable 5
   - 2026-06-12  Claude Fable 5 (step-1 verification against graphifyy 0.8.39)
+  - 2026-06-12  Claude Fable 5 (implementation: build-order steps 2-8)
 ---
 
 # Graphify as a workspace knowledge-graph layer (`zentaizo graph`)
@@ -63,6 +64,15 @@ records only what Graphify actually read, with semantic-only sources in a
 `--semantic` now requires an explicit `--backend` (recorded in the lock)
 instead of riding key auto-detection; the sandbox build-order step gains the
 managed `.graphifyignore`; and the plan carries a named test plan._
+
+_Implemented 2026-06-12 (build-order steps 2–8, same session as the step-1
+pass): `zentaizo graph`, the status line, fetch auto-refresh with
+`--no-graph`, the `workspace_agents()` bullet and `.gitignore` template
+changes, doc updates, and the sandbox writable set — all tested against a
+stub `graphify` per the test plan (19 cases), `pixi run check` green. Step 8
+(convention bump for existing workspaces) rides the existing
+`upgrade-zentaizo` skill path with no code change, per the no-`zentaizo
+update` policy._
 
 _Step-1 verification 2026-06-12, against **graphifyy 0.8.39** (installed via
 pipx; version floor for the extra). All five gated questions answered — see
@@ -422,7 +432,7 @@ after a successful build:
   "built_from": {
     "repos/shortener-api": "9f3a1c4e7b…",
     "repos/deployment": "2c61d0aa00…",
-    "notes": "unfetched"
+    "notes/design-notes": "unfetched"
   },
   "not_graphed": {
     "docs/api-docs": "skipped by graphify (snapshots dir)",
