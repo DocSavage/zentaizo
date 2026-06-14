@@ -3242,7 +3242,10 @@ class GraphTests(WorkspaceCliCase):
             text = ignore.read_text()
             self.assertIn("Managed by `zentaizo graph`", text)
             for line in (
-                "sessions/",
+                "sessions/efforts/",
+                "sessions/changes/",
+                "sessions/debugging/",
+                "sessions/handoffs/",
                 "summaries/",
                 "skills/",
                 "tmp/",
@@ -3252,6 +3255,15 @@ class GraphTests(WorkspaceCliCase):
                 "docs/snapshots/*.flagged.*",
             ):
                 self.assertIn(line, text)
+            # Only the process trail is excluded; durable session docs
+            # (brainstorming/questions/reports) stay graphable.
+            self.assertNotIn("sessions/\n", text)
+            for graphable in (
+                "sessions/brainstorming/",
+                "sessions/questions/",
+                "sessions/reports/",
+            ):
+                self.assertNotIn(graphable, text)
             # The replacement-not-overlay rule: no negation needed for repos/.
             self.assertNotIn("!repos", text)
             # Regenerated in place, not duplicated.

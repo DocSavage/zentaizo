@@ -2239,9 +2239,14 @@ NOT_GRAPHED_UNFETCHED = "not fetched (run 'zentaizo fetch')"
 # excluded if upstream ever makes snapshots reachable.
 GRAPHIFYIGNORE_TEXT = f"""\
 {GRAPHIFYIGNORE_MARKER} Do not edit; regenerated on every build.
-# Scope: graph the source trees (repos/, docs/, papers/, notes/), never the
-# workspace process trail or Zentaizo-owned metadata.
-sessions/
+# Scope: graph the source trees (repos/, docs/, papers/, notes/) and the durable
+# session docs (brainstorming/, questions/, reports/); never the process trail
+# (efforts/, changes/, debugging/, handoffs/) or Zentaizo-owned metadata.
+sessions/efforts/
+sessions/changes/
+sessions/debugging/
+sessions/handoffs/
+sessions/efforts.json
 summaries/
 skills/
 tmp/
