@@ -402,7 +402,7 @@ Use `tmp/` as a workspace-local scratch directory. It's under `.gitignore` and i
 
 Commit at verified milestones. The Zentaizo-specific rule: **commit workspace notes/plans separately from editable-repo code** — they live in different repositories, so keeping them apart preserves a clean lineage.
 
-If your harness emits a `Co-authored-by:` trailer, it should carry the real model + reasoning effort used, not a hardcoded value (the bundled commit-attribution hook does this automatically when installed — the same identity that lands in `edited_by`; see § Editor attribution).
+For AI-authored commits, run `zentaizo commit-trailer` and paste the printed `Co-authored-by:` line into the commit body you are already writing. It carries the real model + reasoning effort used, works without a per-repo hook (including vendored editable repos), and fails loudly if attribution cannot be resolved. The bundled commit-attribution hook remains a best-effort backstop when installed.
 
 The effort doc carries only `created` + `edited_by` frontmatter; the registry owns `number`, `status`, and repo branch/base state. Slice files use the status-frontmatter schema (`status`/`created`/`label`/`editable_repos`/`edited_by` plus the optional `related` field), the `## Plan`/`## Outcome` body sections, and the acceptance-checkbox closeout rule documented in `skills/plan-and-implement.md` and scaffolded by `skills/plan-template.md`. The CLI fills `status`/`created`/`label` and stamps the first `edited_by:` entry (see § Editor attribution); you fill `editable_repos` (the subset of the effort's repos this slice touches) and the body. Each repo's branch and divergence base live in the effort registry (`sessions/efforts.json`), not in the plan frontmatter. Follow the skill/template rather than reproducing the schema here.
 
@@ -614,6 +614,69 @@ def _with_effort(model: str, effort: str) -> str:
     if model.rstrip().endswith(")"):
         return re.sub(r"\)\s*$", f", reasoning {effort})", model)
     return f"{model} (reasoning {effort})"
+
+
+def _format_commit_trailer(provider: str, model: str, effort: str) -> str:
+    """Format the canonical AI ``Co-authored-by`` trailer for a provider."""
+    if provider == "claude":
+        return f"Co-authored-by: Claude {_with_effort(model, effort)} <noreply@anthropic.com>"
+    if provider == "codex":
+        return f"Co-authored-by: Codex {model} (reasoning {effort}) <noreply@openai.com>"
+    raise ValueError(f"unknown commit-trailer provider: {provider}")
+
+
+def _resolve_commit_trailer_identity(provider: str) -> tuple[str, str, str]:
+    """Return (model, effort, error) for a commit trailer provider."""
+    if provider == "claude":
+        model, effort = _read_trailer_cache("claude", os.environ.get("CLAUDE_CODE_SESSION_ID"))
+        if not effort:
+            effort = os.environ.get("CLAUDE_EFFORT", "")
+        if not model:
+            return "", "", "no cached Claude model identity"
+        return model, effort, ""
+
+    if provider == "codex":
+        model, effort = _read_trailer_cache("codex", os.environ.get("CODEX_THREAD_ID"))
+        if not (model and effort):
+            config_model, config_effort = _read_codex_commit_trailer_config()
+            if config_model and config_effort:
+                model, effort = config_model, config_effort
+                _write_trailer_cache("codex", model, effort, os.environ.get("CODEX_THREAD_ID"))
+        if not model:
+            return "", "", "no cached Codex model identity"
+        if not effort:
+            return "", "", "no cached Codex reasoning effort"
+        return model, effort, ""
+
+    return "", "", "unknown provider"
+
+
+def commit_trailer(args: argparse.Namespace) -> int:
+    """Print the current assistant's canonical commit attribution trailer."""
+    if getattr(args, "claude", False):
+        provider = "claude"
+    elif getattr(args, "codex", False):
+        provider = "codex"
+    elif os.environ.get("CLAUDECODE"):
+        provider = "claude"
+    elif os.environ.get("CODEX_THREAD_ID"):
+        provider = "codex"
+    else:
+        raise CliError(
+            "commit-trailer: no AI provider detected (run inside a Claude/Codex "
+            "session or pass --claude/--codex)",
+            code=1,
+        )
+
+    model, effort, error = _resolve_commit_trailer_identity(provider)
+    if error:
+        raise CliError(
+            f"commit-trailer: {error} (run inside a Claude/Codex session, or "
+            "'cache-commit-trailer' first)",
+            code=1,
+        )
+    print(_format_commit_trailer(provider, model, effort))
+    return 0
 
 
 def _claude_editor_identity() -> str:
@@ -4540,6 +4603,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="read Codex config and cache its model + reasoning effort",
     )
     cache_trailer.set_defaults(func=cache_commit_trailer)
+
+    commit_trailer_cmd = sub.add_parser(
+        "commit-trailer",
+        help="print the current assistant's canonical Co-authored-by trailer",
+    )
+    commit_provider = commit_trailer_cmd.add_mutually_exclusive_group()
+    commit_provider.add_argument(
+        "--claude",
+        action="store_true",
+        help="resolve the trailer from the Claude cache, even outside Claude Code",
+    )
+    commit_provider.add_argument(
+        "--codex",
+        action="store_true",
+        help="resolve the trailer from the Codex cache/config, even outside Codex",
+    )
+    commit_trailer_cmd.set_defaults(func=commit_trailer)
 
     edited = sub.add_parser(
         "edited",

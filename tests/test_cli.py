@@ -2557,6 +2557,29 @@ class CommitAttributionHookTests(unittest.TestCase):
             [sys.executable, self._hook_path(), str(msg), source], cwd=str(repo), env=clean
         )
 
+    def _run_commit_trailer(self, argv=None, env=None) -> tuple[int, str, str]:
+        clean = dict(os.environ)
+        for key in (
+            "CLAUDECODE",
+            "CLAUDE_CODE_SESSION_ID",
+            "CLAUDE_EFFORT",
+            "CODEX_THREAD_ID",
+            "CODEX_HOME",
+            "XDG_CACHE_HOME",
+        ):
+            clean.pop(key, None)
+        if env:
+            clean.update(env)
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with (
+            mock.patch.dict(os.environ, clean, clear=True),
+            contextlib.redirect_stdout(stdout),
+            contextlib.redirect_stderr(stderr),
+        ):
+            code = main(["commit-trailer", *(argv or [])])
+        return code, stdout.getvalue(), stderr.getvalue()
+
     # --- installer -----------------------------------------------------------
 
     def test_installer_installs_and_is_idempotent(self):
@@ -2590,7 +2613,7 @@ class CommitAttributionHookTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             self.assertIsNone(install_commit_attribution_hook(Path(tmp)))
 
-    # --- hook behavior (needs jq + git) -------------------------------------
+    # --- hook behavior (needs git) ------------------------------------------
 
     @unittest.skipUnless(_HAVE_GIT, "test needs git")
     def test_hook_inserts_claude_trailer(self):
@@ -2847,6 +2870,211 @@ class CommitAttributionHookTests(unittest.TestCase):
             ):
                 self.assertEqual(main(["cache-commit-trailer", "--codex"]), 0)
             self.assertFalse((Path(tmp) / "codex").exists())
+
+    # --- reader: `commit-trailer` -------------------------------------------
+
+    def test_commit_trailer_claude_reads_session_cache(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp) / "cache" / "claude" / "commit-trailer"
+            cache.mkdir(parents=True)
+            (cache / "sid.json").write_text(
+                json.dumps({"model": "Opus 4.8 (1M context)", "effort": "xhigh"})
+            )
+            code, stdout, stderr = self._run_commit_trailer(
+                env={
+                    "XDG_CACHE_HOME": str(Path(tmp) / "cache"),
+                    "CLAUDECODE": "1",
+                    "CLAUDE_CODE_SESSION_ID": "sid",
+                }
+            )
+            self.assertEqual(code, 0)
+            self.assertEqual(stderr, "")
+            self.assertEqual(
+                stdout,
+                "Co-authored-by: Claude Opus 4.8 (1M context, reasoning xhigh) "
+                "<noreply@anthropic.com>\n",
+            )
+
+    def test_commit_trailer_codex_reads_session_cache(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp) / "cache" / "codex" / "commit-trailer"
+            cache.mkdir(parents=True)
+            (cache / "thread-abc.json").write_text(
+                json.dumps({"provider": "codex", "model": "gpt-5.5", "effort": "xhigh"})
+            )
+            codex_home = Path(tmp) / "codex-home"
+            codex_home.mkdir()
+            code, stdout, stderr = self._run_commit_trailer(
+                env={
+                    "XDG_CACHE_HOME": str(Path(tmp) / "cache"),
+                    "CODEX_THREAD_ID": "thread/../abc",
+                    "CODEX_HOME": str(codex_home),
+                }
+            )
+            self.assertEqual(code, 0)
+            self.assertEqual(stderr, "")
+            self.assertEqual(
+                stdout,
+                "Co-authored-by: Codex gpt-5.5 (reasoning xhigh) <noreply@openai.com>\n",
+            )
+
+    def test_commit_trailer_uses_latest_cache_fallback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp) / "cache" / "claude" / "commit-trailer"
+            cache.mkdir(parents=True)
+            (cache / "latest.json").write_text(
+                json.dumps({"model": "Opus 4.8 (1M context)", "effort": "xhigh"})
+            )
+            code, stdout, stderr = self._run_commit_trailer(
+                env={
+                    "XDG_CACHE_HOME": str(Path(tmp) / "cache"),
+                    "CLAUDECODE": "1",
+                    "CLAUDE_CODE_SESSION_ID": "missing",
+                }
+            )
+            self.assertEqual(code, 0)
+            self.assertEqual(stderr, "")
+            self.assertIn("Co-authored-by: Claude Opus 4.8", stdout)
+
+    def test_commit_trailer_fails_loudly_when_cache_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            code, stdout, stderr = self._run_commit_trailer(
+                env={
+                    "XDG_CACHE_HOME": str(Path(tmp) / "empty-cache"),
+                    "CLAUDECODE": "1",
+                    "CLAUDE_CODE_SESSION_ID": "sid",
+                }
+            )
+            self.assertEqual(code, 1)
+            self.assertEqual(stdout, "")
+            self.assertIn("commit-trailer: no cached Claude model identity", stderr)
+
+    def test_commit_trailer_rejects_incomplete_codex_identity(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp) / "cache" / "codex" / "commit-trailer"
+            cache.mkdir(parents=True)
+            (cache / "thread-abc.json").write_text(
+                json.dumps({"provider": "codex", "model": "gpt-5.5"})
+            )
+            codex_home = Path(tmp) / "codex-home"
+            codex_home.mkdir()
+            code, stdout, stderr = self._run_commit_trailer(
+                env={
+                    "XDG_CACHE_HOME": str(Path(tmp) / "cache"),
+                    "CODEX_THREAD_ID": "thread/../abc",
+                    "CODEX_HOME": str(codex_home),
+                }
+            )
+            self.assertEqual(code, 1)
+            self.assertEqual(stdout, "")
+            self.assertIn("commit-trailer: no cached Codex reasoning effort", stderr)
+
+    def test_commit_trailer_fails_loudly_without_provider(self):
+        code, stdout, stderr = self._run_commit_trailer()
+        self.assertEqual(code, 1)
+        self.assertEqual(stdout, "")
+        self.assertIn("commit-trailer: no AI provider detected", stderr)
+
+    def test_commit_trailer_provider_overrides_detection(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp) / "cache" / "claude" / "commit-trailer"
+            cache.mkdir(parents=True)
+            (cache / "latest.json").write_text(json.dumps({"model": "Opus 4.8"}))
+            code, stdout, stderr = self._run_commit_trailer(
+                ["--claude"],
+                env={
+                    "XDG_CACHE_HOME": str(Path(tmp) / "cache"),
+                    "CODEX_THREAD_ID": "thread-abc",
+                },
+            )
+            self.assertEqual(code, 0)
+            self.assertEqual(stderr, "")
+            self.assertEqual(stdout, "Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>\n")
+
+    def test_commit_trailer_codex_override_can_use_config_outside_ai_env(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            codex_home = Path(tmp) / "codex-home"
+            codex_home.mkdir()
+            (codex_home / "config.toml").write_text(
+                'model = "gpt-5.5"\nmodel_reasoning_effort = "xhigh"\n'
+            )
+            cache_home = Path(tmp) / "cache"
+            code, stdout, stderr = self._run_commit_trailer(
+                ["--codex"],
+                env={"CODEX_HOME": str(codex_home), "XDG_CACHE_HOME": str(cache_home)},
+            )
+            self.assertEqual(code, 0)
+            self.assertEqual(stderr, "")
+            self.assertEqual(
+                stdout,
+                "Co-authored-by: Codex gpt-5.5 (reasoning xhigh) <noreply@openai.com>\n",
+            )
+            self.assertTrue((cache_home / "codex" / "commit-trailer" / "latest.json").exists())
+
+    @unittest.skipUnless(_HAVE_GIT, "test needs git")
+    def test_commit_trailer_matches_hook_format(self):
+        cases = [
+            (
+                "claude",
+                "sid.json",
+                {"model": "Opus 4.8 (1M context)", "effort": "xhigh"},
+                {"CLAUDECODE": "1", "CLAUDE_CODE_SESSION_ID": "sid"},
+                [],
+            ),
+            (
+                "codex",
+                "thread-abc.json",
+                {"provider": "codex", "model": "gpt-5.5", "effort": "xhigh"},
+                {"CODEX_THREAD_ID": "thread/../abc"},
+                [],
+            ),
+        ]
+        for provider, filename, payload, env, argv in cases:
+            with self.subTest(provider=provider), tempfile.TemporaryDirectory() as tmp:
+                repo = self._git_repo(tmp)
+                cache = Path(tmp) / "cache" / provider / "commit-trailer"
+                cache.mkdir(parents=True)
+                (cache / filename).write_text(json.dumps(payload))
+                clean_env = {"XDG_CACHE_HOME": str(Path(tmp) / "cache"), **env}
+                if provider == "codex":
+                    codex_home = Path(tmp) / "codex-home"
+                    codex_home.mkdir()
+                    clean_env["CODEX_HOME"] = str(codex_home)
+                code, stdout, stderr = self._run_commit_trailer(argv, env=clean_env)
+                self.assertEqual(code, 0)
+                self.assertEqual(stderr, "")
+                msg = Path(tmp) / "MSG"
+                msg.write_text("subject\n")
+                res = self._run_hook(repo, msg, env=clean_env)
+                self.assertEqual(res.returncode, 0)
+                trailers = [
+                    line
+                    for line in msg.read_text().splitlines()
+                    if line.startswith("Co-authored-by:")
+                ]
+                self.assertEqual(trailers, [stdout.strip()])
+
+    @unittest.skipUnless(_HAVE_GIT, "test needs git")
+    def test_commit_trailer_pasted_line_keeps_hook_idempotent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._git_repo(tmp)
+            cache = Path(tmp) / "cache" / "claude" / "commit-trailer"
+            cache.mkdir(parents=True)
+            (cache / "sid.json").write_text(
+                json.dumps({"model": "Opus 4.8 (1M context)", "effort": "xhigh"})
+            )
+            env = {
+                "XDG_CACHE_HOME": str(Path(tmp) / "cache"),
+                "CLAUDECODE": "1",
+                "CLAUDE_CODE_SESSION_ID": "sid",
+            }
+            code, stdout, stderr = self._run_commit_trailer(env=env)
+            self.assertEqual(code, 0)
+            self.assertEqual(stderr, "")
+            msg = Path(tmp) / "MSG"
+            msg.write_text(f"subject\n\n{stdout}")
+            self._run_hook(repo, msg, env=env)
+            self.assertEqual(msg.read_text().lower().count("co-authored-by: claude"), 1)
 
     def test_codex_editor_identity_prefers_cache(self):
         with tempfile.TemporaryDirectory() as tmp:

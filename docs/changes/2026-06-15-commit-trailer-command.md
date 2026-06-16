@@ -1,6 +1,7 @@
 ---
 created: 2026-06-15
-status: planned
+status: implemented
+implemented: 2026-06-16
 edited_by:
   - 2026-06-15  Claude Opus 4.8 (1M context, reasoning xhigh)
   - 2026-06-16  Codex gpt-5.5 (reasoning xhigh)
@@ -244,3 +245,16 @@ The surest way an agent calls the command is the generated guidance, not
   paste the trailer).
 - A `--format git-standard` variant.
 - Changing the producer (`cache-commit-trailer`) or the cache schema.
+
+## Outcome
+
+Implemented 2026-06-16 after the design-doc commit `28d5d13`.
+
+- Added `zentaizo commit-trailer [--claude | --codex]` as a fail-loud stdout
+  reader of the existing trailer cache, with Codex config fallback and
+  provider-specific validity matching the hook.
+- Kept the installed `prepare-commit-msg` hook self-contained, and added
+  format-lock/idempotency tests so the hook and command cannot drift silently.
+- Updated generated workspace commit guidance, `docs/cli.md`, and
+  `plan-and-implement.md` so agents call the command and paste the trailer.
+- Verification: `pixi run check` passed.

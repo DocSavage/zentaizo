@@ -130,6 +130,12 @@ zentaizo provide-info TARGET [PATH]
 Adds a Zentaizo reference block to `TARGET/AGENTS.md` so an assistant working in that repository knows where to look.
 
 ```bash
+zentaizo commit-trailer [--claude | --codex]
+```
+
+Prints the current AI assistant's canonical `Co-authored-by:` trailer to stdout so it can be pasted into a commit body. Provider detection uses the active assistant environment (`CLAUDECODE`, then `CODEX_THREAD_ID`); `--claude` or `--codex` forces a provider, including from a non-AI shell or CI job that has the provider cache/config available. The command reads the same commit-trailer cache used by the bundled `prepare-commit-msg` hook and by `zentaizo edited`; Codex can fall back to local Codex config and populate the cache when it is missing. Unlike the hook, this command fails loudly with no stdout and a stderr reason when attribution cannot be resolved. It does not fall back to `git config user.name`.
+
+```bash
 zentaizo edited PATH [--as IDENTITY]
 ```
 

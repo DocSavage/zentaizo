@@ -89,7 +89,7 @@ When the work ships (or is abandoned):
    - **Links** — PRs, generated artifacts, related debugging or Q&A files.
 2. Set the frontmatter to `status: done` (or `abandoned`), and run `zentaizo edited <plan>` to log the closing edit.
 3. Review the `### Acceptance criteria` checklist. Mark each fulfilled item as `[x]`; leave unmet or only partially met items as `[ ]` and explain them under **Deviations from the plan** or **Follow-up work**.
-4. Show the user the final plan file. Ask whether to commit it alongside the code changes. Workspace plan commits and editable-repo code commits go to different repositories — see `AGENTS.md` § Commits.
+4. Show the user the final plan file. Ask whether to commit it alongside the code changes. Workspace plan commits and editable-repo code commits go to different repositories — see `AGENTS.md` § Commits. For AI-authored commits, run `zentaizo commit-trailer` and paste the printed `Co-authored-by:` line into the commit body.
 
 ## Boundaries — what this procedure does NOT do
 
