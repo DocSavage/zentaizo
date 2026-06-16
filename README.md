@@ -35,7 +35,8 @@ The goals the workspace format serves. The **Mechanisms** below each note which 
 How the workspace realizes those ideas; each tag points back to the Core Idea(s) it serves.
 
 - **Curated atlas** (`zentaizo.atlas.json`) — human-authored intent: the curated knowledge context, distinct from the machine-resolved lock state (`zentaizo.lock.json`). *(1, 2)*
-- **Hierarchical knowledge base** — summaries at different scales, from system overview to APIs to source, drilling down only when needed. *(1, 4)*
+- **Hierarchical knowledge base** — summaries at different scales, from system overview to APIs to source, drilling down only when needed; the queryable knowledge graph below is its structural counterpart. *(1, 4)*
+- **Queryable knowledge graph** (`zentaizo graph`, optional) — a cross-source graph of code↔code and code↔doc edges built with [Graphify](https://github.com/safishamsi/graphify), surfacing structural relationships no single per-source summary can see. It is the first of several *optional layers* a workspace can add through external-tool modules — each an opt-in tier, never a hard dependency, that falls back to reference-only when the tool is absent. *(1, 4)*
 - **Heterogeneous sources** — repos, docs, papers, notes, issue reports, and generated analysis in one place. *(1)*
 - **Multi-repo sandbox** — all associated repos available locally for agentic work, like a monorepo for coherent cross-system development; each repo marked read-only (`role: "reference"`) or editable (`role: "edit"`). It brings the full picture of code to bear (1), provides that code as persistent, version-pinned context (2), and removes failable web searches against drifting versions by making the exact source local (3); and that same read-only/editable marking *is* the access policy a sandbox enforces, so an agent can run at the workspace level with reference repos genuinely read-only (6). *(1, 2, 3, 6)*
 - **Pinned sources** — repos and document snapshots resolve to exact commits and content hashes (`zentaizo.lock.json`). *(2, 3)*
@@ -79,8 +80,47 @@ workspace workflow and conventions:
 zentaizo skills install --target claude  # or codex, gemini, all
 ```
 
-(Working on Zentaizo itself uses a pixi dev env — see
-[Developing](#developing).)
+### Developing Zentaizo itself
+
+Working on the Zentaizo tool (rather than using it) uses an editable install in
+a pixi dev env:
+
+```bash
+pixi install                # bootstrap dev env
+pixi run zentaizo --help
+pixi run check              # ruff lint + tests
+pixi run hooks-install      # one-time: enable pre-commit on `git commit`
+```
+
+Release (when ready): `pixi run build` then `pixi run publish`.
+
+## What A Workspace Contains
+
+After source discovery and fetch, a workspace looks like:
+
+```text
+zen-link-shortener/
+  zentaizo.atlas.json       # human-authored context atlas, created after source discovery
+  zentaizo.lock.json        # resolved commits, hashes, and snapshot metadata, written by fetch
+  AGENTS.md                 # agent instructions for this context
+
+  repos/                    # fetched source repositories
+  docs/                     # documentation snapshots
+  papers/                   # PDFs and specs
+  notes/                    # issue reports, traces, design notes
+  summaries/                # generated hierarchical summaries
+  graphify-out/             # optional knowledge graph (written by `zentaizo graph`)
+  skills/                   # model-agnostic procedures and session templates
+  sessions/
+    efforts.json            # effort registry: labels, numbers, current pointer, repo/branch map
+    efforts/                # effort-level plan docs
+    brainstorming/          # pre-decision input: scaffolded notes or freeform dumps
+    changes/                # implementation plans (slices), amended with outcomes
+    debugging/              # bug investigations: traces, hypotheses, root cause
+    questions/              # dated Q&A logs with researched answers and citations
+    handoffs/               # paste-ready execution prompts for the implementing agent
+    reports/                # living evidence-backed syntheses (must-read deliverables)
+```
 
 ## The Workflow
 
@@ -326,47 +366,6 @@ run an AI session in the workspace and point it at the experimental
 current templates against the workspace, classifies each delta, and plans any
 artifact migrations (session-file frontmatter, filename conventions) before
 making changes.
-
-## Developing
-
-Develop on zentaizo itself with an editable install in a pixi env:
-
-```bash
-pixi install                # bootstrap dev env
-pixi run zentaizo --help
-pixi run check              # ruff lint + tests
-pixi run hooks-install      # one-time: enable pre-commit on `git commit`
-```
-
-Release (when ready): `pixi run build` then `pixi run publish`.
-
-## What A Workspace Contains
-
-After source discovery and fetch, a workspace looks like:
-
-```text
-zen-link-shortener/
-  zentaizo.atlas.json       # human-authored context atlas, created after source discovery
-  zentaizo.lock.json        # resolved commits, hashes, and snapshot metadata, written by fetch
-  AGENTS.md                 # agent instructions for this context
-
-  repos/                    # fetched source repositories
-  docs/                     # documentation snapshots
-  papers/                   # PDFs and specs
-  notes/                    # issue reports, traces, design notes
-  summaries/                # generated hierarchical summaries
-  graphify-out/             # optional knowledge graph (written by `zentaizo graph`)
-  skills/                   # model-agnostic procedures and session templates
-  sessions/
-    efforts.json            # effort registry: labels, numbers, current pointer, repo/branch map
-    efforts/                # effort-level plan docs
-    brainstorming/          # pre-decision input: scaffolded notes or freeform dumps
-    changes/                # implementation plans (slices), amended with outcomes
-    debugging/              # bug investigations: traces, hypotheses, root cause
-    questions/              # dated Q&A logs with researched answers and citations
-    handoffs/               # paste-ready execution prompts for the implementing agent
-    reports/                # living evidence-backed syntheses (must-read deliverables)
-```
 
 ## Safety
 
