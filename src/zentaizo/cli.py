@@ -584,7 +584,8 @@ def _read_trailer_cache(provider: str, key: str | None) -> tuple[str, str]:
     The reader counterpart of ``_write_trailer_cache``: keyed by session/thread
     id with a ``latest.json`` fallback. This mirrors the standalone
     prepare-commit-msg hook's own reader (which must stay self-contained, so the
-    two cannot share code) — both consume the same cache so ``edited_by`` and the
+    two cannot share code) — every consumer (the hook, ``zentaizo edited``, and
+    ``zentaizo commit-trailer``) reads the same cache so ``edited_by`` and the
     commit ``Co-authored-by`` trailer report the same model identity.
     """
     base = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
@@ -4589,7 +4590,7 @@ def build_parser() -> argparse.ArgumentParser:
     cache_trailer = sub.add_parser(
         "cache-commit-trailer",
         help="cache the current assistant's model + reasoning effort for the "
-        "commit-attribution hook to read at commit time",
+        "commit-attribution hook, 'commit-trailer', and 'edited' to read",
     )
     provider = cache_trailer.add_mutually_exclusive_group(required=True)
     provider.add_argument(
