@@ -10,6 +10,9 @@ edited_by:
   - 2026-06-20  Bill Katz, Claude Opus 4.8 (1M context, editorial-framing reframe)
   - 2026-06-21  Bill Katz, Claude Opus 4.8 (1M context, "self-hosting"→dogfooding rename)
   - 2026-06-21  Codex (review round 3), Claude Opus 4.8 (1M context, operational fixes)
+  - 2026-06-21  Codex (review round 4), Claude Opus 4.8 (1M context, status-mapping + migration fixes)
+  - 2026-06-21  Codex (review round 5), Claude Opus 4.8 (1M context, promoted + partial mapping fixes)
+  - 2026-06-21  Codex (review round 6, sign-off), Claude Opus 4.8 (1M context, log-migration-edit polish)
 ---
 
 # Dogfooding zentaizo: a workspace of record + distilled editable-repo design docs
@@ -75,6 +78,38 @@ Round 3 (2026-06-21) — implementation-readiness pass on this doc and the Pass-
 
 Codex verdict: topology + editorial reframe sound; remaining risks operational, not
 conceptual — addressed above.
+
+Round 4 (2026-06-21) — re-review of the round-3 revision:
+
+| # | Sev | Finding | Resolved by |
+|---|---|---|---|
+| 1 | Med | Migration map lacks an explicit legacy→workspace **status mapping**: slice logic treats only `done`/`superseded`/`abandoned` as closed (`CLOSED_SLICE_STATUSES`, `cli.py:3124`; checked `cli.py:3791,3803,1029`) and there is **no status enum**, so migrated `implemented`/`partial`/`proposed`/`accepted` files silently read as **active plans** | Added an explicit **Legacy → workspace status mapping** table (Migration), and made remapping a blocking acceptance criterion. |
+| 2 | Low/Med | `next-brainstorming` / `next-note` name files with **today's UTC date** (`utc_date()`, `cli.py:4238,4224`), losing historical chronology | Sequence 3: for historical files preserve the **original date** in the filename + `created` and record `original_path`; do **not** take next-*'s today-stamp. |
+| 3 | Low | Command typo: `cache-trailer` → the real command is **`cache-commit-trailer`** (`cli.py:4591`) | Fixed in Bootstrapping. |
+| 4 | Low | `validate` cannot prove cross-links were rewritten | Added an **`rg` sweep** acceptance check for stale `docs/changes/` / `docs/brainstorming/` references (except intentional `original_path` metadata). |
+
+Codex verdict: "close … not quite implementation-ready until the status mapping is
+made explicit" — that mapping (finding 1) was the sole remaining blocker and is now
+explicit, so this doc is implementation-ready.
+
+Round 5 (2026-06-21) — re-review of the status mapping:
+
+| # | Sev | Finding | Resolved by |
+|---|---|---|---|
+| 1 | Med | `promoted → superseded` is inconsistent with the bucket: the only `promoted` file is the **brainstorming** doc `2026-06-18-dogfooding-…` (`docs/brainstorming/…:3`, already carries `promoted_to`), and brainstorming notes drop slice status | Reclassified `promoted` as a brainstorming-file status — **drop status, preserve `promoted_to` + `original_path`**; `promoted → superseded` kept only as a conditional for a future migrated `docs/changes` file (none today). |
+| 2 | Low/Med | `partial → in-progress` pollutes `path active` — `in-progress` means *actively worked*, not historically unfinished | Made `partial` **per file**: `in-progress` only if the maintainer is actively resuming now; else `done` + recorded follow-up, or `superseded` if a later design absorbed it. |
+
+Codex verdict: round-4 fixes (command-family split, `cache-commit-trailer`,
+historical-date preservation, `rg` stale-link gate) confirmed good, and
+`accepted`/`proposed` are correctly left as per-file decisions.
+
+Round 6 (2026-06-21) — sign-off:
+
+| # | Sev | Finding | Resolved by |
+|---|---|---|---|
+| 1 | Non-blocking | Migration step should also run `zentaizo edited <file>` after rewriting frontmatter, so the migration edit is logged (template-implied, not missing) | Made it explicit in Sequence 3. |
+
+Codex verdict: **no blocking findings; `git diff --check` clean; implementation-ready.**
 
 ## Decision
 
@@ -171,13 +206,46 @@ provenance.
    file: target (freeform `brainstorming` vs. a `changes` slice), the effort/label
    and `status` it gets, the CLI-allocated id + new name, and the cross-links to
    rewrite. (Decided migration style: **full effort-scoped re-allocation**.)
-3. Execute the map: allocate ids via the CLI (`next-change` / `next-brainstorming`),
-   move + rename, rewrite frontmatter and every cross-link — then
-   **`zentaizo validate ~/work/zen-zentaizo` must pass.**
+3. Execute the map. Allocate `changes` ids via the CLI (`next-change`); move +
+   rename, **remapping each legacy status** (table below) and **preserving the
+   original date** in `created` plus an `original_path` field. For
+   `brainstorming` (and any `questions`), do **not** take
+   `next-brainstorming`/`next-note`'s today-stamped name (`utc_date()`,
+   `cli.py:4238,4224`) — place historical files under their **original**
+   `YYYY-MM-DD-<slug>.md` (freeform dated files are allowed) so chronology
+   survives. Rewrite frontmatter and **every cross-link**, and run `zentaizo
+   edited <session-file>` on each migrated file so the migration edit is logged
+   in its `edited_by` ledger (template-required after a substantive edit). Then
+   gate on **both**: `zentaizo validate ~/work/zen-zentaizo` passes, **and** an
+   `rg` sweep finds no stale `docs/changes/` / `docs/brainstorming/` references
+   outside intentional `original_path` metadata.
 4. Produce the first distilled design docs in `repos/zentaizo/docs/design/`
    (manual pass — see Implementation scope).
 5. `git rm` the migrated `docs/brainstorming/` + `docs/changes/` from
    `repos/zentaizo` HEAD (keep the reference docs); commit to the public remote.
+
+**Legacy → workspace status mapping.** The repo's design docs use statuses the
+workspace does not recognize as closed: only `done`, `superseded`, `abandoned`
+are closed (`CLOSED_SLICE_STATUSES`, `cli.py:3124`) and there is **no status
+enum**, so any other value silently reads as an *active* plan (it surfaces in
+`zentaizo path active` and the empty-`short_title` warnings, `cli.py:1029`).
+Every migrated `changes` slice must therefore be remapped (counts are today's
+inventory):
+
+| Legacy (count) | → Workspace | Rule |
+|---|---|---|
+| `implemented` (13) | `done` | mechanical — completed work |
+| `proposed` (4) | `planned` | per file — open proposal; `abandoned`/`superseded` if it was never adopted or a later doc replaced it |
+| `partial` (2) | **per file** | `in-progress` **only if the maintainer is actively resuming it now** (`in-progress` means *active*, not merely historically unfinished — defaulting it pollutes `zentaizo path active`); otherwise `done` with the remaining work recorded as follow-up, or `superseded` if a later design absorbed it |
+| `accepted` (1) | `planned` if not yet built, else `done` | per file (this doc itself → `planned`) |
+| `brainstorming` (5) | — (drop) | brainstorming notes carry **no** slice status; the field is dropped on the move to `sessions/brainstorming/` |
+| `promoted` (1) | — (drop) | this is the **brainstorming** file `2026-06-18-dogfooding-…`, which already carries `promoted_to`; drop the status but **preserve `promoted_to` + `original_path`**. Map `promoted → superseded` only if a migrated `docs/changes` file ever carries it — none does today. |
+
+`implemented` is mechanical; `partial`/`proposed`/`accepted` are decided **per
+file** in the map step (2), which records the chosen target status for each. The
+two brainstorming statuses (`brainstorming`, `promoted`) drop their status on the
+move. Any `docs/changes` file lacking a legacy status is likewise assigned one
+per file.
 
 **Two caveats:**
 
@@ -214,8 +282,8 @@ resolve to that clone.
     `fetch`, `summarize`, … — e.g. `STABLE_PY -m zentaizo validate ~/work/zen-zentaizo`.
   - `edited <session-file>`: a positional path to the **session file**, not a
     workspace dir (`cli.py:4630`).
-  - `commit-trailer` / `cache-trailer`: **no** workspace argument — run in the
-    editable repo's own git context (`cli.py:4608-4623`).
+  - `commit-trailer` / `cache-commit-trailer`: **no** workspace argument — run in
+    the editable repo's own git context (`cli.py:4591,4609`).
 - **Exercise the dev build only in `/tmp`** (`pixi run zentaizo` against throwaway
   workspaces), never against `zen-zentaizo`.
 
@@ -238,8 +306,13 @@ resolve to that clone.
   remotes/branches exist in the new `repos/zentaizo` clone; only then is the old
   checkout retired or made read-only, kept as a temporary backup.
 - [ ] **Docs migration (blocking).** `docs/brainstorming/` + `docs/changes/`
-  moved to the workspace `sessions/` trail; reference docs retained; distilled
-  `docs/design/` produced; provenance `git rm`-ed from the editable repo HEAD.
+  moved to the workspace `sessions/` trail with **legacy statuses remapped** (per
+  the mapping table) and **original dates/paths preserved** (`created` +
+  `original_path`); reference docs retained; distilled `docs/design/` produced;
+  provenance `git rm`-ed from the editable repo HEAD. Gate: **`zentaizo validate`
+  passes** and an **`rg` sweep finds no stale `docs/changes/` / `docs/brainstorming/`
+  cross-links** (except intentional `original_path` metadata) — `validate` alone
+  does not check cross-links.
 - [ ] zentaizo's repo content contains **no** `zentaizo.atlas.json`, `sessions/`,
   or `summaries/`; `repos/` is gitignored so the two histories never cross.
 
