@@ -2274,7 +2274,7 @@ def summarize_workspace(args: argparse.Namespace) -> int:
 
 # ---------------------------------------------------------------------------
 # graph — workspace knowledge graph (Graphify backend)
-# Design: docs/changes/2026-06-12-graphify-graph-layer.md. Behavioral facts
+# Design: docs/design/integrations.md. Behavioral facts
 # below (ignore semantics, skip dirs, env vars) were verified against
 # graphifyy 0.8.39 — see that doc's "Step-1 findings".
 # ---------------------------------------------------------------------------
@@ -3110,7 +3110,7 @@ def skills_uninstall(args: argparse.Namespace) -> int:
 # `sessions/efforts.json` is the registry: it owns effort identity (label,
 # description, status), the `current` pointer, and the per-repo branch/base
 # map. The filesystem owns slice numbering, so creating a slice never writes
-# the registry. See docs/changes/2026-05-27-next-slice-cli-helper.md.
+# the registry. See docs/design/session-model.md.
 # --------------------------------------------------------------------------
 
 SESSIONS_DIR = "sessions"
@@ -4328,7 +4328,7 @@ def claude_hooks_command(args: argparse.Namespace) -> int:
 #
 # One pure function turns the atlas `role: edit`/`role: reference` split into a
 # least-privilege access policy; thin renderers project that policy into each
-# harness's native config. See docs/changes/2026-05-30-sandboxing.md.
+# harness's native config. See docs/design/sandboxing.md.
 # --------------------------------------------------------------------------
 
 SANDBOX_VERSION = 1
