@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "zentaizo"
-version = "0.9.0"
+dynamic = ["version"]
 description = "A hierarchical context workspace for AI assistants working across repos, docs, papers, and notes."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -40,6 +40,9 @@ zentaizo = [
   "templates/global-skills/zentaizo/agents/*.yaml",
   "templates/hooks/*",
 ]
+
+[tool.setuptools.dynamic]
+version = {attr = "zentaizo.__version__"}
 
 [tool.ruff]
 line-length = 100

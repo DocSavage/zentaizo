@@ -90,6 +90,8 @@ zentaizo --help
 
 ## Style
 
+See [docs/design/versioning.md](docs/design/versioning.md) for the versioning policy.
+
 - Keep README-level explanations short and example-driven.
 - Put detailed design material in `docs/`.
 - Treat `zentaizo.atlas.json` as human-authored intent.
