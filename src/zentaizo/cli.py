@@ -107,6 +107,51 @@ def write_json(path: pathlib.Path, data: dict) -> None:
     path.write_text(json.dumps(data, indent=2) + "\n")
 
 
+# --- Tool-level (global) config -------------------------------------------------
+#
+# Global to the zentaizo *install* (under XDG_CONFIG_HOME), distinct from the
+# workspace-scoped atlas/lock. Currently it records just the "hub" workspace —
+# the zen-zentaizo workspace that ``--zentaizo``/``-Z`` routes session commands
+# into, so a spoke workspace can file feedback without vendoring the tool. The
+# stored key is generic (any multi-workspace setup can use it); the flag name
+# stays tool-specific.
+HUB_CONFIG_KEY = "hub_workspace"
+
+
+def _global_config_path() -> pathlib.Path:
+    base = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+    return pathlib.Path(base) / "zentaizo" / "config.json"
+
+
+def read_global_config() -> dict:
+    path = _global_config_path()
+    if not path.is_file():
+        return {}
+    raw = path.read_text()
+    if not raw.strip():
+        return {}
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise CliError(
+            f"Corrupt global config {path}: {exc}\n"
+            "Fix the JSON or remove the file and re-run `zentaizo config set hub <path>`."
+        ) from exc
+    if not isinstance(data, dict):
+        raise CliError(f"Global config {path} must be a JSON object, not {type(data).__name__}.")
+    return data
+
+
+def write_global_config(data: dict) -> None:
+    path = _global_config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)  # write_json() does not mkdir
+    # Atomic write: a crash mid-write must not leave a truncated config that the
+    # read path would then choke on. Write a sibling temp file, then rename.
+    tmp = path.parent / f".{path.name}.{os.getpid()}.tmp"
+    tmp.write_text(json.dumps(data, indent=2) + "\n")
+    tmp.replace(path)
+
+
 def default_atlas(name: str) -> dict:
     return {
         "version": 1,
@@ -4062,7 +4107,9 @@ def _emit_created(
         )
     else:
         print(rel)
-        if label is not None and getattr(args, "label", None) is None:
+        if getattr(args, "zentaizo", False):
+            print(f"(in hub workspace: {workspace})", file=sys.stderr)
+        elif label is not None and getattr(args, "label", None) is None:
             print(f"(current effort: {label})", file=sys.stderr)
     return 0
 
@@ -4156,6 +4203,7 @@ def path_handoff(args: argparse.Namespace) -> int:
 def _next_slice(args: argparse.Namespace, subdir: str) -> int:
     workspace = pathlib.Path(args.workspace).resolve()
     sessions_root(workspace)
+    _require_label_for_hub(args)
     slug = normalize_slug(args.slug)
     short_title = normalize_short_title(getattr(args, "short_title", None))
     data = load_efforts(workspace)
@@ -4187,6 +4235,7 @@ def next_debugging(args: argparse.Namespace) -> int:
 def next_handoff(args: argparse.Namespace) -> int:
     workspace = pathlib.Path(args.workspace).resolve()
     sessions_root(workspace)
+    _require_label_for_hub(args)
     data = load_efforts(workspace)
     label = resolve_effort(workspace, data, args.label, for_write=True)["label"]
     padded = padded_id(args.id)
@@ -4790,12 +4839,41 @@ def build_parser() -> argparse.ArgumentParser:
     skills_uninstall_p.add_argument("--target", choices=target_choices, default="all")
     skills_uninstall_p.set_defaults(func=skills_uninstall)
 
+    _add_config_parser(sub)
     _add_effort_parser(sub)
     _add_path_parser(sub)
     _add_next_parsers(sub)
     _add_sandbox_parser(sub)
 
     return parser
+
+
+def _add_config_parser(sub: argparse._SubParsersAction) -> None:
+    config = sub.add_parser(
+        "config",
+        help="manage tool-level (global) zentaizo config (the hub workspace for -Z)",
+    )
+    config_sub = config.add_subparsers(dest="config_command", required=True)
+
+    set_p = config_sub.add_parser("set", help="set a global config value")
+    set_p.add_argument("key", choices=["hub"], help="config key")
+    set_p.add_argument(
+        "value",
+        help="for 'hub': path to the tool-feedback hub workspace (a zen-zentaizo "
+        "workspace that --zentaizo/-Z routes commands into)",
+    )
+    set_p.add_argument("--json", action="store_true", help="emit JSON")
+    set_p.set_defaults(func=config_set)
+
+    get_p = config_sub.add_parser("get", help="print a global config value")
+    get_p.add_argument("key", nargs="?", choices=["hub"], default="hub", help="config key")
+    get_p.add_argument("--json", action="store_true", help="emit JSON")
+    get_p.set_defaults(func=config_get)
+
+    unset_p = config_sub.add_parser("unset", help="clear a global config value")
+    unset_p.add_argument("key", choices=["hub"], help="config key")
+    unset_p.add_argument("--json", action="store_true", help="emit JSON")
+    unset_p.set_defaults(func=config_unset)
 
 
 def _add_sandbox_parser(sub: argparse._SubParsersAction) -> None:
@@ -4825,15 +4903,129 @@ def _add_sandbox_parser(sub: argparse._SubParsersAction) -> None:
     sandbox.set_defaults(func=sandbox_command)
 
 
-def _add_workspace_arg(parser: argparse.ArgumentParser) -> None:
+def _looks_like_workspace(path: pathlib.Path) -> bool:
+    # A hub must have both the atlas (it is a workspace *root*) and sessions/
+    # (the directory every routed command needs); checking only the atlas would
+    # accept a stray atlas file in a directory that isn't a real workspace.
+    return path.is_dir() and find_atlas(path) is not None and (path / SESSIONS_DIR).is_dir()
+
+
+def resolve_hub_workspace() -> str:
+    """Resolve the configured hub workspace for ``--zentaizo``/``-Z``.
+
+    Returns the stored absolute path. Raises ``CliError`` (never guesses, never
+    auto-discovers a sibling) when the hub is unset or no longer a valid
+    Zentaizo workspace.
+    """
+    hub = read_global_config().get(HUB_CONFIG_KEY)
+    if not hub:
+        raise CliError(
+            "No zentaizo hub workspace is configured. Point the tool at your "
+            "zen-zentaizo workspace once:\n"
+            "  zentaizo config set hub <path-to-zen-zentaizo>"
+        )
+    if not _looks_like_workspace(pathlib.Path(hub)):
+        raise CliError(
+            f"Configured hub workspace is not a valid Zentaizo workspace: {hub}\n"
+            "Repoint it with `zentaizo config set hub <path>` or clear it with "
+            "`zentaizo config unset hub`."
+        )
+    return str(hub)
+
+
+def config_set(args: argparse.Namespace) -> int:
+    # Only "hub" is supported today; argparse choices already constrain `key`.
+    path = pathlib.Path(args.value).expanduser().resolve()
+    if not path.is_dir():
+        raise CliError(f"Not a directory: {path}")
+    if not _looks_like_workspace(path):
+        raise CliError(
+            f"Not a Zentaizo workspace (need {ATLAS_NAME} and {SESSIONS_DIR}/): {path}\n"
+            "Point hub at the root of your zen-zentaizo workspace."
+        )
+    data = read_global_config()
+    data[HUB_CONFIG_KEY] = str(path)  # store an absolute, normalized path
+    write_global_config(data)
+    if args.json:
+        print(json.dumps({"key": "hub", "value": str(path)}))
+    else:
+        print(f"hub = {path}")
+        print(f"(saved to {_global_config_path()})", file=sys.stderr)
+    return 0
+
+
+def config_get(args: argparse.Namespace) -> int:
+    value = read_global_config().get(HUB_CONFIG_KEY)
+    if args.json:
+        print(json.dumps({"key": "hub", "value": value}))
+        return 0
+    if value:
+        print(value)
+    else:
+        print("hub is not set (run `zentaizo config set hub <path>`)", file=sys.stderr)
+    return 0
+
+
+def config_unset(args: argparse.Namespace) -> int:
+    data = read_global_config()
+    existed = HUB_CONFIG_KEY in data
+    data.pop(HUB_CONFIG_KEY, None)
+    write_global_config(data)
+    if args.json:
+        print(json.dumps({"key": "hub", "unset": existed}))
+    else:
+        print("hub unset" if existed else "hub was not set", file=sys.stderr)
+    return 0
+
+
+def _require_label_for_hub(args: argparse.Namespace) -> None:
+    """Refuse to default to the hub's current effort when routed via ``-Z``.
+
+    A spoke filing into the hub must name the target effort explicitly, so
+    feedback never silently lands in whatever effort the hub maintainer happens
+    to have current.
+    """
+    if getattr(args, "zentaizo", False) and getattr(args, "label", None) is None:
+        raise CliError(
+            "--zentaizo/-Z routes into the hub, which has no meaningful "
+            "'current effort' for a spoke. Pass --label <effort> to choose the "
+            "target effort (or run `zentaizo effort new <label> --zentaizo` first)."
+        )
+
+
+def _add_workspace_arg(parser: argparse.ArgumentParser, *, allow_hub: bool = True) -> None:
     # A flag, not a positional: the effort/path/next-* commands often already
     # take an optional leading positional (label), and two optional positionals
     # are ambiguous. ``-C`` mirrors git's working-directory flag.
-    parser.add_argument(
+    #
+    # ``-Z``/``--zentaizo`` is the hub-equivalent of ``-C``: it routes the
+    # command at the configured tool-feedback hub workspace (see
+    # ``zentaizo config set hub``) instead of the current directory, and the two
+    # are mutually exclusive. Hub routing is on by default for every command
+    # that takes ``-C``; *administrative* effort commands (switch/set-branch/
+    # close) opt out with ``allow_hub=False`` so a spoke can contribute to the
+    # hub but not reach in and manage its effort state.
+    if not allow_hub:
+        parser.add_argument(
+            "-C",
+            "--workspace",
+            default=".",
+            help="workspace directory (default: current directory)",
+        )
+        return
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(
         "-C",
         "--workspace",
         default=".",
         help="workspace directory (default: current directory)",
+    )
+    group.add_argument(
+        "-Z",
+        "--zentaizo",
+        action="store_true",
+        help="route this command at the configured tool-feedback hub workspace "
+        "(`zentaizo config set hub`); mutually exclusive with -C",
     )
 
 
@@ -4860,7 +5052,7 @@ def _add_effort_parser(sub: argparse._SubParsersAction) -> None:
     switch = effort_sub.add_parser("switch", help="set the current effort")
     switch.add_argument("label", help="effort label to make current")
     switch.add_argument("--json", action="store_true", help="emit JSON")
-    _add_workspace_arg(switch)
+    _add_workspace_arg(switch, allow_hub=False)  # hub administration: -C only
     switch.set_defaults(func=effort_switch)
 
     show = effort_sub.add_parser("show", help="show an effort's repos/branches and slices")
@@ -4883,13 +5075,13 @@ def _add_effort_parser(sub: argparse._SubParsersAction) -> None:
     )
     set_branch.add_argument("--base", help="override the computed merge-base short sha")
     set_branch.add_argument("--json", action="store_true", help="emit JSON")
-    _add_workspace_arg(set_branch)
+    _add_workspace_arg(set_branch, allow_hub=False)  # hub administration: -C only
     set_branch.set_defaults(func=effort_set_branch)
 
     close = effort_sub.add_parser("close", help="mark an effort closed")
     close.add_argument("label", help="effort label to close")
     close.add_argument("--json", action="store_true", help="emit JSON")
-    _add_workspace_arg(close)
+    _add_workspace_arg(close, allow_hub=False)  # hub administration: -C only
     close.set_defaults(func=effort_close)
 
 
@@ -4968,6 +5160,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
+        # -Z/--zentaizo routes a command at the configured hub workspace. Resolve
+        # it once here and overwrite args.workspace before dispatch; every
+        # workspace-scoped handler reads args.workspace directly, so this single
+        # override covers them all. Commands without the flag lack the attribute.
+        if getattr(args, "zentaizo", False):
+            args.workspace = resolve_hub_workspace()
         return args.func(args)
     except CliError as exc:
         print(str(exc), file=sys.stderr)
