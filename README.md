@@ -94,6 +94,23 @@ pixi run hooks-install      # one-time: enable pre-commit on `git commit`
 
 Release (when ready): `pixi run build` then `pixi run publish`.
 
+### Filing tool feedback from another workspace
+
+Every workspace dogfoods Zentaizo, so each surfaces ideas and issues about the
+tool. Point Zentaizo at your hub workspace once, then file feedback into it from
+anywhere with `-Z`/`--zentaizo` (the hub-equivalent of `-C`):
+
+```bash
+zentaizo config set hub ~/work/zen-zentaizo                 # one-time, tool-level
+zentaizo next-brainstorming "acg-summarize-too-slow" -Z     # lands in the hub
+zentaizo effort new console --describe "…" -Z               # or stand up an effort
+```
+
+`-Z` covers `effort new`, the `next-*` creators, and read-only `path`/`effort
+show`/`effort list`; effort-scoped creators require an explicit `--label` under
+`-Z`. See [`docs/cli.md`](docs/cli.md) for the full surface. The hub then
+triages → effort/slice → review → implement.
+
 ## What A Workspace Contains
 
 After source discovery and fetch, a workspace looks like:
