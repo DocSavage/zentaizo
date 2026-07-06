@@ -1522,6 +1522,42 @@ class EffortTests(WorkspaceCliCase):
             self.assertEqual(code, 0)
             self.assertIn("doc: sessions/efforts/0002-katana.md", out)
 
+    def test_effort_show_json_slices_match_text_form(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            ws = str(workspace)
+            self._run(["effort", "new", "katana", "-C", ws])
+            # Two slices sharing the changes/+debugging counter: a changes plan
+            # (0001) and a debugging note (0002).
+            self.assertEqual(self._run(["next-change", "alpha", "-C", ws])[0], 0)
+            self.assertEqual(self._run(["next-debugging", "beta", "-C", ws])[0], 0)
+
+            code, out, _ = self._run(["effort", "show", "katana", "--json", "-C", ws])
+            self.assertEqual(code, 0)
+            slices = json.loads(out)["slices"]
+            self.assertEqual(
+                slices,
+                [
+                    {"id": "katana-0001", "status": "planned", "dir": "changes"},
+                    {"id": "katana-0002", "status": "planned", "dir": "debugging"},
+                ],
+            )
+
+            # Parity: the --json slice list must reproduce the text form exactly,
+            # since both render from the same _effort_slices() source.
+            _, text, _ = self._run(["effort", "show", "katana", "-C", ws])
+            rendered = ", ".join(f"{s['id']} ({s['status']}, {s['dir']})" for s in slices)
+            self.assertIn("slices: " + rendered, text)
+
+    def test_effort_show_json_slices_empty_when_no_slices(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            ws = str(workspace)
+            self._run(["effort", "new", "katana", "-C", ws])
+            code, out, _ = self._run(["effort", "show", "katana", "--json", "-C", ws])
+            self.assertEqual(code, 0)
+            self.assertEqual(json.loads(out)["slices"], [])
+
     def test_set_branch_computes_base(self):
         with tempfile.TemporaryDirectory() as tmp:
             workspace = self._make_workspace(tmp)

@@ -3608,6 +3608,24 @@ def _effort_summary_line(effort: dict) -> str:
     return f"{effort['label']} ({effort.get('status', 'open')}, {repo_part}{upgrade_part}){tail}"
 
 
+def _effort_slices(workspace: pathlib.Path, label: str) -> list[dict]:
+    """Slice list for ``label`` — the single source for the text and ``--json``
+    forms of ``effort show`` (and the dashboard exporter), so they never diverge.
+
+    Each entry is ``{"id", "status", "dir"}``: the same data the text form
+    prints, drawn from ``scan_slice_files()`` + ``read_frontmatter()`` and never
+    re-parsed from rendered output.
+    """
+    return [
+        {
+            "id": f"{label}-{counter:04d}",
+            "status": read_frontmatter(path).get("status", "?"),
+            "dir": path.parent.name,
+        }
+        for counter, path in sorted(scan_slice_files(workspace, label))
+    ]
+
+
 def _print_effort_detail(
     workspace: pathlib.Path, effort: dict, *, require_doc: bool = False
 ) -> None:
@@ -3631,14 +3649,9 @@ def _print_effort_detail(
         base = info.get("base")
         base_part = f" @ {base}" if base else ""
         print(f"  {name}  {branch}{base_part}")
-    slices = sorted(scan_slice_files(workspace, label))
+    slices = _effort_slices(workspace, label)
     if slices:
-        parts = []
-        for counter, path in slices:
-            status = read_frontmatter(path).get("status", "?")
-            where = path.parent.name
-            stem = f"{label}-{counter:04d}"
-            parts.append(f"{stem} ({status}, {where})")
+        parts = [f"{s['id']} ({s['status']}, {s['dir']})" for s in slices]
         print("  slices: " + ", ".join(parts))
     else:
         print("  slices: (none yet)")
@@ -3722,6 +3735,7 @@ def effort_show(args: argparse.Namespace) -> int:
             payload["needs_upgrade"] = True
         else:
             payload["path"] = _rel(workspace, require_effort_doc_path(workspace, effort))
+        payload["slices"] = _effort_slices(workspace, effort["label"])
         print(json.dumps(payload))
     else:
         _print_effort_detail(workspace, effort, require_doc=True)
