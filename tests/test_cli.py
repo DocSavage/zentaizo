@@ -8,6 +8,7 @@ import sys
 import tempfile
 import unittest
 import urllib.error
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest import mock
 
@@ -2574,7 +2575,11 @@ class CommitAttributionHookTests(unittest.TestCase):
             clean.update(env)
         stdout = io.StringIO()
         stderr = io.StringIO()
+        # Run from a fresh non-git cwd so the developer checkout's own
+        # pending-authors ledger (and safety net) never leaks into tests.
         with (
+            tempfile.TemporaryDirectory() as cwd,
+            contextlib.chdir(cwd),
             mock.patch.dict(os.environ, clean, clear=True),
             contextlib.redirect_stdout(stdout),
             contextlib.redirect_stderr(stderr),
@@ -2695,6 +2700,48 @@ class CommitAttributionHookTests(unittest.TestCase):
                 },
             )
             self.assertEqual(msg.read_text().lower().count("co-authored-by: claude"), 1)
+
+    @unittest.skipUnless(_HAVE_GIT, "test needs git")
+    def test_hook_skips_when_provider_already_reviewed_by(self):
+        # A commit-trailer delegation block attributes the committer as
+        # Reviewed-by; the hook must not re-add it as a spurious co-author.
+        cases = [
+            (
+                "claude",
+                "sid.json",
+                {"model": "Opus 4.8 (1M context)", "effort": "xhigh"},
+                {"CLAUDECODE": "1", "CLAUDE_CODE_SESSION_ID": "sid"},
+                "Reviewed-by: Claude Opus 4.8 (1M context, reasoning xhigh) "
+                "<noreply@anthropic.com>",
+            ),
+            (
+                "codex",
+                "thread-abc.json",
+                {"provider": "codex", "model": "gpt-5.5", "effort": "xhigh"},
+                {"CODEX_THREAD_ID": "thread-abc"},
+                "Reviewed-by: Codex gpt-5.5 (reasoning xhigh) <noreply@openai.com>",
+            ),
+        ]
+        for provider, filename, payload, env, reviewed_line in cases:
+            with self.subTest(provider=provider), tempfile.TemporaryDirectory() as tmp:
+                repo = self._git_repo(tmp)
+                cache = Path(tmp) / "cache" / provider / "commit-trailer"
+                cache.mkdir(parents=True)
+                (cache / filename).write_text(json.dumps(payload))
+                msg = Path(tmp) / "MSG"
+                original = (
+                    "subject\n\n"
+                    "Co-authored-by: Codex gpt-5.5 (reasoning xhigh) <noreply@openai.com>\n"
+                    f"{reviewed_line}\n"
+                    if provider == "claude"
+                    else f"subject\n\n{reviewed_line}\n"
+                )
+                msg.write_text(original)
+                res = self._run_hook(
+                    repo, msg, env={"XDG_CACHE_HOME": str(Path(tmp) / "cache"), **env}
+                )
+                self.assertEqual(res.returncode, 0)
+                self.assertEqual(msg.read_text(), original)
 
     @unittest.skipUnless(_HAVE_GIT, "test needs git")
     def test_hook_skips_merge_source(self):
@@ -3157,6 +3204,509 @@ class CommitAttributionHookTests(unittest.TestCase):
                     _codex_editor_identity(),
                     "Codex gpt-5.5 (reasoning xhigh)",
                 )
+
+
+@unittest.skipUnless(_HAVE_GIT, "delegation ledger tests need git")
+class DelegationLedgerTests(unittest.TestCase):
+    """The pending-authors ledger: `zentaizo delegation` and its consumption
+    by `zentaizo commit-trailer` (Co-authored-by implementors + Reviewed-by
+    committer)."""
+
+    CLAUDE_TRAILER = (
+        "Co-authored-by: Claude Fable 5 (reasoning xhigh) <noreply@anthropic.com>"
+    )
+    CLAUDE_REVIEWED = "Reviewed-by: Claude Fable 5 (reasoning xhigh) <noreply@anthropic.com>"
+    CODEX_TRAILER = "Co-authored-by: Codex gpt-5.5 (reasoning xhigh) <noreply@openai.com>"
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.cache_home = self.tmp / "cache"
+        self.codex_home = self.tmp / "codex-home"
+        self.codex_home.mkdir()
+        self.repo = self._git_repo("repo")
+
+    def _git_repo(self, name: str, committed_at: str = "2026-01-01T00:00:00Z") -> Path:
+        repo = self.tmp / name
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        subprocess.run(
+            ["git", "-C", str(repo), "-c", "user.email=t@t", "-c", "user.name=T",
+             "commit", "--allow-empty", "-qm", "seed"],
+            check=True,
+            env={**os.environ, "GIT_AUTHOR_DATE": committed_at, "GIT_COMMITTER_DATE": committed_at},
+        )
+        return repo
+
+    def _run(self, argv, env=None) -> tuple[int, str, str]:
+        clean = dict(os.environ)
+        for key in (
+            "CLAUDECODE",
+            "CLAUDE_CODE_SESSION_ID",
+            "CLAUDE_EFFORT",
+            "CODEX_THREAD_ID",
+        ):
+            clean.pop(key, None)
+        clean.update(
+            {"XDG_CACHE_HOME": str(self.cache_home), "CODEX_HOME": str(self.codex_home)}
+        )
+        if env:
+            clean.update(env)
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        # Fresh non-git cwd: only --repo decides which ledger is touched.
+        with (
+            tempfile.TemporaryDirectory() as cwd,
+            contextlib.chdir(cwd),
+            mock.patch.dict(os.environ, clean, clear=True),
+            contextlib.redirect_stdout(stdout),
+            contextlib.redirect_stderr(stderr),
+        ):
+            code = main(argv)
+        return code, stdout.getvalue(), stderr.getvalue()
+
+    def _write_cache(self, provider: str, filename: str, payload: dict) -> None:
+        cache_dir = self.cache_home / provider / "commit-trailer"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        (cache_dir / filename).write_text(json.dumps(payload))
+
+    def _iso(self, hours_ago: float = 0.0) -> str:
+        stamp = datetime.now(UTC).replace(microsecond=0) - timedelta(hours=hours_ago)
+        return stamp.isoformat()
+
+    def _claude_committer_env(self) -> dict:
+        self._write_cache("claude", "sid.json", {"model": "Fable 5", "effort": "xhigh"})
+        return {"CLAUDECODE": "1", "CLAUDE_CODE_SESSION_ID": "sid"}
+
+    def _ledger_dir(self, repo: Path | None = None) -> Path:
+        return (repo or self.repo) / ".git" / "zentaizo" / "pending-authors"
+
+    def _write_entry(self, filename: str, entry: dict, repo: Path | None = None) -> Path:
+        ledger = self._ledger_dir(repo)
+        ledger.mkdir(parents=True, exist_ok=True)
+        path = ledger / filename
+        path.write_text(json.dumps(entry))
+        return path
+
+    def _codex_entry(self, noted_hours_ago: float = 0.0, **overrides) -> dict:
+        entry = {
+            "provider": "codex",
+            "model": "gpt-5.5",
+            "effort": "xhigh",
+            "identity": "Codex gpt-5.5 (reasoning xhigh)",
+            "role": "author",
+            "noted_at": self._iso(noted_hours_ago),
+            "source": "cache",
+        }
+        entry.update(overrides)
+        return entry
+
+    # --- delegation note: identity precedence --------------------------------
+
+    def test_note_prefers_keyed_cache_over_latest(self):
+        self._write_cache(
+            "codex", "thread-abc.json", {"model": "keyed-model", "effort": "high"}
+        )
+        self._write_cache(
+            "codex",
+            "latest.json",
+            {"model": "latest-model", "effort": "xhigh", "captured_at": self._iso()},
+        )
+        code, stdout, stderr = self._run(
+            ["delegation", "note", "--codex", "--repo", str(self.repo)],
+            env={"CODEX_THREAD_ID": "thread/../abc"},
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("Codex keyed-model (reasoning high)", stdout)
+        self.assertIn("(source: cache)", stdout)
+        entry = json.loads(next(self._ledger_dir().glob("*.json")).read_text())
+        self.assertEqual(entry["model"], "keyed-model")
+        self.assertEqual(entry["source"], "cache")
+        self.assertEqual(entry["role"], "author")
+        self.assertEqual(entry["provider"], "codex")
+
+    def test_note_uses_fresh_latest_when_no_key(self):
+        self._write_cache(
+            "codex",
+            "latest.json",
+            {"model": "gpt-5.5", "effort": "xhigh", "captured_at": self._iso(hours_ago=1)},
+        )
+        code, stdout, stderr = self._run(
+            ["delegation", "note", "--codex", "--repo", str(self.repo)]
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("Codex gpt-5.5 (reasoning xhigh) (source: cache)", stdout)
+        self.assertEqual(stderr, "")
+
+    def test_note_stale_latest_falls_through_to_config_with_warning(self):
+        self._write_cache(
+            "codex",
+            "latest.json",
+            {"model": "stale-model", "effort": "xhigh", "captured_at": self._iso(hours_ago=10)},
+        )
+        (self.codex_home / "config.toml").write_text(
+            'model = "config-model"\nmodel_reasoning_effort = "high"\n'
+        )
+        code, stdout, stderr = self._run(
+            ["delegation", "note", "--codex", "--repo", str(self.repo)]
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("Codex config-model (reasoning high) (source: config)", stdout)
+        self.assertIn("configured Codex default", stderr)
+        entry = json.loads(next(self._ledger_dir().glob("*.json")).read_text())
+        self.assertEqual(entry["source"], "config")
+
+    def test_note_max_age_accepts_older_latest(self):
+        self._write_cache(
+            "codex",
+            "latest.json",
+            {"model": "gpt-5.5", "effort": "xhigh", "captured_at": self._iso(hours_ago=10)},
+        )
+        code, stdout, _ = self._run(
+            ["delegation", "note", "--codex", "--repo", str(self.repo), "--max-age", "24"]
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("(source: cache)", stdout)
+
+    def test_note_latest_without_captured_at_is_not_fresh(self):
+        self._write_cache("codex", "latest.json", {"model": "gpt-5.5", "effort": "xhigh"})
+        code, stdout, stderr = self._run(
+            ["delegation", "note", "--codex", "--repo", str(self.repo)]
+        )
+        self.assertEqual(code, 1)
+        self.assertEqual(stdout, "")
+        self.assertIn('pass --as "<identity>"', stderr)
+
+    def test_note_fails_loudly_when_nothing_resolvable(self):
+        code, stdout, stderr = self._run(
+            ["delegation", "note", "--codex", "--repo", str(self.repo)]
+        )
+        self.assertEqual(code, 1)
+        self.assertEqual(stdout, "")
+        self.assertIn("no codex identity resolvable", stderr)
+        self.assertIn('pass --as "<identity>"', stderr)
+        self.assertFalse(self._ledger_dir().exists())
+
+    def test_note_as_override_bypasses_resolution(self):
+        code, stdout, _ = self._run(
+            [
+                "delegation", "note", "--codex", "--repo", str(self.repo),
+                "--as", "Codex gpt-6 (reasoning max)",
+            ]
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("Codex gpt-6 (reasoning max) (source: override)", stdout)
+        entry = json.loads(next(self._ledger_dir().glob("*.json")).read_text())
+        self.assertEqual(entry["identity"], "Codex gpt-6 (reasoning max)")
+        self.assertEqual(entry["source"], "override")
+        self.assertEqual(entry["provider"], "codex")
+
+    def test_note_claude_uses_session_keyed_cache(self):
+        self._write_cache("claude", "sid.json", {"model": "Fable 5", "effort": "xhigh"})
+        code, stdout, _ = self._run(
+            ["delegation", "note", "--claude", "--repo", str(self.repo)],
+            env={"CLAUDE_CODE_SESSION_ID": "sid"},
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("Claude Fable 5 (reasoning xhigh) (source: cache)", stdout)
+
+    def test_note_rejects_non_git_repo(self):
+        plain = self.tmp / "not-a-repo"
+        plain.mkdir()
+        code, stdout, stderr = self._run(
+            ["delegation", "note", "--codex", "--repo", str(plain), "--as", "X"]
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("not a git repository", stderr)
+
+    def test_concurrent_notes_write_distinct_entry_files(self):
+        for _ in range(2):
+            code, _, _ = self._run(
+                ["delegation", "note", "--codex", "--repo", str(self.repo), "--as", "Codex X"]
+            )
+            self.assertEqual(code, 0)
+        self.assertEqual(len(list(self._ledger_dir().glob("*.json"))), 2)
+
+    def test_note_resolves_worktree_gitdir_pointer(self):
+        subprocess.run(
+            ["git", "-C", str(self.repo), "worktree", "add", "-q",
+             str(self.tmp / "wt"), "-b", "wt-branch"],
+            check=True,
+        )
+        worktree = self.tmp / "wt"
+        self.assertTrue((worktree / ".git").is_file())  # gitdir: pointer file
+        code, _, _ = self._run(
+            ["delegation", "note", "--codex", "--repo", str(worktree), "--as", "Codex X"]
+        )
+        self.assertEqual(code, 0)
+        wt_ledger = (
+            self.repo / ".git" / "worktrees" / "wt" / "zentaizo" / "pending-authors"
+        )
+        self.assertEqual(len(list(wt_ledger.glob("*.json"))), 1)
+        # per-checkout by construction: the main repo's ledger is untouched
+        self.assertFalse(self._ledger_dir().exists())
+
+    # --- delegation list / clear ---------------------------------------------
+
+    def test_list_shows_age_and_source(self):
+        self._write_entry("b.json", self._codex_entry(noted_hours_ago=3))
+        code, stdout, _ = self._run(["delegation", "list", "--repo", str(self.repo)])
+        self.assertEqual(code, 0)
+        self.assertIn("Codex gpt-5.5 (reasoning xhigh)", stdout)
+        self.assertIn("source cache", stdout)
+        self.assertIn("noted 3h ago", stdout)
+
+    def test_list_empty_ledger(self):
+        code, stdout, _ = self._run(["delegation", "list", "--repo", str(self.repo)])
+        self.assertEqual(code, 0)
+        self.assertIn("No pending delegation entries.", stdout)
+
+    def test_clear_removes_all_entries(self):
+        self._write_entry("a.json", self._codex_entry())
+        self._write_entry("b.json", self._codex_entry())
+        code, stdout, _ = self._run(["delegation", "clear", "--repo", str(self.repo)])
+        self.assertEqual(code, 0)
+        self.assertIn("Cleared 2 delegation entries.", stdout)
+        self.assertEqual(list(self._ledger_dir().glob("*.json")), [])
+
+    def test_clear_id_removes_only_that_entry(self):
+        self._write_entry("a.json", self._codex_entry(id="a"))
+        self._write_entry("b.json", self._codex_entry(id="b"))
+        code, stdout, _ = self._run(
+            ["delegation", "clear", "--repo", str(self.repo), "--id", "a"]
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("Cleared 1 delegation entry.", stdout)
+        remaining = [p.name for p in self._ledger_dir().glob("*.json")]
+        self.assertEqual(remaining, ["b.json"])
+
+    def test_clear_unknown_id_fails(self):
+        self._write_entry("a.json", self._codex_entry(id="a"))
+        code, _, stderr = self._run(
+            ["delegation", "clear", "--repo", str(self.repo), "--id", "zzz"]
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("no ledger entry with id zzz", stderr)
+
+    # --- commit-trailer: ledger consumption -----------------------------------
+
+    def _trailer(self, *extra) -> tuple[int, str, str]:
+        return self._run(
+            ["commit-trailer", "--repo", str(self.repo), *extra],
+            env=self._claude_committer_env(),
+        )
+
+    def test_trailer_single_implementor_plus_reviewer(self):
+        self._write_entry("a.json", self._codex_entry())
+        code, stdout, stderr = self._trailer()
+        self.assertEqual(code, 0)
+        self.assertEqual(stdout, f"{self.CODEX_TRAILER}\n{self.CLAUDE_REVIEWED}\n")
+        self.assertIn("consumed by this trailer block", stderr)
+        self.assertIn("zentaizo delegation clear", stderr)
+
+    def test_trailer_orders_implementors_by_noted_at(self):
+        # File names sort opposite to noted_at to prove ordering is by note time.
+        self._write_entry(
+            "z-first.json",
+            self._codex_entry(
+                noted_hours_ago=2,
+                model="gpt-5.0",
+                identity="Codex gpt-5.0 (reasoning high)",
+            ),
+        )
+        self._write_entry("a-second.json", self._codex_entry(noted_hours_ago=1))
+        code, stdout, _ = self._trailer()
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            stdout.splitlines(),
+            [
+                "Co-authored-by: Codex gpt-5.0 (reasoning high) <noreply@openai.com>",
+                self.CODEX_TRAILER,
+                self.CLAUDE_REVIEWED,
+            ],
+        )
+
+    def test_trailer_dedups_identical_identities(self):
+        self._write_entry("a.json", self._codex_entry(noted_hours_ago=2))
+        self._write_entry("b.json", self._codex_entry(noted_hours_ago=1))
+        code, stdout, _ = self._trailer()
+        self.assertEqual(code, 0)
+        self.assertEqual(stdout, f"{self.CODEX_TRAILER}\n{self.CLAUDE_REVIEWED}\n")
+
+    def test_trailer_committer_in_ledger_gets_both_roles(self):
+        self._write_entry(
+            "a.json",
+            self._codex_entry(
+                provider="claude",
+                model="Fable 5",
+                identity="Claude Fable 5 (reasoning xhigh)",
+            ),
+        )
+        code, stdout, _ = self._trailer()
+        self.assertEqual(code, 0)
+        self.assertEqual(stdout, f"{self.CLAUDE_TRAILER}\n{self.CLAUDE_REVIEWED}\n")
+
+    def test_trailer_also_author_elevates_committer(self):
+        self._write_entry("a.json", self._codex_entry())
+        code, stdout, _ = self._trailer("--also-author")
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            stdout,
+            f"{self.CODEX_TRAILER}\n{self.CLAUDE_TRAILER}\n{self.CLAUDE_REVIEWED}\n",
+        )
+
+    def test_trailer_also_author_does_not_duplicate_committer_in_ledger(self):
+        self._write_entry(
+            "a.json",
+            self._codex_entry(
+                provider="claude",
+                model="Fable 5",
+                identity="Claude Fable 5 (reasoning xhigh)",
+            ),
+        )
+        code, stdout, _ = self._trailer("--also-author")
+        self.assertEqual(code, 0)
+        self.assertEqual(stdout, f"{self.CLAUDE_TRAILER}\n{self.CLAUDE_REVIEWED}\n")
+
+    def test_trailer_empty_ledger_is_byte_identical_and_quiet(self):
+        code, stdout, stderr = self._trailer()
+        self.assertEqual(code, 0)
+        self.assertEqual(stdout, f"{self.CLAUDE_TRAILER}\n")
+        self.assertEqual(stderr, "")
+
+    def test_trailer_warns_on_stale_entries_but_still_emits(self):
+        self._write_entry("a.json", self._codex_entry(noted_hours_ago=30))
+        code, stdout, stderr = self._trailer()
+        self.assertEqual(code, 0)
+        self.assertEqual(stdout, f"{self.CODEX_TRAILER}\n{self.CLAUDE_REVIEWED}\n")
+        self.assertIn("older than 24h", stderr)
+
+    def test_trailer_fresh_entries_do_not_warn_stale(self):
+        self._write_entry("a.json", self._codex_entry(noted_hours_ago=1))
+        _, _, stderr = self._trailer()
+        self.assertNotIn("older than", stderr)
+
+    def test_trailer_skips_corrupt_entry_with_warning(self):
+        self._ledger_dir().mkdir(parents=True)
+        (self._ledger_dir() / "bad.json").write_text("{not json")
+        self._write_entry("good.json", self._codex_entry())
+        code, stdout, stderr = self._trailer()
+        self.assertEqual(code, 0)
+        self.assertEqual(stdout, f"{self.CODEX_TRAILER}\n{self.CLAUDE_REVIEWED}\n")
+        self.assertIn("skipping unreadable ledger entry bad.json", stderr)
+
+    def test_trailer_wholly_unreadable_ledger_falls_back_to_plain(self):
+        self._ledger_dir().mkdir(parents=True)
+        (self._ledger_dir() / "bad.json").write_text("{not json")
+        code, stdout, stderr = self._trailer()
+        self.assertEqual(code, 0)
+        self.assertEqual(stdout, f"{self.CLAUDE_TRAILER}\n")
+        self.assertIn("skipping unreadable ledger entry bad.json", stderr)
+
+    def test_trailer_skips_unknown_provider_entry_with_warning(self):
+        self._write_entry(
+            "a.json",
+            self._codex_entry(id="a", provider="gemini", identity="Gemini 3 Pro"),
+        )
+        self._write_entry("b.json", self._codex_entry(id="b"))
+        code, stdout, stderr = self._trailer()
+        self.assertEqual(code, 0)
+        self.assertEqual(stdout, f"{self.CODEX_TRAILER}\n{self.CLAUDE_REVIEWED}\n")
+        self.assertIn("unknown provider 'gemini'", stderr)
+
+    @unittest.skipUnless(_HAVE_GIT, "test needs git")
+    def test_trailer_delegation_block_keeps_hook_idempotent(self):
+        # Paste the delegated block into a commit message: the hook must not
+        # append a spurious committer co-author (Reviewed-by counts).
+        self._write_entry("a.json", self._codex_entry())
+        code, stdout, _ = self._trailer()
+        self.assertEqual(code, 0)
+        from zentaizo.cli import _commit_hook_source
+
+        msg = self.tmp / "MSG"
+        msg.write_text(f"subject\n\n{stdout}")
+        env = {
+            **{
+                k: v
+                for k, v in os.environ.items()
+                if k not in ("CLAUDECODE", "CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID")
+            },
+            "XDG_CACHE_HOME": str(self.cache_home),
+            "CLAUDECODE": "1",
+            "CLAUDE_CODE_SESSION_ID": "sid",
+        }
+        res = subprocess.run(
+            [sys.executable, str(_commit_hook_source()), str(msg), "message"],
+            cwd=str(self.repo),
+            env=env,
+        )
+        self.assertEqual(res.returncode, 0)
+        self.assertEqual(msg.read_text(), f"subject\n\n{stdout}")
+
+    # --- commit-trailer: empty-ledger safety net ------------------------------
+
+    def test_safety_net_warns_when_codex_cache_newer_than_head(self):
+        # HEAD is dated 2026-01-01; a codex session captured now is newer.
+        self._write_cache(
+            "codex",
+            "latest.json",
+            {"model": "gpt-5.5", "effort": "xhigh", "captured_at": self._iso()},
+        )
+        code, stdout, stderr = self._trailer()
+        self.assertEqual(code, 0)
+        self.assertEqual(stdout, f"{self.CLAUDE_TRAILER}\n")
+        self.assertIn("no delegation is recorded", stderr)
+        self.assertIn("zentaizo delegation note --codex", stderr)
+
+    def test_safety_net_quiet_when_cache_older_than_head(self):
+        repo = self._git_repo("fresh-repo", committed_at=self._iso())
+        self._write_cache(
+            "codex",
+            "latest.json",
+            {"model": "gpt-5.5", "effort": "xhigh", "captured_at": "2020-01-01T00:00:00+00:00"},
+        )
+        code, stdout, stderr = self._run(
+            ["commit-trailer", "--repo", str(repo)], env=self._claude_committer_env()
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(stderr, "")
+
+    def test_safety_net_quiet_with_populated_ledger(self):
+        self._write_entry("a.json", self._codex_entry())
+        self._write_cache(
+            "codex",
+            "latest.json",
+            {"model": "gpt-5.5", "effort": "xhigh", "captured_at": self._iso()},
+        )
+        _, _, stderr = self._trailer()
+        self.assertNotIn("no delegation is recorded", stderr)
+
+    def test_safety_net_quiet_on_git_error(self):
+        plain = self.tmp / "not-a-repo"
+        plain.mkdir()
+        self._write_cache(
+            "codex",
+            "latest.json",
+            {"model": "gpt-5.5", "effort": "xhigh", "captured_at": self._iso()},
+        )
+        code, stdout, stderr = self._run(
+            ["commit-trailer", "--repo", str(plain)], env=self._claude_committer_env()
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(stdout, f"{self.CLAUDE_TRAILER}\n")
+        self.assertEqual(stderr, "")
+
+    def test_safety_net_quiet_when_committer_is_codex(self):
+        # Codex committing its own work is not a delegation.
+        self._write_cache(
+            "codex",
+            "latest.json",
+            {"model": "gpt-5.5", "effort": "xhigh", "captured_at": self._iso()},
+        )
+        code, stdout, stderr = self._run(["commit-trailer", "--codex", "--repo", str(self.repo)])
+        self.assertEqual(code, 0)
+        self.assertEqual(stdout, f"{self.CODEX_TRAILER}\n")
+        self.assertEqual(stderr, "")
 
 
 class EditedByUnitTests(unittest.TestCase):

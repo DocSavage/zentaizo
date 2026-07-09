@@ -65,6 +65,8 @@ If a *different* agent will implement (e.g. one model plans, an implementing age
    - **Environment quirks** — sandbox/network prefixes, exact branch-creation commands, code-map freshness — *only* when this slice needs them; they are slice-specific, not standing rules.
 
    Closeout is not re-specified in the handoff: the implementor follows § Closing out below, and commit attribution follows the **implementing** agent's own rule, not the planner's.
+
+   Exception: when the *orchestrating* session (not the implementor) will make the commit — e.g. the implementor runs as a delegated subprocess and returns changes for review — record the implementor **when the delegated run returns**: `zentaizo delegation note --codex|--claude --repo <repo>`, once per touched repo. `zentaizo commit-trailer` then credits it as `Co-authored-by:` and the committing session as `Reviewed-by:`; run `zentaizo delegation clear` after the commit lands (see `AGENTS.md` § Commits).
 2. Hand off. The implementing agent reads `AGENTS.md` + the plan + the handoff, flips the plan to `status: in-progress`, and resumes at *Executing the plan* below.
 3. Handoffs are execution glue, not part of the plan's lifecycle: run `zentaizo next-handoff <id> resume` (or `restart`/`diagnosis`) for each restart — it auto-assigns the next per-slice letter, so repeated handoffs never collide — and remember they do **not** consume the `changes/`/`debugging/` counter (see `AGENTS.md` § Recording Work in `sessions/`).
 
@@ -89,7 +91,7 @@ When the work ships (or is abandoned):
    - **Links** — PRs, generated artifacts, related debugging or Q&A files.
 2. Set the frontmatter to `status: done` (or `abandoned`), and run `zentaizo edited <plan>` to log the closing edit.
 3. Review the `### Acceptance criteria` checklist. Mark each fulfilled item as `[x]`; leave unmet or only partially met items as `[ ]` and explain them under **Deviations from the plan** or **Follow-up work**.
-4. Show the user the final plan file. Ask whether to commit it alongside the code changes. Workspace plan commits and editable-repo code commits go to different repositories — see `AGENTS.md` § Commits. For AI-authored commits, run `zentaizo commit-trailer` and paste the printed `Co-authored-by:` line into the commit body.
+4. Show the user the final plan file. Ask whether to commit it alongside the code changes. Workspace plan commits and editable-repo code commits go to different repositories — see `AGENTS.md` § Commits. For AI-authored commits, run `zentaizo commit-trailer` and paste the printed trailer line(s) into the commit body; if the work was delegated (pending `delegation note` entries), it credits the implementor(s) as `Co-authored-by:` and the committer as `Reviewed-by:` — run `zentaizo delegation clear` after the commit lands.
 
 ## Boundaries — what this procedure does NOT do
 

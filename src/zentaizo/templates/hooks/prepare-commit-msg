@@ -117,7 +117,10 @@ def main(argv: list[str]) -> int:
         return 0
     provider, trailer = resolved
     existing = msg_path.read_text()
-    if re.search(rf"(?im)^Co-authored-by:\s+{re.escape(provider)}\b", existing):
+    # A Reviewed-by line for the provider also counts: `zentaizo commit-trailer`
+    # attributes a delegated commit's committer as Reviewed-by, and the hook must
+    # not re-add it as a spurious co-author.
+    if re.search(rf"(?im)^(?:Co-authored-by|Reviewed-by):\s+{re.escape(provider)}\b", existing):
         return 0  # idempotent per provider (amend / rebase / message reuse)
     _append_trailer(msg_path, trailer)
     return 0

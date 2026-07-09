@@ -447,7 +447,9 @@ Use `tmp/` as a workspace-local scratch directory. It's under `.gitignore` and i
 
 Commit at verified milestones. The Zentaizo-specific rule: **commit workspace notes/plans separately from editable-repo code** — they live in different repositories, so keeping them apart preserves a clean lineage.
 
-For AI-authored commits, run `zentaizo commit-trailer` and paste the printed `Co-authored-by:` line into the commit body you are already writing. It carries the real model + reasoning effort used, works without a per-repo hook (including vendored editable repos), and fails loudly if attribution cannot be resolved. The bundled commit-attribution hook remains a best-effort backstop when installed.
+For AI-authored commits, run `zentaizo commit-trailer` and paste the printed trailer line(s) into the commit body you are already writing. It carries the real model + reasoning effort used, works without a per-repo hook (including vendored editable repos), and fails loudly if attribution cannot be resolved. The bundled commit-attribution hook remains a best-effort backstop when installed.
+
+When implementation was **delegated** to another assistant (e.g. Claude orchestrates, Codex implements) and the orchestrating session commits the reviewed result, follow the delegation ritual — *note on return → `commit-trailer` at commit → `clear` after landing*: when the delegated run returns, record it with `zentaizo delegation note --codex|--claude --repo <repo>` (once per touched repo; `--as "<identity>"` overrides resolution). At commit time `zentaizo commit-trailer` then prints one `Co-authored-by:` per recorded implementor plus `Reviewed-by:` for the committing session (pass `--also-author` when the committer also wrote code); after the commit lands, run `zentaizo delegation clear`. Delegated attribution flows only through `commit-trailer` — the hook alone records just the committer.
 
 The effort doc carries only `created` + `edited_by` frontmatter; the registry owns `number`, `status`, and repo branch/base state. Slice files use the status-frontmatter schema (`status`/`created`/`label`/`editable_repos`/`edited_by` plus the optional `related` field), the `## Plan`/`## Outcome` body sections, and the acceptance-checkbox closeout rule documented in `skills/plan-and-implement.md` and scaffolded by `skills/plan-template.md`. The CLI fills `status`/`created`/`label` and stamps the first `edited_by:` entry (see § Editor attribution); you fill `editable_repos` (the subset of the effort's repos this slice touches) and the body. Each repo's branch and divergence base live in the effort registry (`sessions/efforts.json`), not in the plan frontmatter. Follow the skill/template rather than reproducing the schema here.
 
@@ -499,6 +501,25 @@ def _commit_hook_source() -> pathlib.Path:
     return pathlib.Path(str(traversable))
 
 
+def _resolve_git_dir(repo_dir: pathlib.Path) -> pathlib.Path | None:
+    """Resolve ``repo_dir``'s real git directory, following the ``gitdir:``
+    pointer file a worktree/submodule has in place of a ``.git`` directory.
+    Returns None when there is no git dir to resolve.
+    """
+    try:
+        git_dir = repo_dir / ".git"
+        if git_dir.is_file():
+            text = git_dir.read_text(errors="ignore")
+            if not text.startswith("gitdir:"):
+                return None
+            git_dir = (repo_dir / text.split(":", 1)[1].strip()).resolve()
+        if not git_dir.is_dir():
+            return None
+        return git_dir
+    except OSError:
+        return None
+
+
 def install_commit_attribution_hook(repo_dir: pathlib.Path) -> pathlib.Path | None:
     """Install or refresh the shared commit-attribution prepare-commit-msg hook
     in the git repo at ``repo_dir``.
@@ -513,12 +534,8 @@ def install_commit_attribution_hook(repo_dir: pathlib.Path) -> pathlib.Path | No
         src = _commit_hook_source()
         if not src.is_file():
             return None
-        git_dir = repo_dir / ".git"
-        if git_dir.is_file():  # worktree/submodule: ".git" is a "gitdir:" pointer
-            text = git_dir.read_text(errors="ignore")
-            if text.startswith("gitdir:"):
-                git_dir = (repo_dir / text.split(":", 1)[1].strip()).resolve()
-        if not git_dir.is_dir():
+        git_dir = _resolve_git_dir(repo_dir)
+        if git_dir is None:
             return None
         hooks_dir = git_dir / "hooks"
         hooks_dir.mkdir(parents=True, exist_ok=True)
@@ -662,13 +679,22 @@ def _with_effort(model: str, effort: str) -> str:
     return f"{model} (reasoning {effort})"
 
 
+_TRAILER_EMAILS = {"claude": "noreply@anthropic.com", "codex": "noreply@openai.com"}
+
+
+def _trailer_identity(provider: str, model: str, effort: str) -> str:
+    """The display-name part of a provider's attribution trailer."""
+    if provider == "claude":
+        return f"Claude {_with_effort(model, effort)}"
+    if provider == "codex":
+        return f"Codex {model} (reasoning {effort})" if effort else f"Codex {model}"
+    raise ValueError(f"unknown commit-trailer provider: {provider}")
+
+
 def _format_commit_trailer(provider: str, model: str, effort: str) -> str:
     """Format the canonical AI ``Co-authored-by`` trailer for a provider."""
-    if provider == "claude":
-        return f"Co-authored-by: Claude {_with_effort(model, effort)} <noreply@anthropic.com>"
-    if provider == "codex":
-        return f"Co-authored-by: Codex {model} (reasoning {effort}) <noreply@openai.com>"
-    raise ValueError(f"unknown commit-trailer provider: {provider}")
+    identity = _trailer_identity(provider, model, effort)
+    return f"Co-authored-by: {identity} <{_TRAILER_EMAILS[provider]}>"
 
 
 def _resolve_commit_trailer_identity(provider: str) -> tuple[str, str, str]:
@@ -697,8 +723,288 @@ def _resolve_commit_trailer_identity(provider: str) -> tuple[str, str, str]:
     return "", "", "unknown provider"
 
 
+# --- Delegation attribution (pending-authors ledger) ----------------------------
+#
+# When an orchestrating session delegates implementation to another assistant and
+# later commits the reviewed result, the environment answers *who is committing*,
+# not *who authored the changes*. `zentaizo delegation note` records the returned
+# delegation as one JSON file per entry under <git-dir>/zentaizo/pending-authors/
+# (per-checkout and uncommittable by construction; per-entry files make
+# concurrent notes safe). `zentaizo commit-trailer` is the sole consumer:
+# implementors become Co-authored-by, the committing session Reviewed-by, and
+# clearing is explicit (`zentaizo delegation clear`) — never implicit.
+
+# How old a cache `latest.json` may be for `delegation note` to trust it as the
+# delegated run's identity (--max-age overrides), and how old a ledger entry may
+# be before `commit-trailer` warns it might describe a different change.
+DELEGATION_FRESHNESS_HOURS = 6.0
+DELEGATION_STALENESS_HOURS = 24.0
+
+
+def _iso_age_hours(raw: object) -> float | None:
+    """Hours elapsed since an ISO-8601 timestamp, or None when unparseable."""
+    try:
+        stamp = datetime.fromisoformat(str(raw))
+    except (TypeError, ValueError):
+        return None
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=UTC)
+    return (datetime.now(UTC) - stamp).total_seconds() / 3600.0
+
+
+def _pending_authors_dir(repo_dir: pathlib.Path) -> pathlib.Path | None:
+    """The repo's pending-authors ledger directory, or None outside a git repo."""
+    git_dir = _resolve_git_dir(repo_dir)
+    if git_dir is None:
+        return None
+    return git_dir / "zentaizo" / "pending-authors"
+
+
+def _read_pending_authors(repo_dir: pathlib.Path) -> list[dict]:
+    """All pending ledger entries for a repo, oldest note first.
+
+    Tolerant reader: a corrupt or shapeless entry file is skipped with a stderr
+    warning rather than failing the commit-time path.
+    """
+    ledger = _pending_authors_dir(repo_dir)
+    if ledger is None or not ledger.is_dir():
+        return []
+    entries: list[dict] = []
+    for path in sorted(ledger.glob("*.json")):
+        try:
+            data = json.loads(path.read_text())
+        except (OSError, ValueError):
+            data = None
+        if not isinstance(data, dict) or not str(data.get("identity") or "").strip():
+            print(f"delegation: skipping unreadable ledger entry {path.name}", file=sys.stderr)
+            continue
+        data.setdefault("id", path.stem)
+        entries.append(data)
+    entries.sort(key=lambda e: (str(e.get("noted_at") or ""), str(e.get("id") or "")))
+    return entries
+
+
+def _append_pending_author(repo_dir: pathlib.Path, entry: dict) -> pathlib.Path:
+    """Write one ledger entry as its own file (assigning ``entry['id']``) and
+    return its path. The timestamp+random filename keeps concurrent and
+    same-second notes from colliding."""
+    ledger = _pending_authors_dir(repo_dir)
+    if ledger is None:
+        raise CliError(f"delegation: not a git repository: {repo_dir}", code=1)
+    ledger.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    entry_id = f"{stamp}-{os.urandom(4).hex()}"
+    path = ledger / f"{entry_id}.json"
+    path.write_text(json.dumps({"id": entry_id, **entry}, indent=2) + "\n")
+    return path
+
+
+def _clear_pending_authors(repo_dir: pathlib.Path, entry_id: str | None = None) -> int:
+    """Remove all ledger entries (or just ``entry_id``); returns the count removed."""
+    ledger = _pending_authors_dir(repo_dir)
+    if ledger is None or not ledger.is_dir():
+        return 0
+    removed = 0
+    for path in ledger.glob("*.json"):
+        if entry_id is not None and path.stem != entry_id:
+            continue
+        try:
+            path.unlink()
+        except OSError:
+            continue
+        removed += 1
+    return removed
+
+
+def _resolve_delegation_identity(provider: str, max_age_hours: float) -> tuple[str, str, str]:
+    """Resolve the delegated run's ``(model, effort, source)`` for `delegation note`.
+
+    Precedence: the session/thread-keyed cache entry, then ``latest.json`` only
+    when captured within ``max_age_hours``, then — Codex only — the configured
+    default from config.toml with a stderr warning that it may not be the model
+    the delegated run used. Returns blanks when nothing resolves. Unlike
+    ``_read_trailer_cache``, keyed and latest entries are read separately so the
+    freshness window gates only the shared ``latest.json`` fallback.
+    """
+    base = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
+    cache_dir = pathlib.Path(base) / provider / "commit-trailer"
+    key = os.environ.get("CODEX_THREAD_ID" if provider == "codex" else "CLAUDE_CODE_SESSION_ID")
+
+    def _accept(path: pathlib.Path) -> tuple[str, str] | None:
+        try:
+            data = json.loads(path.read_text())
+        except (OSError, ValueError):
+            return None
+        if not isinstance(data, dict):
+            return None
+        model = str(data.get("model") or "")
+        effort = str(data.get("effort") or "")
+        if provider == "claude" and not effort:
+            effort = os.environ.get("CLAUDE_EFFORT", "")
+        if not model or (provider == "codex" and not effort):
+            return None
+        if path.name == "latest.json":
+            age = _iso_age_hours(data.get("captured_at"))
+            if age is None or age > max_age_hours:
+                return None
+        return model, effort
+
+    safe_key = _safe_trailer_cache_key(key)
+    if safe_key:
+        accepted = _accept(cache_dir / f"{safe_key}.json")
+        if accepted:
+            return (*accepted, "cache")
+    accepted = _accept(cache_dir / "latest.json")
+    if accepted:
+        return (*accepted, "cache")
+    if provider == "codex":
+        model, effort = _read_codex_commit_trailer_config()
+        if model and effort:
+            print(
+                "delegation: using the configured Codex default from config.toml — "
+                "not necessarily the model the delegated run used; pass "
+                '--as "<identity>" to correct it',
+                file=sys.stderr,
+            )
+            return model, effort, "config"
+    return "", "", ""
+
+
+def _delegation_repo_dir(args: argparse.Namespace) -> pathlib.Path:
+    repo_dir = pathlib.Path(args.repo).expanduser()
+    if _resolve_git_dir(repo_dir) is None:
+        raise CliError(f"delegation: not a git repository: {repo_dir}", code=1)
+    return repo_dir
+
+
+def delegation_note(args: argparse.Namespace) -> int:
+    """Record a delegated implementor in the target repo's pending-authors ledger.
+
+    Run after a delegated run returns (review time), not at dispatch, so the
+    freshest cache entry is the delegated run itself.
+    """
+    provider = "codex" if args.codex else "claude"
+    repo_dir = _delegation_repo_dir(args)
+    override = (args.as_ or "").strip()
+    if override:
+        model, effort, source = "", "", "override"
+        identity = override
+    else:
+        model, effort, source = _resolve_delegation_identity(provider, args.max_age)
+        if not model:
+            config_hint = ", no complete config.toml" if provider == "codex" else ""
+            raise CliError(
+                f"delegation: no {provider} identity resolvable (no keyed cache "
+                f"entry, no latest.json fresher than {args.max_age:g}h"
+                f'{config_hint}); pass --as "<identity>"',
+                code=1,
+            )
+        identity = _trailer_identity(provider, model, effort)
+    entry = {
+        "provider": provider,
+        "model": model,
+        "effort": effort,
+        "identity": identity,
+        "role": "author",
+        "noted_at": utc_now(),
+        "source": source,
+    }
+    path = _append_pending_author(repo_dir, entry)
+    print(f"Recorded pending author: {identity} (source: {source})")
+    print(f"  {path}")
+    return 0
+
+
+def _age_label(age_hours: float | None) -> str:
+    if age_hours is None:
+        return "age unknown"
+    if age_hours < 1:
+        return f"{max(0, int(age_hours * 60))}m ago"
+    if age_hours < 48:
+        return f"{int(age_hours)}h ago"
+    return f"{int(age_hours / 24)}d ago"
+
+
+def delegation_list(args: argparse.Namespace) -> int:
+    """List the target repo's pending delegation entries with age + source."""
+    repo_dir = _delegation_repo_dir(args)
+    entries = _read_pending_authors(repo_dir)
+    if not entries:
+        print("No pending delegation entries.")
+        return 0
+    for entry in entries:
+        age = _age_label(_iso_age_hours(entry.get("noted_at")))
+        print(
+            f"{entry['id']}  {entry['identity']}  "
+            f"({entry.get('role') or 'author'}, source {entry.get('source') or 'unknown'}, "
+            f"noted {age})"
+        )
+    return 0
+
+
+def delegation_clear(args: argparse.Namespace) -> int:
+    """Explicitly close the delegation lifecycle after the commit lands."""
+    repo_dir = _delegation_repo_dir(args)
+    removed = _clear_pending_authors(repo_dir, args.id)
+    if args.id and not removed:
+        raise CliError(f"delegation: no ledger entry with id {args.id}", code=2)
+    noun = "entry" if removed == 1 else "entries"
+    print(f"Cleared {removed} delegation {noun}.")
+    return 0
+
+
+def _warn_unnoted_codex_session(repo_dir: pathlib.Path, provider: str) -> None:
+    """Empty-ledger safety net: warn on stderr when the Codex cache saw a
+    session more recently than the target repo's last commit, i.e. a delegation
+    may have gone unrecorded. Warn-only and narrow: Codex committing its own
+    work is not a delegation (skip when the committing provider is codex), any
+    git error skips silently, and the cache being global rather than repo-scoped
+    is accepted imprecision for a nudge.
+    """
+    if provider == "codex":
+        return
+    base = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
+    latest = pathlib.Path(base) / "codex" / "commit-trailer" / "latest.json"
+    try:
+        data = json.loads(latest.read_text())
+    except (OSError, ValueError):
+        return
+    if not isinstance(data, dict):
+        return
+    try:
+        captured = datetime.fromisoformat(str(data.get("captured_at")))
+    except (TypeError, ValueError):
+        return
+    if captured.tzinfo is None:
+        captured = captured.replace(tzinfo=UTC)
+    try:
+        head_raw = try_run_git(["log", "-1", "--format=%ct"], cwd=repo_dir)
+    except OSError:
+        return
+    if not head_raw:
+        return
+    try:
+        head_epoch = int(head_raw)
+    except ValueError:
+        return
+    if captured.timestamp() > head_epoch:
+        print(
+            "delegation: a Codex session ran more recently than this repo's last "
+            "commit but no delegation is recorded — run 'zentaizo delegation note "
+            "--codex' if Codex authored these changes",
+            file=sys.stderr,
+        )
+
+
 def commit_trailer(args: argparse.Namespace) -> int:
-    """Print the current assistant's canonical commit attribution trailer."""
+    """Print the current assistant's canonical commit attribution trailer.
+
+    Sole consumer of the pending-authors ledger: when `zentaizo delegation note`
+    recorded implementors for the target repo, they become ``Co-authored-by:``
+    lines (oldest note first) and the committing session becomes ``Reviewed-by:``
+    (``--also-author`` elevates it to both). With an empty ledger the single
+    ``Co-authored-by:`` output is unchanged.
+    """
     if getattr(args, "claude", False):
         provider = "claude"
     elif getattr(args, "codex", False):
@@ -721,7 +1027,49 @@ def commit_trailer(args: argparse.Namespace) -> int:
             "'cache-commit-trailer' first)",
             code=1,
         )
-    print(_format_commit_trailer(provider, model, effort))
+
+    repo_dir = pathlib.Path(getattr(args, "repo", None) or ".").expanduser()
+    coauthors: list[str] = []
+    credited: set[str] = set()  # per-role dedup: each identity at most once per role
+    stale = False
+    for entry in _read_pending_authors(repo_dir):
+        email = _TRAILER_EMAILS.get(str(entry.get("provider") or ""))
+        if email is None:
+            print(
+                f"delegation: skipping ledger entry {entry.get('id')} with unknown "
+                f"provider {entry.get('provider')!r}",
+                file=sys.stderr,
+            )
+            continue
+        identity = str(entry["identity"]).strip()
+        if identity in credited:
+            continue
+        credited.add(identity)
+        coauthors.append(f"Co-authored-by: {identity} <{email}>")
+        age = _iso_age_hours(entry.get("noted_at"))
+        if age is not None and age > DELEGATION_STALENESS_HOURS:
+            stale = True
+
+    if not coauthors:  # empty (or wholly unreadable) ledger: today's output, byte-identical
+        print(_format_commit_trailer(provider, model, effort))
+        _warn_unnoted_codex_session(repo_dir, provider)
+        return 0
+
+    committer = _trailer_identity(provider, model, effort)
+    if getattr(args, "also_author", False) and committer not in credited:
+        coauthors.append(f"Co-authored-by: {committer} <{_TRAILER_EMAILS[provider]}>")
+    print("\n".join([*coauthors, f"Reviewed-by: {committer} <{_TRAILER_EMAILS[provider]}>"]))
+    if stale:
+        print(
+            f"delegation: ledger has entries older than {DELEGATION_STALENESS_HOURS:g}h — "
+            "verify they still describe these changes, or 'zentaizo delegation clear' them",
+            file=sys.stderr,
+        )
+    print(
+        "delegation: entries consumed by this trailer block — run "
+        "'zentaizo delegation clear' after the commit lands",
+        file=sys.stderr,
+    )
     return 0
 
 
@@ -4669,7 +5017,78 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="resolve the trailer from the Codex cache/config, even outside Codex",
     )
+    commit_trailer_cmd.add_argument(
+        "--repo",
+        default=".",
+        metavar="PATH",
+        help="git repo whose pending-authors ledger to consume (default: current directory)",
+    )
+    commit_trailer_cmd.add_argument(
+        "--also-author",
+        action="store_true",
+        help="with a non-empty ledger, credit the committing session as "
+        "Co-authored-by too (it also wrote code), in addition to Reviewed-by",
+    )
     commit_trailer_cmd.set_defaults(func=commit_trailer)
+
+    delegation = sub.add_parser(
+        "delegation",
+        help="record delegated implementors so commit-trailer credits who "
+        "authored the changes, not just who commits them",
+    )
+    delegation_sub = delegation.add_subparsers(dest="delegation_command", required=True)
+
+    note = delegation_sub.add_parser(
+        "note", help="record a returned delegation in the repo's pending-authors ledger"
+    )
+    note_provider = note.add_mutually_exclusive_group(required=True)
+    note_provider.add_argument(
+        "--claude", action="store_true", help="the delegated implementor was Claude"
+    )
+    note_provider.add_argument(
+        "--codex", action="store_true", help="the delegated implementor was Codex"
+    )
+    note.add_argument(
+        "--repo",
+        default=".",
+        metavar="PATH",
+        help="git repo the delegation touched (default: current directory)",
+    )
+    note.add_argument(
+        "--as",
+        dest="as_",
+        metavar="IDENTITY",
+        help="record this identity verbatim instead of resolving it from the "
+        'cache/config (e.g. "Codex gpt-5.5 (reasoning xhigh)")',
+    )
+    note.add_argument(
+        "--max-age",
+        type=float,
+        default=DELEGATION_FRESHNESS_HOURS,
+        metavar="HOURS",
+        help="how old the cache latest.json may be and still count as the "
+        f"delegated run's identity (default: {DELEGATION_FRESHNESS_HOURS:g})",
+    )
+    note.set_defaults(func=delegation_note)
+
+    delegation_list_cmd = delegation_sub.add_parser(
+        "list", help="show pending delegation entries with age + source"
+    )
+    delegation_list_cmd.add_argument(
+        "--repo", default=".", metavar="PATH", help="git repo (default: current directory)"
+    )
+    delegation_list_cmd.set_defaults(func=delegation_list)
+
+    delegation_clear_cmd = delegation_sub.add_parser(
+        "clear", help="clear pending delegation entries after the commit lands"
+    )
+    delegation_clear_cmd.add_argument(
+        "--repo", default=".", metavar="PATH", help="git repo (default: current directory)"
+    )
+    delegation_clear_cmd.add_argument(
+        "--id", metavar="ID", help="clear only the entry with this id (see 'delegation list')"
+    )
+    delegation_clear_cmd.set_defaults(func=delegation_clear)
 
     edited = sub.add_parser(
         "edited",
