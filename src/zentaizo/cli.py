@@ -752,9 +752,29 @@ def _iso_age_hours(raw: object) -> float | None:
     return (datetime.now(UTC) - stamp).total_seconds() / 3600.0
 
 
+def _discover_git_dir(repo_dir: pathlib.Path) -> pathlib.Path | None:
+    """The git directory governing ``repo_dir``, discovered upward from a
+    subdirectory the way git itself resolves it (``rev-parse --absolute-git-dir``
+    also follows worktree/submodule ``gitdir:`` pointers). Falls back to the
+    exact-directory resolution when git is unavailable. Unlike
+    ``_resolve_git_dir`` — kept exact-dir so the hook installer never writes
+    into a parent repo — this is for state that belongs to whatever checkout
+    contains the path, like the pending-authors ledger.
+    """
+    try:
+        raw = try_run_git(["rev-parse", "--absolute-git-dir"], cwd=repo_dir)
+    except OSError:  # git binary missing, or repo_dir itself does not exist
+        raw = None
+    if raw:
+        git_dir = pathlib.Path(raw)
+        return git_dir if git_dir.is_dir() else None
+    return _resolve_git_dir(repo_dir)
+
+
 def _pending_authors_dir(repo_dir: pathlib.Path) -> pathlib.Path | None:
-    """The repo's pending-authors ledger directory, or None outside a git repo."""
-    git_dir = _resolve_git_dir(repo_dir)
+    """The pending-authors ledger directory for the checkout containing
+    ``repo_dir``, or None outside a git repo."""
+    git_dir = _discover_git_dir(repo_dir)
     if git_dir is None:
         return None
     return git_dir / "zentaizo" / "pending-authors"
@@ -872,7 +892,7 @@ def _resolve_delegation_identity(provider: str, max_age_hours: float) -> tuple[s
 
 def _delegation_repo_dir(args: argparse.Namespace) -> pathlib.Path:
     repo_dir = pathlib.Path(args.repo).expanduser()
-    if _resolve_git_dir(repo_dir) is None:
+    if _discover_git_dir(repo_dir) is None:
         raise CliError(f"delegation: not a git repository: {repo_dir}", code=1)
     return repo_dir
 
@@ -1033,6 +1053,14 @@ def commit_trailer(args: argparse.Namespace) -> int:
     credited: set[str] = set()  # per-role dedup: each identity at most once per role
     stale = False
     for entry in _read_pending_authors(repo_dir):
+        role = str(entry.get("role") or "author")  # CLI-written entries are authors
+        if role != "author":
+            print(
+                f"delegation: skipping ledger entry {entry.get('id')} with "
+                f"unhandled role {role!r}",
+                file=sys.stderr,
+            )
+            continue
         email = _TRAILER_EMAILS.get(str(entry.get("provider") or ""))
         if email is None:
             print(

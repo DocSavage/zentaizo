@@ -3446,6 +3446,15 @@ class DelegationLedgerTests(unittest.TestCase):
         # per-checkout by construction: the main repo's ledger is untouched
         self.assertFalse(self._ledger_dir().exists())
 
+    def test_note_discovers_repo_from_subdirectory(self):
+        subdir = self.repo / "src" / "pkg"
+        subdir.mkdir(parents=True)
+        code, _, _ = self._run(
+            ["delegation", "note", "--codex", "--repo", str(subdir), "--as", "Codex X"]
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(len(list(self._ledger_dir().glob("*.json"))), 1)
+
     # --- delegation list / clear ---------------------------------------------
 
     def test_list_shows_age_and_source(self):
@@ -3602,6 +3611,32 @@ class DelegationLedgerTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(stdout, f"{self.CLAUDE_TRAILER}\n")
         self.assertIn("skipping unreadable ledger entry bad.json", stderr)
+
+    def test_trailer_finds_ledger_from_repo_subdirectory(self):
+        self._write_entry("a.json", self._codex_entry())
+        subdir = self.repo / "src"
+        subdir.mkdir()
+        code, stdout, _ = self._run(
+            ["commit-trailer", "--repo", str(subdir)], env=self._claude_committer_env()
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(stdout, f"{self.CODEX_TRAILER}\n{self.CLAUDE_REVIEWED}\n")
+
+    def test_trailer_skips_non_author_role_with_warning(self):
+        self._write_entry("a.json", self._codex_entry(id="a", role="reviewer"))
+        self._write_entry("b.json", self._codex_entry(id="b"))
+        code, stdout, stderr = self._trailer()
+        self.assertEqual(code, 0)
+        self.assertEqual(stdout, f"{self.CODEX_TRAILER}\n{self.CLAUDE_REVIEWED}\n")
+        self.assertIn("unhandled role 'reviewer'", stderr)
+
+    def test_trailer_treats_missing_role_as_author(self):
+        entry = self._codex_entry()
+        del entry["role"]
+        self._write_entry("a.json", entry)
+        code, stdout, _ = self._trailer()
+        self.assertEqual(code, 0)
+        self.assertEqual(stdout, f"{self.CODEX_TRAILER}\n{self.CLAUDE_REVIEWED}\n")
 
     def test_trailer_skips_unknown_provider_entry_with_warning(self):
         self._write_entry(
