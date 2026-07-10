@@ -19,8 +19,10 @@ from zentaizo.cli import (
     _codex_editor_identity,
     _HttpResult,
     _preserve_unchanged_fetched_at,
+    _read_codex_rollout_log,
     _repo_identity,
     _stamp_edited_by,
+    agent_editor_identity,
     compute_policy,
     default_atlas,
     git_style_now,
@@ -2587,6 +2589,25 @@ class CommitAttributionHookTests(unittest.TestCase):
             code = main(["commit-trailer", *(argv or [])])
         return code, stdout.getvalue(), stderr.getvalue()
 
+    def _write_rollout(
+        self,
+        codex_home: Path,
+        thread: str,
+        turns: list[tuple[str, str]],
+        when: str = "2026-07-10T08-54-09",
+    ) -> Path:
+        """A minimal Codex rollout log: session_meta plus one turn_context per turn."""
+        day = codex_home / "sessions" / "2026" / "07" / "10"
+        day.mkdir(parents=True, exist_ok=True)
+        lines = [json.dumps({"type": "session_meta", "payload": {"id": thread}})]
+        lines += [
+            json.dumps({"type": "turn_context", "payload": {"model": model, "effort": effort}})
+            for model, effort in turns
+        ]
+        path = day / f"rollout-{when}-{thread}.jsonl"
+        path.write_text("\n".join(lines) + "\n")
+        return path
+
     # --- installer -----------------------------------------------------------
 
     def test_installer_installs_and_is_idempotent(self):
@@ -2674,6 +2695,122 @@ class CommitAttributionHookTests(unittest.TestCase):
                 "Co-authored-by: Codex gpt-5.5 (reasoning xhigh) <noreply@openai.com>",
                 msg.read_text(),
             )
+
+    # --- hook: Codex runs delegated from a Claude session ---------------------
+    #
+    # The codex CLI injects CODEX_THREAD_ID into the shells of its own run,
+    # while CLAUDECODE is inherited from the spawning Claude session — so a
+    # commit made *by* Codex during a delegated run sees both markers, and the
+    # innermost assistant (Codex) must win.
+
+    def _nested_env(self, tmp: str, thread: str = "thread-xyz") -> dict[str, str]:
+        codex_home = Path(tmp) / "codex-home"
+        codex_home.mkdir(exist_ok=True)
+        return {
+            "XDG_CACHE_HOME": str(Path(tmp) / "cache"),
+            "CODEX_HOME": str(codex_home),
+            "CLAUDECODE": "1",
+            "CLAUDE_CODE_SESSION_ID": "sid",
+            "CLAUDE_EFFORT": "xhigh",
+            "CODEX_THREAD_ID": thread,
+        }
+
+    @unittest.skipUnless(_HAVE_GIT, "test needs git")
+    def test_hook_prefers_codex_when_nested_in_claude_session(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._git_repo(tmp)
+            env = self._nested_env(tmp)
+            claude_cache = Path(tmp) / "cache" / "claude" / "commit-trailer"
+            claude_cache.mkdir(parents=True)
+            (claude_cache / "sid.json").write_text(
+                json.dumps({"model": "Fable 5", "effort": "xhigh"})
+            )
+            codex_cache = Path(tmp) / "cache" / "codex" / "commit-trailer"
+            codex_cache.mkdir(parents=True)
+            (codex_cache / "thread-xyz.json").write_text(
+                json.dumps({"provider": "codex", "model": "gpt-5.6-terra", "effort": "xhigh"})
+            )
+            msg = Path(tmp) / "MSG"
+            msg.write_text("subject\n")
+            res = self._run_hook(repo, msg, env=env)
+            self.assertEqual(res.returncode, 0)
+            text = msg.read_text()
+            self.assertIn(
+                "Co-authored-by: Codex gpt-5.6-terra (reasoning xhigh) <noreply@openai.com>",
+                text,
+            )
+            self.assertNotIn("Claude", text)
+
+    @unittest.skipUnless(_HAVE_GIT, "test needs git")
+    def test_hook_codex_falls_back_to_rollout_log(self):
+        # No trailer cache at all (the delegated-run shape): the run's own
+        # rollout log supplies the identity; the last turn_context wins.
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._git_repo(tmp)
+            env = self._nested_env(tmp)
+            self._write_rollout(
+                Path(env["CODEX_HOME"]),
+                "thread-xyz",
+                [("gpt-5.5", "medium"), ("gpt-5.6-terra", "xhigh")],
+            )
+            msg = Path(tmp) / "MSG"
+            msg.write_text("subject\n")
+            res = self._run_hook(repo, msg, env=env)
+            self.assertEqual(res.returncode, 0)
+            self.assertIn(
+                "Co-authored-by: Codex gpt-5.6-terra (reasoning xhigh) <noreply@openai.com>",
+                msg.read_text(),
+            )
+
+    @unittest.skipUnless(_HAVE_GIT, "test needs git")
+    def test_hook_codex_source_precedence(self):
+        # Keyed cache beats the rollout log beats latest.json.
+        with tempfile.TemporaryDirectory() as tmp:
+            env = self._nested_env(tmp)
+            codex_cache = Path(tmp) / "cache" / "codex" / "commit-trailer"
+            codex_cache.mkdir(parents=True)
+            (codex_cache / "latest.json").write_text(
+                json.dumps({"provider": "codex", "model": "latest-model", "effort": "low"})
+            )
+            repo = self._git_repo(tmp)
+
+            def _trailer_model() -> str:
+                msg = Path(tmp) / "MSG"
+                msg.write_text("subject\n")
+                self.assertEqual(self._run_hook(repo, msg, env=env).returncode, 0)
+                (line,) = [
+                    ln for ln in msg.read_text().splitlines() if ln.startswith("Co-authored-by:")
+                ]
+                return line
+
+            self.assertIn("latest-model", _trailer_model())
+            self._write_rollout(
+                Path(env["CODEX_HOME"]), "thread-xyz", [("rollout-model", "xhigh")]
+            )
+            self.assertIn("rollout-model", _trailer_model())
+            (codex_cache / "thread-xyz.json").write_text(
+                json.dumps({"provider": "codex", "model": "keyed-model", "effort": "xhigh"})
+            )
+            self.assertIn("keyed-model", _trailer_model())
+
+    @unittest.skipUnless(_HAVE_GIT, "test needs git")
+    def test_hook_nested_codex_without_identity_emits_no_trailer(self):
+        # Fail-open must not fall through to the wrong provider: with Codex
+        # committing but no resolvable Codex identity, a Claude cache entry is
+        # NOT used — no trailer beats a wrong one.
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._git_repo(tmp)
+            env = self._nested_env(tmp)
+            claude_cache = Path(tmp) / "cache" / "claude" / "commit-trailer"
+            claude_cache.mkdir(parents=True)
+            (claude_cache / "sid.json").write_text(
+                json.dumps({"model": "Fable 5", "effort": "xhigh"})
+            )
+            msg = Path(tmp) / "MSG"
+            msg.write_text("subject\n")
+            res = self._run_hook(repo, msg, env=env)
+            self.assertEqual(res.returncode, 0)
+            self.assertEqual(msg.read_text(), "subject\n")
 
     @unittest.skipUnless(_HAVE_GIT, "test needs git")
     def test_hook_does_not_duplicate_trailer(self):
@@ -2907,6 +3044,34 @@ class CommitAttributionHookTests(unittest.TestCase):
             self.assertEqual(data["model"], "gpt-5.5")
             self.assertEqual(data["effort"], "xhigh")
 
+    def test_cache_commit_trailer_codex_prefers_rollout_over_config(self):
+        # The rollout log records the model the run actually uses; config.toml
+        # only knows the configured default. The producer must prefer the run.
+        with tempfile.TemporaryDirectory() as tmp:
+            codex_home = Path(tmp) / "codex-home"
+            codex_home.mkdir()
+            (codex_home / "config.toml").write_text(
+                'model = "config-model"\nmodel_reasoning_effort = "low"\n'
+            )
+            self._write_rollout(codex_home, "thread-xyz", [("gpt-5.6-terra", "xhigh")])
+            cache_home = Path(tmp) / "cache"
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "CODEX_HOME": str(codex_home),
+                    "XDG_CACHE_HOME": str(cache_home),
+                    "CODEX_THREAD_ID": "thread-xyz",
+                },
+                clear=False,
+            ):
+                self.assertEqual(main(["cache-commit-trailer", "--codex"]), 0)
+
+            data = json.loads(
+                (cache_home / "codex" / "commit-trailer" / "thread-xyz.json").read_text()
+            )
+            self.assertEqual(data["model"], "gpt-5.6-terra")
+            self.assertEqual(data["effort"], "xhigh")
+
     def test_cache_commit_trailer_codex_noops_without_complete_config(self):
         with tempfile.TemporaryDirectory() as tmp:
             codex_home = Path(tmp) / "codex-home"
@@ -2966,6 +3131,84 @@ class CommitAttributionHookTests(unittest.TestCase):
                 stdout,
                 "Co-authored-by: Codex gpt-5.5 (reasoning xhigh) <noreply@openai.com>\n",
             )
+
+    def test_commit_trailer_prefers_codex_when_nested_in_claude_session(self):
+        # Both markers present (Codex run delegated from a Claude session):
+        # the innermost assistant made the commit.
+        with tempfile.TemporaryDirectory() as tmp:
+            for provider, filename, payload in (
+                ("claude", "sid.json", {"model": "Fable 5", "effort": "xhigh"}),
+                ("codex", "thread-xyz.json", {"model": "gpt-5.6-terra", "effort": "xhigh"}),
+            ):
+                cache = Path(tmp) / "cache" / provider / "commit-trailer"
+                cache.mkdir(parents=True)
+                (cache / filename).write_text(json.dumps(payload))
+            code, stdout, stderr = self._run_commit_trailer(env=self._nested_env(tmp))
+            self.assertEqual(code, 0)
+            self.assertEqual(stderr, "")
+            self.assertEqual(
+                stdout,
+                "Co-authored-by: Codex gpt-5.6-terra (reasoning xhigh) <noreply@openai.com>\n",
+            )
+
+    def test_commit_trailer_codex_resolves_from_rollout_and_populates_cache(self):
+        # Nothing populated the trailer cache during the run: the rollout log
+        # resolves the identity and the resolution is written back to the cache.
+        with tempfile.TemporaryDirectory() as tmp:
+            env = self._nested_env(tmp)
+            self._write_rollout(Path(env["CODEX_HOME"]), "thread-xyz", [("gpt-5.6-terra", "xhigh")])
+            code, stdout, stderr = self._run_commit_trailer(env=env)
+            self.assertEqual(code, 0)
+            self.assertEqual(stderr, "")
+            self.assertEqual(
+                stdout,
+                "Co-authored-by: Codex gpt-5.6-terra (reasoning xhigh) <noreply@openai.com>\n",
+            )
+            keyed = Path(tmp) / "cache" / "codex" / "commit-trailer" / "thread-xyz.json"
+            self.assertEqual(json.loads(keyed.read_text())["model"], "gpt-5.6-terra")
+
+    def test_agent_editor_identity_prefers_codex_when_nested(self):
+        # `zentaizo edited` run by Codex inside a companion run must stamp
+        # Codex, resolved from the run's own rollout log.
+        with tempfile.TemporaryDirectory() as tmp:
+            env = self._nested_env(tmp)
+            self._write_rollout(Path(env["CODEX_HOME"]), "thread-xyz", [("gpt-5.6-terra", "xhigh")])
+            clean = {
+                key: value
+                for key, value in os.environ.items()
+                if key not in ("CLAUDECODE", "CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID")
+            }
+            with mock.patch.dict(os.environ, {**clean, **env}, clear=True):
+                self.assertEqual(agent_editor_identity(), "Codex gpt-5.6-terra (reasoning xhigh)")
+
+    def test_read_codex_rollout_log_edge_cases(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            codex_home = Path(tmp) / "codex-home"
+            with mock.patch.dict(os.environ, {"CODEX_HOME": str(codex_home)}, clear=False):
+                # No sessions dir at all.
+                self.assertEqual(_read_codex_rollout_log("thread-xyz"), ("", ""))
+                # Glob-unsafe / absent thread ids resolve to nothing.
+                self.assertEqual(_read_codex_rollout_log(None), ("", ""))
+                self.assertEqual(_read_codex_rollout_log("thread/../xyz"), ("", ""))
+                # Corrupt lines are skipped; a turn_context without an effort
+                # is not a complete identity.
+                path = self._write_rollout(codex_home, "thread-xyz", [("gpt-5.6-terra", "")])
+                self.assertEqual(_read_codex_rollout_log("thread-xyz"), ("", ""))
+                path.write_text(
+                    'not json\n{"type": "turn_context", "payload": '
+                    '{"model": "gpt-5.6-terra", "effort": "xhigh"}}\n'
+                )
+                self.assertEqual(
+                    _read_codex_rollout_log("thread-xyz"), ("gpt-5.6-terra", "xhigh")
+                )
+                # Several rollout files for one thread (resumed run): newest wins.
+                self._write_rollout(
+                    codex_home, "thread-xyz", [("resumed-model", "high")],
+                    when="2026-07-10T09-00-00",
+                )
+                self.assertEqual(
+                    _read_codex_rollout_log("thread-xyz"), ("resumed-model", "high")
+                )
 
     def test_commit_trailer_uses_latest_cache_fallback(self):
         with tempfile.TemporaryDirectory() as tmp:

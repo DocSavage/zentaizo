@@ -449,7 +449,7 @@ Commit at verified milestones. The Zentaizo-specific rule: **commit workspace no
 
 For AI-authored commits, run `zentaizo commit-trailer` and paste the printed trailer line(s) into the commit body you are already writing. It carries the real model + reasoning effort used, works without a per-repo hook (including vendored editable repos), and fails loudly if attribution cannot be resolved. The bundled commit-attribution hook remains a best-effort backstop when installed.
 
-When implementation was **delegated** to another assistant (e.g. Claude orchestrates, Codex implements) and the orchestrating session commits the reviewed result, follow the delegation ritual — *note on return → `commit-trailer` at commit → `clear` after landing*: when the delegated run returns, record it with `zentaizo delegation note --codex|--claude --repo <repo>` (once per touched repo; `--as "<identity>"` overrides resolution). At commit time `zentaizo commit-trailer` then prints one `Co-authored-by:` per recorded implementor plus `Reviewed-by:` for the committing session (pass `--also-author` when the committer also wrote code); after the commit lands, run `zentaizo delegation clear`. Delegated attribution flows only through `commit-trailer` — the hook alone records just the committer.
+When implementation was **delegated** to another assistant (e.g. Claude orchestrates, Codex implements) and the orchestrating session commits the reviewed result, follow the delegation ritual — *note on return → `commit-trailer` at commit → `clear` after landing*: when the delegated run returns, record it with `zentaizo delegation note --codex|--claude --repo <repo>` (once per touched repo; `--as "<identity>"` overrides resolution). At commit time `zentaizo commit-trailer` then prints one `Co-authored-by:` per recorded implementor plus `Reviewed-by:` for the committing session (pass `--also-author` when the committer also wrote code); after the commit lands, run `zentaizo delegation clear`. Delegated attribution flows only through `commit-trailer` — the hook alone records just the committer. The other delegation shape needs no ritual: when the delegated assistant commits *during* its own run, the hook detects the innermost assistant (a Codex run inside a Claude session stamps Codex, resolved from the run's own rollout log) — no `delegation note` for those commits.
 
 The effort doc carries only `created` + `edited_by` frontmatter; the registry owns `number`, `status`, and repo branch/base state. Slice files use the status-frontmatter schema (`status`/`created`/`label`/`editable_repos`/`edited_by` plus the optional `related` field), the `## Plan`/`## Outcome` body sections, and the acceptance-checkbox closeout rule documented in `skills/plan-and-implement.md` and scaffolded by `skills/plan-template.md`. The CLI fills `status`/`created`/`label` and stamps the first `edited_by:` entry (see § Editor attribution); you fill `editable_repos` (the subset of the effort's repos this slice touches) and the body. Each repo's branch and divergence base live in the effort registry (`sessions/efforts.json`), not in the plan frontmatter. Follow the skill/template rather than reproducing the schema here.
 
@@ -562,14 +562,18 @@ def _safe_trailer_cache_key(key: str | None) -> str | None:
     return safe or None
 
 
+def _trailer_cache_dir(provider: str) -> pathlib.Path:
+    base = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
+    return pathlib.Path(base) / provider / "commit-trailer"
+
+
 def _write_trailer_cache(provider: str, model: str, effort: str, key: str | None) -> None:
     """Write a commit-trailer cache entry the prepare-commit-msg hook consumes.
 
     Keyed by session/thread id so concurrent sessions do not clobber each other,
     plus a ``latest.json`` fallback. Same schema shape for every provider.
     """
-    base = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
-    cache_dir = pathlib.Path(base) / provider / "commit-trailer"
+    cache_dir = _trailer_cache_dir(provider)
     payload = json.dumps(
         {"provider": provider, "model": model, "effort": effort, "captured_at": utc_now()}
     )
@@ -602,6 +606,94 @@ def _read_codex_commit_trailer_config() -> tuple[str, str]:
     )
 
 
+def _read_codex_rollout_log(thread_id: str | None) -> tuple[str, str]:
+    """The (model, effort) a Codex run actually used, from its own rollout log.
+
+    Codex writes ``sessions/YYYY/MM/DD/rollout-<ts>-<thread>.jsonl`` under
+    ``$CODEX_HOME`` as it runs; each ``turn_context`` line records the live
+    model + reasoning effort. This is ground truth for the run's identity even
+    when nothing populated the trailer cache — the delegated-run case, where
+    config.toml only knows the configured default. Newest matching file wins;
+    within it the last ``turn_context`` (the model can change mid-thread).
+    Mirrored by the standalone prepare-commit-msg hook, which must stay
+    self-contained. Returns blanks when no complete identity is recorded.
+    """
+    if not thread_id or not re.fullmatch(r"[A-Za-z0-9_-]+", thread_id):
+        return "", ""
+    base = os.environ.get("CODEX_HOME") or os.path.expanduser("~/.codex")
+    try:
+        matches = sorted(
+            pathlib.Path(base, "sessions").glob(f"*/*/*/rollout-*-{thread_id}.jsonl"),
+            key=lambda p: p.name,
+            reverse=True,
+        )
+    except OSError:
+        return "", ""
+    for path in matches:
+        model = effort = ""
+        try:
+            with path.open(encoding="utf-8", errors="replace") as lines:
+                for line in lines:
+                    if '"turn_context"' not in line:
+                        continue
+                    try:
+                        record = json.loads(line)
+                    except ValueError:
+                        continue
+                    payload = record.get("payload") if isinstance(record, dict) else None
+                    if not isinstance(payload, dict):
+                        continue
+                    found_model = str(payload.get("model") or "")
+                    found_effort = str(payload.get("effort") or "")
+                    if found_model:
+                        model, effort = found_model, found_effort
+        except OSError:
+            continue
+        if model and effort:
+            return model, effort
+    return "", ""
+
+
+def _resolve_codex_identity() -> tuple[str, str]:
+    """Resolve the current Codex run's (model, effort), best source first.
+
+    Thread-keyed cache entry → the run's own rollout log → shared
+    ``latest.json`` → configured default from config.toml. Exact per-run
+    sources outrank the global heuristics. A rollout or config resolution is
+    written back to the cache so later consumers (the hook, ``delegation
+    note`` after the run returns) see a fresh entry. A rung that yields a
+    model without an effort is kept only as a last resort, so the caller can
+    distinguish "no model" from "no effort".
+    """
+    thread = os.environ.get("CODEX_THREAD_ID")
+    cache_dir = _trailer_cache_dir("codex")
+    partial: tuple[str, str] = ("", "")
+
+    def _remember(model: str, effort: str) -> bool:
+        nonlocal partial
+        if model and not partial[0]:
+            partial = (model, effort)
+        return bool(model and effort)
+
+    safe_key = _safe_trailer_cache_key(thread)
+    if safe_key:
+        model, effort = _read_trailer_cache_file(cache_dir / f"{safe_key}.json")
+        if _remember(model, effort):
+            return model, effort
+    model, effort = _read_codex_rollout_log(thread)
+    if _remember(model, effort):
+        _write_trailer_cache("codex", model, effort, thread)
+        return model, effort
+    model, effort = _read_trailer_cache_file(cache_dir / "latest.json")
+    if _remember(model, effort):
+        return model, effort
+    model, effort = _read_codex_commit_trailer_config()
+    if _remember(model, effort):
+        _write_trailer_cache("codex", model, effort, thread)
+        return model, effort
+    return partial
+
+
 def cache_commit_trailer(args: argparse.Namespace) -> int:
     """Producer for the commit-attribution hook: capture the current assistant's
     model + reasoning effort into a cache the hook reads at commit time.
@@ -611,9 +703,15 @@ def cache_commit_trailer(args: argparse.Namespace) -> int:
     the hook work on any install of Zentaizo.
     """
     if getattr(args, "codex", False):
-        model, effort = _read_codex_commit_trailer_config()
+        # Producer: capture per-run ground truth only — the run's own rollout
+        # log (the model actually in use), else the configured default from
+        # config.toml. Never the caches this command exists to write.
+        thread = os.environ.get("CODEX_THREAD_ID")
+        model, effort = _read_codex_rollout_log(thread)
+        if not (model and effort):
+            model, effort = _read_codex_commit_trailer_config()
         if model and effort:
-            _write_trailer_cache("codex", model, effort, os.environ.get("CODEX_THREAD_ID"))
+            _write_trailer_cache("codex", model, effort, thread)
         return 0
 
     # --claude: the Claude Code statusline JSON arrives on stdin and is the only
@@ -650,20 +748,27 @@ def _read_trailer_cache(provider: str, key: str | None) -> tuple[str, str]:
     ``zentaizo commit-trailer``) reads the same cache so ``edited_by`` and the
     commit ``Co-authored-by`` trailer report the same model identity.
     """
-    base = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
-    cache_dir = pathlib.Path(base) / provider / "commit-trailer"
+    cache_dir = _trailer_cache_dir(provider)
     candidates: list[pathlib.Path] = []
     safe_key = _safe_trailer_cache_key(key)
     if safe_key:
         candidates.append(cache_dir / f"{safe_key}.json")
     candidates.append(cache_dir / "latest.json")
     for path in candidates:
-        try:
-            data = json.loads(path.read_text())
-        except (OSError, ValueError):
-            continue
-        if isinstance(data, dict):
-            return str(data.get("model") or ""), str(data.get("effort") or "")
+        model, effort = _read_trailer_cache_file(path)
+        if model or effort:
+            return model, effort
+    return "", ""
+
+
+def _read_trailer_cache_file(path: pathlib.Path) -> tuple[str, str]:
+    """Read one cache entry file; blanks when missing, corrupt, or not a dict."""
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return "", ""
+    if isinstance(data, dict):
+        return str(data.get("model") or ""), str(data.get("effort") or "")
     return "", ""
 
 
@@ -708,12 +813,7 @@ def _resolve_commit_trailer_identity(provider: str) -> tuple[str, str, str]:
         return model, effort, ""
 
     if provider == "codex":
-        model, effort = _read_trailer_cache("codex", os.environ.get("CODEX_THREAD_ID"))
-        if not (model and effort):
-            config_model, config_effort = _read_codex_commit_trailer_config()
-            if config_model and config_effort:
-                model, effort = config_model, config_effort
-                _write_trailer_cache("codex", model, effort, os.environ.get("CODEX_THREAD_ID"))
+        model, effort = _resolve_codex_identity()
         if not model:
             return "", "", "no cached Codex model identity"
         if not effort:
@@ -1027,12 +1127,13 @@ def commit_trailer(args: argparse.Namespace) -> int:
     """
     if getattr(args, "claude", False):
         provider = "claude"
-    elif getattr(args, "codex", False):
+    # Env sniffing is innermost-assistant-first: CODEX_THREAD_ID exists only
+    # inside a live Codex run, while CLAUDECODE leaks into delegated runs from
+    # the spawning Claude session — when both are present, Codex is committing.
+    elif getattr(args, "codex", False) or os.environ.get("CODEX_THREAD_ID"):
         provider = "codex"
     elif os.environ.get("CLAUDECODE"):
         provider = "claude"
-    elif os.environ.get("CODEX_THREAD_ID"):
-        provider = "codex"
     else:
         raise CliError(
             "commit-trailer: no AI provider detected (run inside a Claude/Codex "
@@ -1111,11 +1212,7 @@ def _claude_editor_identity() -> str:
 
 
 def _codex_editor_identity() -> str:
-    model, effort = _read_trailer_cache("codex", os.environ.get("CODEX_THREAD_ID"))
-    if not model:
-        model, effort = _read_codex_commit_trailer_config()
-        if model and effort:
-            _write_trailer_cache("codex", model, effort, os.environ.get("CODEX_THREAD_ID"))
+    model, effort = _resolve_codex_identity()
     if not model:
         return "Codex (model unknown)"
     return f"Codex {model} (reasoning {effort})" if effort else f"Codex {model}"
@@ -1129,12 +1226,14 @@ def agent_editor_identity() -> str | None:
     from its local config when a session starts cold. When an assistant
     environment is detected but no trusted identity source is available, it
     returns a ``<Provider> (model unknown)`` label rather than None — so an AI's
-    edit is never silently misattributed to the human git user.
+    edit is never silently misattributed to the human git user. Innermost
+    assistant first: CODEX_THREAD_ID exists only inside a live Codex run, while
+    CLAUDECODE leaks into delegated runs from the spawning Claude session.
     """
-    if os.environ.get("CLAUDECODE"):
-        return _claude_editor_identity()
     if os.environ.get("CODEX_THREAD_ID"):
         return _codex_editor_identity()
+    if os.environ.get("CLAUDECODE"):
+        return _claude_editor_identity()
     return None
 
 

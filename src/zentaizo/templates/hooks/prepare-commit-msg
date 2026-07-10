@@ -9,7 +9,16 @@ reads a cache that its producer wrote -- ``zentaizo cache-commit-trailer
 
   - Claude: ``~/.cache/claude/commit-trailer/`` (producer reads the Claude Code
     statusline JSON, the only place the friendly model name is exposed).
-  - Codex:  ``~/.cache/codex/commit-trailer/``.
+  - Codex:  ``~/.cache/codex/commit-trailer/``, with the run's own rollout log
+    (``$CODEX_HOME/sessions/.../rollout-*-<thread>.jsonl``) as fallback when the
+    cache was never populated -- the log records the model + effort the run
+    actually used.
+
+Provider detection is innermost-first: ``CODEX_THREAD_ID`` is injected by the
+codex CLI only into the shells of a live Codex run, while ``CLAUDECODE`` is
+inherited by everything a Claude Code session spawns -- including delegated
+Codex runs. When both are present, the innermost assistant (Codex) made the
+commit.
 
 Operational model: installed repo-locally as ``.git/hooks/prepare-commit-msg``.
 The installer refuses to overwrite an unrelated project hook, so this never
@@ -35,21 +44,76 @@ def _safe_cache_key(key: str | None) -> str | None:
     return safe or None
 
 
-def _read_cache(provider: str, key: str | None) -> tuple[str, str]:
+def _cache_dir(provider: str) -> pathlib.Path:
     base = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
-    cache_dir = pathlib.Path(base) / provider / "commit-trailer"
+    return pathlib.Path(base) / provider / "commit-trailer"
+
+
+def _read_cache_file(path: pathlib.Path) -> tuple[str, str]:
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return "", ""
+    if isinstance(data, dict):
+        return str(data.get("model") or ""), str(data.get("effort") or "")
+    return "", ""
+
+
+def _read_cache(provider: str, key: str | None) -> tuple[str, str]:
     candidates = []
     safe_key = _safe_cache_key(key)
     if safe_key:
-        candidates.append(cache_dir / f"{safe_key}.json")
-    candidates.append(cache_dir / "latest.json")
+        candidates.append(_cache_dir(provider) / f"{safe_key}.json")
+    candidates.append(_cache_dir(provider) / "latest.json")
     for path in candidates:
+        model, effort = _read_cache_file(path)
+        if model or effort:
+            return model, effort
+    return "", ""
+
+
+def _read_codex_rollout(thread_id: str | None) -> tuple[str, str]:
+    """The (model, effort) a Codex run actually used, from its own rollout log.
+
+    Codex writes ``sessions/YYYY/MM/DD/rollout-<ts>-<thread>.jsonl`` under
+    ``$CODEX_HOME`` as it runs; each ``turn_context`` line records the live
+    model + reasoning effort -- ground truth even when nothing populated the
+    trailer cache (the delegated-run case). Newest matching file wins; within
+    it the last ``turn_context`` (the model can change mid-thread).
+    """
+    if not thread_id or not re.fullmatch(r"[A-Za-z0-9_-]+", thread_id):
+        return "", ""
+    base = os.environ.get("CODEX_HOME") or os.path.expanduser("~/.codex")
+    try:
+        matches = sorted(
+            pathlib.Path(base, "sessions").glob(f"*/*/*/rollout-*-{thread_id}.jsonl"),
+            key=lambda p: p.name,
+            reverse=True,
+        )
+    except OSError:
+        return "", ""
+    for path in matches:
+        model = effort = ""
         try:
-            data = json.loads(path.read_text())
-        except (OSError, ValueError):
+            with path.open(encoding="utf-8", errors="replace") as lines:
+                for line in lines:
+                    if '"turn_context"' not in line:
+                        continue
+                    try:
+                        record = json.loads(line)
+                    except ValueError:
+                        continue
+                    payload = record.get("payload") if isinstance(record, dict) else None
+                    if not isinstance(payload, dict):
+                        continue
+                    found_model = str(payload.get("model") or "")
+                    found_effort = str(payload.get("effort") or "")
+                    if found_model:
+                        model, effort = found_model, found_effort
+        except OSError:
             continue
-        if isinstance(data, dict):
-            return str(data.get("model") or ""), str(data.get("effort") or "")
+        if model and effort:
+            return model, effort
     return "", ""
 
 
@@ -72,20 +136,36 @@ def _claude_trailer() -> str | None:
 
 
 def _codex_trailer() -> str | None:
-    model, effort = _read_cache("codex", os.environ.get("CODEX_THREAD_ID"))
-    if not (model and effort):  # Codex: only attribute when both are cached
+    # Thread-keyed cache entry, then the run's own rollout log, then the shared
+    # latest.json -- exact sources before the global heuristic. Only attribute
+    # when both model and effort are known.
+    thread = os.environ.get("CODEX_THREAD_ID")
+    model, effort = "", ""
+    safe_key = _safe_cache_key(thread)
+    if safe_key:
+        model, effort = _read_cache_file(_cache_dir("codex") / f"{safe_key}.json")
+    if not (model and effort):
+        model, effort = _read_codex_rollout(thread)
+    if not (model and effort):
+        model, effort = _read_cache_file(_cache_dir("codex") / "latest.json")
+    if not (model and effort):
         return None
     return f"Co-authored-by: Codex {model} (reasoning {effort}) <noreply@openai.com>"
 
 
 def _provider_trailer() -> tuple[str, str] | None:
-    """Return (provider_name, trailer_line) for the active assistant, or None."""
-    if os.environ.get("CLAUDECODE"):
-        trailer = _claude_trailer()
-        return ("Claude", trailer) if trailer else None
+    """Return (provider_name, trailer_line) for the active assistant, or None.
+
+    Innermost assistant first: CODEX_THREAD_ID exists only inside a live Codex
+    run, while CLAUDECODE leaks into delegated runs from the spawning Claude
+    session -- so when both are present, Codex made this commit.
+    """
     if os.environ.get("CODEX_THREAD_ID"):
         trailer = _codex_trailer()
         return ("Codex", trailer) if trailer else None
+    if os.environ.get("CLAUDECODE"):
+        trailer = _claude_trailer()
+        return ("Claude", trailer) if trailer else None
     return None
 
 
