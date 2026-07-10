@@ -44,6 +44,14 @@ zentaizo = [
 [tool.setuptools.dynamic]
 version = {attr = "zentaizo.__version__"}
 
+[tool.uv]
+# The version is dynamic (zentaizo.__version__ above), so the resolver must be
+# told which files invalidate its cached metadata for this path package —
+# otherwise a version bump is invisible to `pixi lock`/`pixi update` and the
+# pixi.lock self-entry goes stale (uv's default cache keys track only the
+# build manifests, not the module holding the version).
+cache-keys = [{ file = "pyproject.toml" }, { file = "src/zentaizo/__init__.py" }]
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"

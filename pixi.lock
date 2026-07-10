@@ -1164,7 +1164,7 @@ packages:
 - pypi: ./
   name: zentaizo
   version: 0.10.0
-  sha256: 247f110f952e8487350c85e747cefd0cb841589c642f765edfd96c7424dc78c8
+  sha256: cdde9b404f8efa8bf71c35160b88c25ddf8a13767e6c5d936733e06371261520
   requires_dist:
   - llm-guard>=0.3.16 ; extra == 'docs-scan'
   - graphifyy>=0.8.39 ; extra == 'graph'
