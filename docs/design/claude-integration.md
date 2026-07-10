@@ -14,8 +14,10 @@ choose to do the right thing.
 It covers three concerns: (1) a Claude `SessionStart` hook that titles a session
 after the active slice rather than the first thing typed; (2) loading the
 workspace `AGENTS.md` into Claude in full via a `CLAUDE.md` `@AGENTS.md` import;
-and (3) deterministic AI commit attribution, via a `commit-trailer` reader an
-agent can call plus a bundled `prepare-commit-msg` hook as a backstop. Each piece
+and (3) deterministic AI commit attribution — including delegated work, in both
+shapes: an orchestrator committing another assistant's reviewed result, and a
+delegated run committing directly — via a `commit-trailer` reader an agent can
+call plus a bundled `prepare-commit-msg` hook as a backstop. Each piece
 follows the project's core split — *deterministic work in the CLI, judgment in
 the AI*: the CLI resolves identities, titles, and context mechanically, while the
 agent supplies only the things a machine cannot (a good slice title, the commit
@@ -91,33 +93,41 @@ writes `CLAUDE.md`.
 One producer writes a cache; three readers consume it, so `edited_by` ledgers and
 `Co-authored-by` trailers always report the same model identity.
 
-- **Producer:** `zentaizo cache-commit-trailer` (`cache_commit_trailer`,
-  `cli.py:543`). `--claude` reads the Claude Code statusline JSON on stdin (the
-  only place the friendly model display name is exposed); `--codex` reads Codex
-  config (`_read_codex_commit_trailer_config`, `cli.py:529`). It writes
-  `{provider, model, effort, captured_at}` (`_write_trailer_cache`, `cli.py:503`)
+- **Producer:** `zentaizo cache-commit-trailer` (`cache_commit_trailer`).
+  `--claude` reads the Claude Code statusline JSON on stdin (the only place the
+  friendly model display name is exposed); `--codex` captures per-run ground
+  truth — the run's own rollout log first, then the configured default from
+  Codex config (`_read_codex_rollout_log`, `_read_codex_commit_trailer_config`)
+  — and never reads the caches it exists to write. It writes
+  `{provider, model, effort, captured_at}` (`_write_trailer_cache`)
   to `~/.cache/{provider}/commit-trailer/{session}.json` plus a `latest.json`
   fallback.
 - **Reader A — the bundled hook**
-  (`src/zentaizo/templates/hooks/prepare-commit-msg`) reads the cache, formats the
+  (`src/zentaizo/templates/hooks/prepare-commit-msg`) resolves the active
+  assistant and identity (see *Which assistant is committing* below), formats the
   trailer, and appends it to the message. It is **fail-open** (any error skips the
-  trailer, never blocking a commit), **idempotent per provider** (a regex guard on
-  `^Co-authored-by:\s+{provider}` suppresses duplicates on amend/rebase), and pure
-  standard library. It is installed repo-locally as
-  `.git/hooks/prepare-commit-msg` by `install_commit_attribution_hook`
-  (`cli.py:457`) — into the workspace at `create_workspace` and into each editable
-  repo on `fetch`. The installer refuses to overwrite an unrelated project hook
-  (it refreshes only a hook carrying `HOOK_MARKER`, `cli.py:448`).
+  trailer, never blocking a commit — and when the committing assistant is known
+  but its identity is not resolvable, it emits *no* trailer rather than another
+  provider's), **idempotent per provider** (a regex guard on
+  `^(?:Co-authored-by|Reviewed-by):\s+{provider}` suppresses duplicates on
+  amend/rebase and on delegated commits whose committer is already credited as
+  `Reviewed-by:`), and pure standard library. It is installed repo-locally as
+  `.git/hooks/prepare-commit-msg` by `install_commit_attribution_hook` — into the
+  workspace at `create_workspace` and into each editable repo on `fetch`. The
+  installer refuses to overwrite an unrelated project hook (it refreshes only a
+  hook carrying `HOOK_MARKER`). Installed hooks are snapshots: a fix to the
+  template reaches a repo only when the installer runs again (typically the next
+  `fetch` with an upgraded CLI).
 - **Reader B — `zentaizo edited`** stamps the `edited_by:` ledger on session files
-  via `agent_editor_identity` (`cli.py:703`) → `_read_trailer_cache`
-  (`cli.py:581`) + `_with_effort` (`cli.py:608`).
-- **Reader C — `zentaizo commit-trailer`** (`commit_trailer`, `cli.py:655`) prints
+  via `agent_editor_identity`, using the same innermost-first assistant detection
+  and identity chain as the other readers.
+- **Reader C — `zentaizo commit-trailer`** (`commit_trailer`) prints
   the resolved trailer to stdout for an agent to paste into a commit body. Provider
-  detection mirrors the hook (`CLAUDECODE` → Claude, else `CODEX_THREAD_ID` →
-  Codex); `--claude`/`--codex` force a provider, even from a non-AI shell or CI job
-  with the right cache/config. Resolution reuses `_read_trailer_cache` plus the
-  Codex config fallback (`_resolve_commit_trailer_identity`, `cli.py:629`), and the
-  output is formatted by `_format_commit_trailer` (`cli.py:620`). Unlike the hook,
+  detection mirrors the hook (innermost assistant first); `--claude`/`--codex`
+  force a provider, even from a non-AI shell or CI job with the right
+  cache/config. Resolution uses the shared identity chain
+  (`_resolve_commit_trailer_identity`, `_resolve_codex_identity`), and the
+  output is formatted by `_format_commit_trailer`. Unlike the hook,
   it is **fail-loud**: on no provider, no cached model, or an incomplete identity it
   prints nothing to stdout, writes a one-line reason to stderr, and exits non-zero;
   it never falls back to `git config user.name`, since a human-named co-author
@@ -128,9 +138,60 @@ purpose: the hook's self-containment (no `zentaizo` on `PATH`, no external
 process) is a feature that lets it run in any repo where it was installed.
 Drift is prevented by a format-lock test asserting the hook's output is
 byte-identical to `commit-trailer`'s, rather than by sharing code. The generated
-workspace `AGENTS.md` § Commits (`workspace_agents`, `cli.py:285`, text at
-`cli.py:405`) tells the agent to run `commit-trailer` and paste the line, noting
-the hook remains a best-effort backstop.
+workspace `AGENTS.md` § Commits (`workspace_agents`) tells the agent to run
+`commit-trailer` and paste the line, noting the hook remains a best-effort
+backstop.
+
+### Which assistant is committing (nested runs)
+
+The environment answers the question per branch: `CLAUDECODE` marks a Claude
+Code session, `CODEX_THREAD_ID` a Codex run. The subtlety is nesting: when a
+Claude session delegates to Codex (e.g. via the Codex companion plugin), the
+Codex process inherits the whole Claude environment — so during a Codex-made
+commit **both** markers are present. Detection is therefore
+**innermost-assistant-first**: `CODEX_THREAD_ID` is injected by the codex CLI
+only into the shells of its own live run, while `CLAUDECODE` leaks downward into
+everything a Claude session spawns, so when both are set, Codex made the commit.
+All three sniff sites (the hook's `_provider_trailer`, `commit_trailer`,
+`agent_editor_identity`) apply the same rule. Known accepted limitation: a
+Claude session nested *inside* a Codex run would also see both markers and
+resolve to Codex — not a shape in use, and `--claude`/`--as` override.
+
+The Codex *identity* (which model, which effort) resolves through a fixed
+chain, exact per-run sources before global heuristics
+(`_resolve_codex_identity`; mirrored self-contained in the hook): the
+thread-keyed cache entry → the run's own rollout log
+(`$CODEX_HOME/sessions/YYYY/MM/DD/rollout-<ts>-<thread>.jsonl`, whose
+`turn_context` lines record the live model + reasoning effort; newest matching
+file wins, last `turn_context` within it) → the shared `latest.json` → the
+configured default in `config.toml`. The rollout log is the load-bearing rung:
+nothing populates the trailer cache during a delegated run, `latest.json` may
+describe a different session, and `config.toml` only knows the configured
+default — the rollout log is written by Codex itself and is ground truth for
+what the run actually used. CLI resolutions from the rollout log or config are
+written back to the cache; the hook stays read-only.
+
+### Delegated implementors: the pending-authors ledger
+
+Environment sniffing answers *who is committing*; delegated work also needs *who
+authored the changes*. When an orchestrating session commits a delegated run's
+reviewed result, `zentaizo delegation note --codex|--claude` (run once per
+touched repo when the run returns) records the implementor as one JSON entry
+file under `<git-dir>/zentaizo/pending-authors/` — per-checkout and
+uncommittable by construction, concurrency-safe because entries never share a
+file. `commit-trailer` is the **sole consumer**: a non-empty ledger yields one
+`Co-authored-by:` per recorded implementor (oldest first) plus `Reviewed-by:`
+for the committing session (`--also-author` elevates the committer), with
+per-role dedup, a staleness warning past 24 h, and a stderr reminder to run
+`zentaizo delegation clear` after the commit lands — clearing is always
+explicit, never a commit side effect. The hook deliberately does not consume
+the ledger; its only concession is the `Reviewed-by:` idempotency guard above.
+A warn-only safety net flags a fresh Codex session with an empty ledger.
+
+The two delegation shapes split cleanly: *orchestrator commits after the run
+returns* → the ledger ritual (note → `commit-trailer` → clear); *the delegated
+assistant commits during its own run* → no ritual, the innermost-first hook
+attributes it directly.
 
 ### Model-agnosticism boundary
 
@@ -156,6 +217,10 @@ filenames name a specific harness.
 | Commit attribution shape | One cache producer + three readers | A single resolved `(model, effort)` source keeps `edited_by` and `Co-authored-by` consistent. |
 | `commit-trailer` failure mode | Fail-loud (non-zero, stderr reason) | An agent shelling out can see and act on the failure, unlike the hook's silent skip. |
 | Keep the hook self-contained | Do not refactor it to shell out to `commit-trailer` | Self-containment lets it run in any installed repo without `zentaizo` on `PATH`; a format-lock test prevents drift. |
+| Nested-run provider detection | Innermost assistant first (`CODEX_THREAD_ID` over `CLAUDECODE`) | The outer session's marker leaks into delegated runs; the inner run's marker exists only inside it. |
+| Codex identity ground truth | The run's own rollout log, ahead of `latest.json`/config | Nothing populates the cache during a delegated run; config only knows the configured default; the rollout log records what the run actually used. |
+| Delegated-authorship record | Explicit per-repo pending-authors ledger, `commit-trailer` as sole consumer | The environment can never answer *who authored*; recording the delegation event keeps the hook simple and the lifecycle explicit (`clear` is never implicit). |
+| Wrong-provider fallback | A known-but-unresolvable committer yields *no* trailer | A missing trailer is recoverable; a mis-attributed one silently corrupts history. |
 
 ## Considered and not taken
 
@@ -177,6 +242,21 @@ filenames name a specific harness.
 - **A `--format git-standard` trailer variant and a cache TTL / `--check` verifier
   mode** — deferred as non-goals; per-session keying with a `latest.json` fallback
   is sufficient, and a stale-but-right model beats a hard failure.
+- **Post-commit auto-clearing of the delegation ledger** — rejected: amend/rebase
+  false-clears, cross-session races, and the `core.hooksPath` blind spot make
+  implicit clearing the weakest link; `zentaizo delegation clear` is explicit,
+  prompted by a stderr reminder.
+- **Hook-side consumption of the delegation ledger** — rejected: it would double
+  every piece of ledger logic inside a self-contained script; the CLI is the sole
+  consumer and the hook's only concession is `Reviewed-by:` idempotency.
+- **Dispatch-time cache population / patching the companion plugin** — rejected:
+  coupling correctness to a third-party plugin's invocation shape is fragile, and
+  unnecessary once the rollout log (written by Codex itself) serves as the
+  identity source during a run.
+- **Process-ancestry innermost detection** — not taken: walking the parent chain
+  would disambiguate a Claude-inside-Codex nesting too, but that shape is not in
+  use and the env rule keeps the fail-open hook simple; `--claude`/`--as`
+  override.
 
 ## See also
 
@@ -184,10 +264,12 @@ filenames name a specific harness.
   `find_active_slice`, `_render_claude_session_title_settings`,
   `_probe_claude_session_title_command`, `claude_hooks_command`,
   `create_workspace`; `cache_commit_trailer`, `commit_trailer`,
-  `_resolve_commit_trailer_identity`, `_format_commit_trailer`,
+  `_resolve_commit_trailer_identity`, `_resolve_codex_identity`,
+  `_read_codex_rollout_log`, `_format_commit_trailer`,
   `install_commit_attribution_hook`, `agent_editor_identity`; the
-  `CLAUDE_IMPORT_MD` / `WORKSPACE_POINTER_MD` constants and the `workspace_agents`
-  § Commits text.
+  `delegation_note`/`delegation_list`/`delegation_clear` commands and the
+  pending-authors helpers; the `CLAUDE_IMPORT_MD` / `WORKSPACE_POINTER_MD`
+  constants and the `workspace_agents` § Commits text.
 - `src/zentaizo/templates/hooks/prepare-commit-msg` — the bundled, self-contained
   attribution hook.
 - `docs/cli.md` — `session-title`, `claude-hooks`, `commit-trailer`,
