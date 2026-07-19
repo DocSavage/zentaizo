@@ -7,7 +7,7 @@ my-system-atlas/
   AGENTS.md
   README.md
   zentaizo.atlas.json       # created after source discovery
-  zentaizo.lock.json        # written by fetch
+  zentaizo.lock.json        # seeded by create (conventions stamp); sources written by fetch
 
   repos/
   docs/
@@ -99,7 +99,19 @@ Use branches or tags while exploring. Use commits when you need a fully reproduc
 
 ## `zentaizo.lock.json`
 
-This file is machine-authored. It records what was actually fetched. It is written after a source atlas exists and `zentaizo fetch` resolves source versions.
+This file is machine-authored. It records what was actually fetched. `zentaizo create` seeds it with empty sources and a `conventions` stamp; `zentaizo fetch` fills in resolved source versions once an atlas exists.
+
+The `conventions` block records which generation of workspace conventions scaffolded (or last upgraded) this workspace:
+
+```json
+"conventions": {
+  "generation": 1,
+  "tool_version": "0.11.0",
+  "stamped_at": "2026-07-19T16:00:00+00:00"
+}
+```
+
+`generation` is the comparison key — `zentaizo status` diffs it against the generation the installed tool generates and reports `current` / `behind` / `not tracked`; `tool_version` and `stamped_at` are provenance. The block is written by `zentaizo create` and re-stamped by `zentaizo upgraded` (the `upgrade-zentaizo` skill's final step), never by hand. A workspace without the block predates conventions tracking.
 
 For repositories, the lock file should include:
 

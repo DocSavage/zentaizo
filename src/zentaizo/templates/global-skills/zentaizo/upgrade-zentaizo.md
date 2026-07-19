@@ -13,6 +13,12 @@ Run it when a workspace's bundled files (`AGENTS.md`, `skills/curate-atlas.md`,
 `GEMINI.md`, the `.gitignore`, and the `sessions/` subdirectories) have fallen
 behind Zentaizo's current conventions and the user wants to reconcile.
 
+The deterministic trigger is `zentaizo status`: its `Conventions:` line
+compares the generation stamped in the workspace's `zentaizo.lock.json`
+(`conventions` block) against the generation the installed zentaizo
+generates. `behind` and `not tracked` both call for this skill; `current`
+means there is nothing to do.
+
 Symptoms that motivate running it:
 
 - The user upgraded the `zentaizo` CLI and a `zentaizo create` of a fresh
@@ -35,6 +41,15 @@ Do **not** run it for:
 
 ## Pre-flight
 
+0. Scope the pass by generations. Read the workspace's stamped generation
+   (the `conventions` block in `zentaizo.lock.json`, also reported by
+   `zentaizo status`) and the installed `CONVENTIONS_DELTAS` map in
+   `src/zentaizo/cli.py` (next to `CONVENTIONS_GENERATION`). The map has one
+   concise entry per generation; the entries between the stamped generation
+   and the installed one are the conventions this pass must reconcile, so
+   read them first and let them focus the diff phase. An unstamped
+   workspace (`Conventions: not tracked`) gets the full reconciliation —
+   diff everything.
 1. Run `zentaizo validate` in the workspace and resolve anything it reports
    **before** starting the upgrade. The most common pre-existing issue is
    dangling `path:` entries in `zentaizo.atlas.json` whose targets were
@@ -177,6 +192,11 @@ executing-the-plan procedure exactly. Specifically:
 - Close out the plan with a `## Outcome` section that lists what was actually
   changed, any deltas you classified as "workspace-ahead, keep" so future
   upgrades remember why, and any items that should be promoted upstream.
+- **Final step — always: run `zentaizo upgraded` in the workspace.** It
+  re-stamps the lock's `conventions` block to the installed generation so
+  the pass is durably recorded and `zentaizo status` reports the workspace
+  as current. Like `zentaizo edited`, the stamp is CLI-written — never edit
+  the block by hand.
 
 ## Boundaries — what this procedure does NOT do
 
@@ -186,9 +206,11 @@ executing-the-plan procedure exactly. Specifically:
   workspace shell — `AGENTS.md`, `skills/`, `sessions/`, the atlas. The
   editable repos themselves are out of scope.
 - It does not commit on the user's behalf unless they authorize it.
-- It does not upgrade `zentaizo.lock.json`. If a fetch refresh is needed after
-  the migration (e.g. because a repo URL or ref shape changed), run
-  `zentaizo fetch` separately under the user's supervision.
+- It does not rewrite `zentaizo.lock.json`'s resolved sources. The one lock
+  change it makes is the `conventions` re-stamp written by `zentaizo
+  upgraded` at the end. If a fetch refresh is needed after the migration
+  (e.g. because a repo URL or ref shape changed), run `zentaizo fetch`
+  separately under the user's supervision.
 
 ## Known sharp edges
 

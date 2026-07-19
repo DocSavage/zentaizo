@@ -56,6 +56,20 @@ SAFE_SOURCE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 VALID_DOC_KINDS = ("api-reference", "guide", "tutorial", "spec", "changelog")
 
+# The conventions generation a workspace scaffolded by this build carries.
+# Bump it (and add a CONVENTIONS_DELTAS entry) in any release that changes
+# generated workspace artifacts or session-file conventions — the same class
+# of change docs/design/versioning.md already calls MINOR. Behavior-only
+# releases leave it alone, so `zentaizo status` never over-reports staleness.
+CONVENTIONS_GENERATION = 1
+
+# One concise entry per generation (machine/AI-read: `status` prints them as
+# "missed" lines and the upgrade-zentaizo skill scopes its reconciliation by
+# them). Keys must be exactly 1..CONVENTIONS_GENERATION.
+CONVENTIONS_DELTAS = {
+    1: "baseline: conventions tracking introduced (0.10.3-era templates)",
+}
+
 
 def utc_now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat()
@@ -215,6 +229,21 @@ def initial_lock(name: str) -> dict:
     }
 
 
+def stamp_conventions(lock: dict) -> None:
+    """Record the installed conventions generation in ``lock``.
+
+    Only `create` (a fresh scaffold) and `upgraded` (a finished
+    upgrade-zentaizo pass) may stamp: the lock fallbacks in
+    `fetch`/`fetch-docs`/`graph` must not, or a pre-tracking workspace that
+    regrows a lock would falsely report its conventions as current.
+    """
+    lock["conventions"] = {
+        "generation": CONVENTIONS_GENERATION,
+        "tool_version": __version__,
+        "stamped_at": utc_now(),
+    }
+
+
 def workspace_readme(name: str) -> str:
     # The layout tree below is kept in sync with the canonical copy in the
     # top-level README.md ("What A Workspace Contains") and docs/workspace-format.md.
@@ -229,7 +258,7 @@ A workspace organizes knowledge as a level-of-detail spine — start at `summari
 ```text
 {name}/
   {ATLAS_NAME}       # human-authored context atlas (you create this first)
-  {LOCK_NAME}        # resolved commits/hashes/snapshots (written by `fetch`)
+  {LOCK_NAME}        # conventions stamp (`create`) + resolved commits/hashes/snapshots (`fetch`)
   AGENTS.md                 # agent instructions for this workspace
 
   repos/                    # fetched source repositories (deepest detail)
@@ -1407,6 +1436,13 @@ def create_workspace(args: argparse.Namespace) -> int:
         )
     )
 
+    # Seed the machine-authored lock with a conventions stamp so the workspace
+    # deterministically records which generation scaffolded it; `fetch` fills
+    # in the sources later.
+    lock = initial_lock(name)
+    stamp_conventions(lock)
+    write_json(target / LOCK_NAME, lock)
+
     if not getattr(args, "no_skills", False):
         installed = install_skills_into_workspace(target)
         if installed:
@@ -1730,6 +1766,57 @@ def _print_repo_status(workspace: pathlib.Path, repo: dict, locked: dict | None)
     print(f"  {role_tag}: " + ", ".join(details))
 
 
+def _print_conventions_status(lock: dict | None) -> None:
+    """Report the workspace's conventions state against the installed tool.
+
+    Worded for readers minimally familiar with zentaizo internals: each state
+    says what the stamp means and, when action is needed, exactly how the
+    workspace gets brought forward (an AI session running the
+    upgrade-zentaizo skill, which finishes with `zentaizo upgraded`).
+    """
+    conventions = (lock or {}).get("conventions") or {}
+    generation = conventions.get("generation")
+    if not isinstance(generation, int):
+        print(
+            "Conventions: not tracked — this workspace predates conventions "
+            "tracking, so its scaffolded files may not match what the "
+            "installed zentaizo generates. To baseline it, run an AI session "
+            "in this workspace with the 'upgrade-zentaizo' skill; it "
+            "finishes by running 'zentaizo upgraded'."
+        )
+        return
+    if generation == CONVENTIONS_GENERATION:
+        print(
+            f"Conventions: current (generation {generation}) — this "
+            "workspace's scaffolded files and session conventions match "
+            "what the installed zentaizo generates."
+        )
+        return
+    if generation < CONVENTIONS_GENERATION:
+        print(
+            "Conventions: behind — this workspace was stamped at generation "
+            f"{generation}, but the installed zentaizo generates workspaces "
+            f"at generation {CONVENTIONS_GENERATION}."
+        )
+        for missed in range(generation + 1, CONVENTIONS_GENERATION + 1):
+            delta = CONVENTIONS_DELTAS.get(missed, "(no delta recorded)")
+            print(f"  missed {missed}: {delta}")
+        print(
+            "  To update, run an AI session in this workspace with the "
+            "'upgrade-zentaizo' skill; it reconciles the files and finishes "
+            "by running 'zentaizo upgraded'."
+        )
+        return
+    stamped_by = conventions.get("tool_version", "unknown")
+    print(
+        "Conventions: workspace ahead — this workspace was stamped at "
+        f"generation {generation} (by zentaizo {stamped_by}), but the "
+        f"installed zentaizo {__version__} only generates workspaces at "
+        f"generation {CONVENTIONS_GENERATION}. The zentaizo tool itself is "
+        "outdated here; upgrade it to match the workspace."
+    )
+
+
 def status_workspace(args: argparse.Namespace) -> int:
     workspace = pathlib.Path(args.workspace).resolve()
     atlas = find_atlas(workspace)
@@ -1743,7 +1830,9 @@ def status_workspace(args: argparse.Namespace) -> int:
             lock = read_json(lock_path)
             print(f"Lock updated: {lock.get('updated_at', 'unknown')}")
         else:
+            lock = None
             print(f"Lock: missing {LOCK_NAME}")
+        _print_conventions_status(lock)
         return 0
 
     config = read_json(atlas)
@@ -1776,6 +1865,7 @@ def status_workspace(args: argparse.Namespace) -> int:
         print(f"Lock updated: {lock.get('updated_at', 'unknown')}")
     else:
         print(f"Lock: missing {LOCK_NAME}")
+    _print_conventions_status(lock)
     return 0
 
 
@@ -4924,6 +5014,34 @@ def edited_session(args: argparse.Namespace) -> int:
     return 0
 
 
+def upgraded_workspace(args: argparse.Namespace) -> int:
+    """Record that an upgrade-zentaizo pass brought this workspace current,
+    re-stamping the lock's ``conventions`` block to the installed generation.
+
+    Mirrors `zentaizo edited`: the stamp is CLI-written, never hand-written.
+    """
+    workspace = pathlib.Path(args.workspace).resolve()
+    lock_path = workspace / LOCK_NAME
+    if lock_path.exists():
+        lock = read_json(lock_path)
+    else:
+        # Same fallback fetch-docs uses: an atlas proves this is a workspace
+        # (never stamp a lock into an arbitrary directory) and names the lock.
+        atlas = find_atlas(workspace)
+        if atlas is None:
+            raise SystemExit(missing_atlas_message(workspace))
+        config = read_json(atlas)
+        lock = initial_lock(config.get("name", workspace.name))
+    lock["updated_at"] = utc_now()
+    stamp_conventions(lock)
+    write_json(lock_path, lock)
+    print(
+        f"Stamped conventions generation {CONVENTIONS_GENERATION} "
+        f"(zentaizo {__version__}) into {LOCK_NAME}"
+    )
+    return 0
+
+
 def session_title_command(args: argparse.Namespace) -> int:
     try:
         raw = sys.stdin.read()
@@ -5359,6 +5477,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     edited.add_argument("--json", action="store_true", help="emit JSON")
     edited.set_defaults(func=edited_session)
+
+    upgraded = sub.add_parser(
+        "upgraded",
+        help="record that an upgrade-zentaizo pass brought this workspace to "
+        "the installed conventions generation (re-stamps the lock)",
+    )
+    upgraded.add_argument("workspace", nargs="?", default=".", help="workspace directory")
+    upgraded.set_defaults(func=upgraded_workspace)
 
     validate = sub.add_parser("validate", help="validate a workspace atlas")
     validate.add_argument("workspace", nargs="?", default=".", help="workspace directory")

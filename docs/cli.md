@@ -54,7 +54,7 @@ The design rule is that `zentaizo` is the product interface. `python -m zentaizo
 zentaizo create PATH [--no-claude-hooks]
 ```
 
-Creates a workspace shell with source directories, summaries directory, and assistant instructions. It does not create `zentaizo.atlas.json`; the first AI-assisted setup step is to identify the source material and create that human-authored atlas. By default it also installs the managed Claude `SessionStart` hook when a current `zentaizo session-title` command is available on `PATH`; pass `--no-claude-hooks` to skip that.
+Creates a workspace shell with source directories, summaries directory, and assistant instructions. It does not create `zentaizo.atlas.json`; the first AI-assisted setup step is to identify the source material and create that human-authored atlas. It does seed `zentaizo.lock.json` with a `conventions` stamp — the generation of workspace conventions this build scaffolds (see `zentaizo upgraded`); `zentaizo fetch` fills in the resolved sources later. By default it also installs the managed Claude `SessionStart` hook when a current `zentaizo session-title` command is available on `PATH`; pass `--no-claude-hooks` to skip that.
 
 ```bash
 zentaizo validate [PATH]
@@ -67,6 +67,8 @@ zentaizo status [PATH]
 ```
 
 Shows source counts (split by role: edit vs reference) and the lock status. For each repo it inspects the working tree: edit repos report the current branch and whether they are at the locked SHA or have diverged; reference repos flag drift between HEAD and the locked SHA. When an edit repo is clean and behind its upstream, `status` prints the rebase command. Also prints one knowledge-graph line (`graph: not built` / `current` / `stale` — see `zentaizo graph`). If the atlas is missing, shows the setup prompt instead of failing.
+
+It ends with a `Conventions:` section comparing the generation stamped in the lock's `conventions` block against the generation the installed zentaizo generates: `current` (they match), `behind` (each missed generation's `CONVENTIONS_DELTAS` line is printed, followed by the pointer to the `upgrade-zentaizo` skill), or `not tracked` (the workspace predates conventions tracking — same pointer, full reconciliation). A stamp *newer* than the installed tool reports the tool itself as outdated. This is the only command that reports conventions state; nothing else advises about it.
 
 ```bash
 zentaizo fetch [PATH] [--rebase] [--no-graph]
@@ -154,6 +156,12 @@ zentaizo edited PATH [--as IDENTITY]
 ```
 
 Records that the current editor touched a frontmatter-bearing session file, appending (or, for a consecutive same-editor edit, refreshing) an entry in its `edited_by:` ledger. The editor identity is resolved deterministically: in an AI session it comes from the commit-trailer cache (the exact model + reasoning effort, the same source the commit-attribution hook reads), detecting the innermost assistant first (a Codex run delegated from a Claude session stamps Codex); Codex sessions fall back to the run's own rollout log, then local Codex config, and populate that cache when it is missing. In a plain shell it falls back to `git config user.name`; `--as` overrides both. Entries are git-style local timestamps (`Tue Jun 2 12:41:53 2026 -0400  Claude Opus 4.8 (1M context, reasoning xhigh)`). The `effort new`, `next-change`, `next-debugging`, `next-brainstorming`, `next-handoff`, and `next-report` scaffolders stamp the first entry automatically.
+
+```bash
+zentaizo upgraded [PATH]
+```
+
+Records that an `upgrade-zentaizo` pass brought the workspace to the installed conventions generation, re-stamping the lock's `conventions` block (`generation` is the comparison key `zentaizo status` reads; `tool_version` and `stamped_at` are provenance). It mirrors `zentaizo edited`: the stamp is CLI-written, never hand-written — the `upgrade-zentaizo` skill runs it as its final step, and `zentaizo create` writes the initial stamp for fresh workspaces. If the lock is missing it is recreated from scratch and stamped (the atlas must exist, so an arbitrary directory is never stamped). Prints a one-line confirmation naming the generation.
 
 ```bash
 zentaizo claude-hooks [PATH]

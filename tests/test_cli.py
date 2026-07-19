@@ -56,7 +56,9 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(main(["status", str(workspace)]), 0)
 
             self.assertFalse((workspace / "zentaizo.atlas.json").exists())
-            self.assertFalse((workspace / "zentaizo.lock.json").exists())
+            # The lock exists from creation: it carries the conventions stamp
+            # even before the first fetch resolves any sources.
+            self.assertTrue((workspace / "zentaizo.lock.json").exists())
             self.assertTrue((workspace / "AGENTS.md").exists())
 
             # Claude reads CLAUDE.md, not AGENTS.md; the @import loads it in full
@@ -4811,6 +4813,200 @@ class GraphTests(WorkspaceCliCase):
                 self.assertIn("graphify-out", policy["writable"], mode)
                 self.assertIn(".graphifyignore", policy["writable"], mode)
                 self.assertNotIn("graphify-out", policy["readonly"], mode)
+
+
+class ConventionsTests(WorkspaceCliCase):
+    """Conventions-generation tracking: the create stamp, `zentaizo upgraded`,
+    and the three-state (plus workspace-ahead) `status` reporting."""
+
+    def _lock(self, workspace: Path) -> dict:
+        return json.loads((workspace / "zentaizo.lock.json").read_text())
+
+    def _write_lock(self, workspace: Path, lock: dict) -> None:
+        (workspace / "zentaizo.lock.json").write_text(json.dumps(lock))
+
+    def test_create_stamps_conventions_into_lock(self):
+        from zentaizo import __version__
+        from zentaizo.cli import CONVENTIONS_GENERATION
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            conventions = self._lock(workspace)["conventions"]
+            self.assertEqual(conventions["generation"], CONVENTIONS_GENERATION)
+            self.assertEqual(conventions["tool_version"], __version__)
+            self.assertIn("stamped_at", conventions)
+
+    def test_deltas_cover_exactly_all_generations(self):
+        from zentaizo.cli import CONVENTIONS_DELTAS, CONVENTIONS_GENERATION
+
+        self.assertEqual(
+            sorted(CONVENTIONS_DELTAS),
+            list(range(1, CONVENTIONS_GENERATION + 1)),
+        )
+
+    def test_upgraded_restamps_existing_lock(self):
+        from zentaizo import __version__
+        from zentaizo.cli import CONVENTIONS_GENERATION
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            lock = self._lock(workspace)
+            lock["conventions"] = {
+                "generation": 0,
+                "tool_version": "0.0.1",
+                "stamped_at": "2020-01-01T00:00:00+00:00",
+            }
+            self._write_lock(workspace, lock)
+
+            code, out, _err = self._run(["upgraded", str(workspace)])
+            self.assertEqual(code, 0)
+            self.assertIn(f"Stamped conventions generation {CONVENTIONS_GENERATION}", out)
+            self.assertIn(__version__, out)
+
+            conventions = self._lock(workspace)["conventions"]
+            self.assertEqual(conventions["generation"], CONVENTIONS_GENERATION)
+            self.assertEqual(conventions["tool_version"], __version__)
+
+    def test_upgraded_creates_missing_lock_when_atlas_exists(self):
+        from zentaizo.cli import CONVENTIONS_GENERATION
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            write_example_atlas(workspace, "ws")
+            (workspace / "zentaizo.lock.json").unlink()
+
+            code, out, _err = self._run(["upgraded", str(workspace)])
+            self.assertEqual(code, 0)
+            self.assertIn(f"Stamped conventions generation {CONVENTIONS_GENERATION}", out)
+
+            lock = self._lock(workspace)
+            self.assertEqual(lock["name"], "ws")
+            self.assertEqual(lock["conventions"]["generation"], CONVENTIONS_GENERATION)
+
+    def test_upgraded_refuses_directory_without_lock_or_atlas(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "not-a-workspace"
+            target.mkdir()
+            with self.assertRaises(SystemExit):
+                main(["upgraded", str(target)])
+            self.assertFalse((target / "zentaizo.lock.json").exists())
+
+    def test_status_reports_current(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            write_example_atlas(workspace, "ws")
+            code, out, _err = self._run(["status", str(workspace)])
+            self.assertEqual(code, 0)
+            self.assertIn("Conventions: current (generation 1)", out)
+            self.assertIn("match", out)
+
+    def test_status_reports_behind_with_missed_deltas_and_guidance(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            write_example_atlas(workspace, "ws")
+            with (
+                mock.patch("zentaizo.cli.CONVENTIONS_GENERATION", 3),
+                mock.patch(
+                    "zentaizo.cli.CONVENTIONS_DELTAS",
+                    {1: "baseline", 2: "second delta", 3: "third delta"},
+                ),
+            ):
+                code, out, _err = self._run(["status", str(workspace)])
+            self.assertEqual(code, 0)
+            self.assertIn("Conventions: behind", out)
+            self.assertIn("stamped at generation 1", out)
+            self.assertIn("generates workspaces at generation 3", out)
+            self.assertIn("  missed 2: second delta", out)
+            self.assertIn("  missed 3: third delta", out)
+            self.assertNotIn("missed 1:", out)
+            self.assertIn("'upgrade-zentaizo' skill", out)
+            self.assertIn("'zentaizo upgraded'", out)
+
+    def test_status_reports_not_tracked_without_stamp(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            write_example_atlas(workspace, "ws")
+            lock = self._lock(workspace)
+            del lock["conventions"]
+            self._write_lock(workspace, lock)
+
+            code, out, _err = self._run(["status", str(workspace)])
+            self.assertEqual(code, 0)
+            self.assertIn("Conventions: not tracked", out)
+            self.assertIn("predates conventions tracking", out)
+            self.assertIn("'upgrade-zentaizo' skill", out)
+
+    def test_status_reports_not_tracked_without_lock(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            write_example_atlas(workspace, "ws")
+            (workspace / "zentaizo.lock.json").unlink()
+            code, out, _err = self._run(["status", str(workspace)])
+            self.assertEqual(code, 0)
+            self.assertIn("Conventions: not tracked", out)
+
+    def test_status_reports_workspace_ahead_as_outdated_tool(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            write_example_atlas(workspace, "ws")
+            lock = self._lock(workspace)
+            lock["conventions"] = {
+                "generation": 9,
+                "tool_version": "9.9.9",
+                "stamped_at": "2030-01-01T00:00:00+00:00",
+            }
+            self._write_lock(workspace, lock)
+
+            code, out, _err = self._run(["status", str(workspace)])
+            self.assertEqual(code, 0)
+            self.assertIn("Conventions: workspace ahead", out)
+            self.assertIn("stamped at generation 9 (by zentaizo 9.9.9)", out)
+            self.assertIn("tool itself is outdated", out)
+
+    def test_status_before_atlas_reports_conventions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            code, out, _err = self._run(["status", str(workspace)])
+            self.assertEqual(code, 0)
+            self.assertIn("Atlas: missing zentaizo.atlas.json", out)
+            self.assertIn("Conventions: current (generation 1)", out)
+
+    def test_conventions_block_survives_fetch_docs(self):
+        from zentaizo.cli import CONVENTIONS_GENERATION
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            (workspace / "zentaizo.atlas.json").write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "name": "ws",
+                        "sources": {
+                            "repos": [],
+                            "docs": [
+                                {
+                                    "name": "api-spec",
+                                    "kind": "spec",
+                                    "repo": "api",
+                                    "path": "openapi.yaml",
+                                }
+                            ],
+                            "papers": [],
+                            "notes": [],
+                        },
+                    }
+                )
+            )
+            (workspace / "repos" / "api").mkdir(parents=True)
+            (workspace / "repos" / "api" / "openapi.yaml").write_text("openapi: 3.1.0\n")
+
+            code, _out, _err = self._run(["fetch-docs", str(workspace)])
+            self.assertEqual(code, 0)
+
+            lock = self._lock(workspace)
+            self.assertEqual(lock["doc_snapshots"][0]["status"], "ok")
+            self.assertEqual(lock["conventions"]["generation"], CONVENTIONS_GENERATION)
+            self.assertIn("tool_version", lock["conventions"])
 
 
 class HubFlagTests(unittest.TestCase):

@@ -118,7 +118,7 @@ After source discovery and fetch, a workspace looks like:
 ```text
 zen-link-shortener/
   zentaizo.atlas.json       # human-authored context atlas, created after source discovery
-  zentaizo.lock.json        # resolved commits, hashes, and snapshot metadata, written by fetch
+  zentaizo.lock.json        # conventions stamp (create) + resolved commits/hashes/snapshots (fetch)
   AGENTS.md                 # agent instructions for this context
 
   repos/                    # fetched source repositories
