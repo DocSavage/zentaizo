@@ -2011,6 +2011,40 @@ _HTML_SUFFIXES = (".html", ".htm")
 _HTTP_TIMEOUT = 10
 _HTTP_MAX_BYTES = 5_000_000
 
+# Only text formats may pass through the decode/sanitize/write snapshot
+# pipeline: round-tripping binary content through it is destructive (invalid
+# bytes become U+FFFD, then control-stripping deletes whole byte ranges).
+# Declared-text suffixes always take the text pipeline; declared-binary
+# suffixes never do; anything else is classified by content sniff.
+_TEXT_SUFFIXES = frozenset(
+    _HTML_SUFFIXES
+    + (
+        ".adoc", ".cfg", ".conf", ".csv", ".ini", ".json", ".markdown", ".md",
+        ".rst", ".text", ".toml", ".tsv", ".txt", ".xml", ".yaml", ".yml",
+    )
+)
+_BINARY_SUFFIXES = frozenset(
+    {
+        ".7z", ".bmp", ".bz2", ".doc", ".docx", ".epub", ".gif", ".gz", ".ico",
+        ".jpeg", ".jpg", ".mp3", ".mp4", ".odt", ".otf", ".pdf", ".png", ".ppt",
+        ".pptx", ".tar", ".tgz", ".tiff", ".ttf", ".wav", ".webp", ".woff",
+        ".woff2", ".xls", ".xlsx", ".xz", ".zip",
+    }
+)
+
+
+def _looks_binary(data: bytes) -> bool:
+    """Git-style sniff: a NUL in the first 8000 bytes marks content binary."""
+    return b"\x00" in data[:8000]
+
+
+def _in_repo_doc_is_text(suffix: str, data: bytes) -> bool:
+    if suffix in _TEXT_SUFFIXES:
+        return True
+    if suffix in _BINARY_SUFFIXES:
+        return False
+    return not _looks_binary(data)
+
 
 def _hash_text(text: str) -> str:
     return "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
@@ -2091,13 +2125,21 @@ def _snapshot_in_repo_doc(
         entry["reason"] = "not-fetched"
         return entry
 
-    raw = src_path.read_text(errors="replace")
-    is_html = src_path.suffix.lower() in _HTML_SUFFIXES
+    raw_bytes = src_path.read_bytes()
+    suffix = src_path.suffix.lower()
+    if not _in_repo_doc_is_text(suffix, raw_bytes):
+        # No text pipeline for binary content; the fetched source stays the
+        # only copy, and the entry records why there is no snapshot.
+        entry["status"] = "reference-only"
+        entry["reason"] = "unsupported-binary"
+        return entry
+
+    raw = raw_bytes.decode("utf-8", errors="replace")
     return _apply_safety_and_write(
         workspace,
         entry,
         raw,
-        is_html=is_html,
+        is_html=suffix in _HTML_SUFFIXES,
         suffix=src_path.suffix or ".txt",
         deep_scan=deep_scan,
         deep_scanner_state=deep_scanner_state,
@@ -2108,7 +2150,59 @@ def _snapshot_in_repo_doc(
 class _HttpResult:
     url: str
     content_type: str
-    text: str
+    data: bytes
+    charset: str = "utf-8"
+
+    @property
+    def text(self) -> str:
+        # Decode lazily: callers must classify the payload as text first
+        # (`_http_result_is_text`) so binary bytes never reach the sanitizer.
+        return self.data.decode(self.charset, errors="replace")
+
+
+_TEXT_MEDIA_TYPES = frozenset(
+    {
+        "application/javascript",
+        "application/json",
+        "application/toml",
+        "application/x-yaml",
+        "application/xml",
+        "application/yaml",
+    }
+)
+_BINARY_MEDIA_PREFIXES = ("image/", "audio/", "video/", "font/")
+_BINARY_MEDIA_TYPES = frozenset(
+    {
+        "application/epub+zip",
+        "application/gzip",
+        "application/msword",
+        "application/pdf",
+        "application/vnd.ms-excel",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/x-7z-compressed",
+        "application/x-bzip2",
+        "application/x-tar",
+        "application/zip",
+    }
+)
+
+
+def _http_result_is_text(result: _HttpResult) -> bool:
+    if result.content_type in _BINARY_MEDIA_TYPES or result.content_type.startswith(
+        _BINARY_MEDIA_PREFIXES
+    ):
+        return False
+    if (
+        result.content_type.startswith("text/")
+        or result.content_type in _TEXT_MEDIA_TYPES
+        or result.content_type.endswith(("+json", "+xml"))
+    ):
+        return True
+    # Unknown media type (e.g. a mislabeled application/octet-stream): decide
+    # by content, matching the in-repo sniff.
+    return not _looks_binary(result.data)
 
 
 def _http_get(url: str) -> _HttpResult:
@@ -2119,12 +2213,11 @@ def _http_get(url: str) -> _HttpResult:
     # Callers restrict the scheme to http/https before reaching here.
     req = urllib.request.Request(url, headers={"User-Agent": "zentaizo-fetch-docs"})
     with urllib.request.urlopen(req, timeout=_HTTP_TIMEOUT) as resp:
-        raw = resp.read(_HTTP_MAX_BYTES)
-        charset = resp.headers.get_content_charset() or "utf-8"
         return _HttpResult(
             url=resp.geturl(),
             content_type=resp.headers.get_content_type(),
-            text=raw.decode(charset, errors="replace"),
+            data=resp.read(_HTTP_MAX_BYTES),
+            charset=resp.headers.get_content_charset() or "utf-8",
         )
 
 
@@ -2167,9 +2260,10 @@ def _fetch_external_doc(
         return entry
 
     # Tier 0: a single curated Markdown file, when the site publishes one.
+    # A binary answer to the probe is never snapshotted; fall through.
     for candidate in _llms_candidates(url):
         result, _ = _try_http_get(candidate)
-        if result and result.text.strip():
+        if result and _http_result_is_text(result) and result.text.strip():
             entry["source"] = {"url": url, "fetched_url": result.url, "fetcher": "llms-txt"}
             return _apply_safety_and_write(
                 workspace,
@@ -2185,6 +2279,12 @@ def _fetch_external_doc(
     # stdlib baseline; mirroring belongs to the optional [docs-rich] extra).
     result, error = _try_http_get(url)
     if result:
+        if not _http_result_is_text(result):
+            # Binary content (e.g. a PDF) must not round-trip through the
+            # text sanitizer; record the source as a pointer only.
+            entry["status"] = "reference-only"
+            entry["reason"] = "unsupported-binary"
+            return entry
         is_html = result.content_type == "text/html"
         entry["source"] = {"url": url, "fetched_url": result.url, "fetcher": "single-page"}
         return _apply_safety_and_write(
@@ -2284,6 +2384,11 @@ def fetch_docs_workspace(args: argparse.Namespace) -> int:
         if entry["status"] == "reference-only" and entry.get("reason") == "fetch-error":
             print(
                 f"  WARNING {entry['name']!r}: fetch failed ({entry.get('error')}); recorded as reference-only"
+            )
+        elif entry["status"] == "reference-only" and entry.get("reason") == "unsupported-binary":
+            print(
+                f"  NOTE {entry['name']!r}: unsupported binary format; recorded as "
+                "reference-only (no text snapshot)"
             )
     return 0
 
@@ -2578,6 +2683,7 @@ def summarize_workspace(args: argparse.Namespace) -> int:
             locked = locked_index.get((group, name))
             rev = _locked_source_rev(group, locked)
             doc_status = locked.get("status") if (group == "docs" and locked) else None
+            doc_reason = locked.get("reason") if (group == "docs" and locked) else None
             summary_path = sources_dir / f"{name}.md"
             exists = summary_path.is_file()
             recorded = read_frontmatter(summary_path).get(SUMMARY_REV_KEY) if exists else None
@@ -2596,6 +2702,7 @@ def summarize_workspace(args: argparse.Namespace) -> int:
                 "rev": rev,
                 "dirty": bool(locked.get("dirty")) if locked else False,
                 "doc_status": doc_status,
+                "doc_reason": doc_reason,
                 "unverified": False,
             }
 
@@ -2646,10 +2753,17 @@ def summarize_workspace(args: argparse.Namespace) -> int:
                 "commit only — uncommitted changes aren't captured"
             )
         if record["group"] == "docs" and record["doc_status"] == "reference-only":
-            out.append(
-                "  - note: snapshot is reference-only (not fetched); summarize from the "
-                "atlas description / URL"
-            )
+            if record["doc_reason"] == "unsupported-binary":
+                out.append(
+                    "  - note: source is an unsupported binary format (no text "
+                    "snapshot); summarize from the atlas description only — "
+                    "do not decode the binary source"
+                )
+            else:
+                out.append(
+                    "  - note: snapshot is reference-only (not fetched); summarize from the "
+                    "atlas description / URL"
+                )
         return out
 
     todo_lines: list[str] = []

@@ -87,7 +87,9 @@ Snapshots `docs` sources into `docs/snapshots/`, running every fetched artifact 
 
 - **`ok`** — content was sanitized and written as a snapshot, with a content hash.
 - **`flagged`** — an injection signature matched; the content is quarantined as `docs/snapshots/<name>.flagged.<ext>` and **not** surfaced as a usable snapshot until a human reviews it.
-- **`reference-only`** — no local snapshot was produced; the entry keeps its source as a pointer. The `reason` is `not-fetched` (an in-repo `repo`+`path` whose repo has not been fetched yet), `no-source` (a non-http(s) URL), or `fetch-error` (the fetch failed — surfaced as a loud `WARNING`).
+- **`reference-only`** — no local snapshot was produced; the entry keeps its source as a pointer. The `reason` is `not-fetched` (an in-repo `repo`+`path` whose repo has not been fetched yet), `no-source` (a non-http(s) URL), `fetch-error` (the fetch failed — surfaced as a loud `WARNING`), or `unsupported-binary` (a binary format such as PDF — the text pipeline would destroy it, so the source is kept as a pointer and never rewritten; surfaced as a `NOTE`).
+
+Only text content enters the sanitize-and-write pipeline. In-repo docs are classified by suffix (an explicit text allowlist and binary denylist) with a git-style NUL sniff for unknown suffixes; external fetches are classified by media type with the same content sniff for unknown types. Binary sources are excluded from automatic summarization until a binary-aware extraction and safety policy exists.
 
 Source handling:
 

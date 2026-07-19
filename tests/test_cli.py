@@ -543,6 +543,41 @@ class CliTests(unittest.TestCase):
             self.assertNotIn("## Keep as-is", prompt)
             self.assertIn("need review", out)
 
+    def test_summarize_notes_unsupported_binary_doc(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "docs-bin"
+            atlas = {
+                "version": 1,
+                "name": "docs-bin",
+                "sources": {
+                    "repos": [],
+                    "docs": [{"name": "manual", "kind": "guide", "url": "https://e/manual.pdf"}],
+                    "papers": [],
+                    "notes": [],
+                },
+            }
+            lock = {
+                "version": 1,
+                "name": "docs-bin",
+                "sources": {"repos": [], "docs": [], "papers": [], "notes": []},
+                "doc_snapshots": [
+                    {
+                        "name": "manual",
+                        "status": "reference-only",
+                        "reason": "unsupported-binary",
+                        "fetched_at": "2026-06-08T00:00:00+00:00",
+                    }
+                ],
+            }
+            self._write_atlas_and_lock(workspace, atlas=atlas, lock=lock)
+
+            _, prompt, _ = self._run_summarize(workspace)
+            todo = prompt.partition("## Keep as-is")[0]
+            self.assertIn("- `manual`", todo)
+            self.assertIn("source_rev: unfetched", prompt)
+            self.assertIn("unsupported binary", prompt)
+            self.assertIn("do not decode the binary", prompt)
+
     def test_summarize_legacy_timestamp_fallback(self):
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp) / "legacy"
@@ -1063,9 +1098,60 @@ class CliTests(unittest.TestCase):
             self.assertEqual(entry["status"], "reference-only")
             self.assertEqual(entry["reason"], "not-fetched")
 
+    # A minimal PDF with an embedded image XObject: binary stream bytes (NULs,
+    # invalid UTF-8) that a decode/sanitize/write round-trip would destroy.
+    _PDF_WITH_IMAGE = (
+        b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n"
+        b"1 0 obj\n<< /Type /XObject /Subtype /Image /Width 2 /Height 2 "
+        b"/BitsPerComponent 8 /ColorSpace /DeviceRGB /Length 12 >>\nstream\n"
+        b"\x00\x01\x02\x80\xff\xfe\x10\x20\x30\x40\x50\x60\nendstream\nendobj\n"
+        b"trailer\n<< >>\n%%EOF\n"
+    )
+
+    def test_fetch_docs_in_repo_binary_pdf_is_reference_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._docs_workspace(
+                tmp,
+                [{"name": "manual", "kind": "guide", "repo": "api", "path": "manual.pdf"}],
+            )
+            src = workspace / "repos" / "api" / "manual.pdf"
+            src.parent.mkdir(parents=True)
+            src.write_bytes(self._PDF_WITH_IMAGE)
+
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                self.assertEqual(main(["fetch-docs", str(workspace)]), 0)
+
+            self.assertFalse((workspace / "docs" / "snapshots" / "manual.pdf").exists())
+            self.assertEqual(src.read_bytes(), self._PDF_WITH_IMAGE)
+
+            entry = json.loads((workspace / "zentaizo.lock.json").read_text())["doc_snapshots"][0]
+            self.assertEqual(entry["status"], "reference-only")
+            self.assertEqual(entry["reason"], "unsupported-binary")
+            self.assertIsNone(entry["snapshot"])
+            self.assertIn("1 reference-only", output.getvalue())
+            self.assertIn("unsupported binary", output.getvalue())
+
+    def test_fetch_docs_in_repo_suffixless_text_still_snapshots(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._docs_workspace(
+                tmp,
+                [{"name": "license", "kind": "guide", "repo": "api", "path": "LICENSE"}],
+            )
+            (workspace / "repos" / "api").mkdir(parents=True)
+            (workspace / "repos" / "api" / "LICENSE").write_text("MIT License\n")
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(main(["fetch-docs", str(workspace)]), 0)
+
+            entry = json.loads((workspace / "zentaizo.lock.json").read_text())["doc_snapshots"][0]
+            self.assertEqual(entry["status"], "ok")
+            self.assertIn("MIT License", (workspace / entry["snapshot"]).read_text())
+
     def _run_fetch_docs_with_http(self, workspace: Path, responses: dict) -> str:
         """Run fetch-docs with _http_get mocked. `responses` maps URL ->
-        (content_type, text) for success, or to an Exception to raise."""
+        (content_type, str-or-bytes body) for success, or to an Exception to
+        raise."""
 
         def fake_get(url):
             value = responses.get(url)
@@ -1073,8 +1159,9 @@ class CliTests(unittest.TestCase):
                 raise urllib.error.URLError("404 Not Found")
             if isinstance(value, Exception):
                 raise value
-            content_type, text = value
-            return _HttpResult(url=url, content_type=content_type, text=text)
+            content_type, body = value
+            data = body if isinstance(body, bytes) else body.encode("utf-8")
+            return _HttpResult(url=url, content_type=content_type, data=data)
 
         output = io.StringIO()
         with (
@@ -1144,6 +1231,48 @@ class CliTests(unittest.TestCase):
             self.assertEqual(entry["status"], "reference-only")
             self.assertEqual(entry["reason"], "fetch-error")
             self.assertIn("WARNING", text)
+
+    def test_fetch_docs_external_binary_is_reference_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._docs_workspace(
+                tmp,
+                [{"name": "spec-pdf", "url": "https://example.com/spec.pdf"}],
+            )
+            text = self._run_fetch_docs_with_http(
+                workspace,
+                {"https://example.com/spec.pdf": ("application/pdf", self._PDF_WITH_IMAGE)},
+            )
+            snapshots = workspace / "docs" / "snapshots"
+            self.assertEqual(list(snapshots.glob("spec-pdf*")), [])
+            entry = json.loads((workspace / "zentaizo.lock.json").read_text())["doc_snapshots"][0]
+            self.assertEqual(entry["status"], "reference-only")
+            self.assertEqual(entry["reason"], "unsupported-binary")
+            self.assertIn("unsupported binary", text)
+
+    def test_fetch_docs_external_binary_llms_probe_falls_through(self):
+        # A server answering the llms.txt probe with binary must not have that
+        # response snapshotted; the fetch falls through to the page itself.
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._docs_workspace(
+                tmp,
+                [{"name": "site", "url": "https://example.com/api"}],
+            )
+            self._run_fetch_docs_with_http(
+                workspace,
+                {
+                    "https://example.com/llms-full.txt": (
+                        "application/octet-stream",
+                        b"\x00\x01binary blob\x00",
+                    ),
+                    "https://example.com/api": (
+                        "text/html",
+                        "<html><body><p>Reference.</p></body></html>",
+                    ),
+                },
+            )
+            entry = json.loads((workspace / "zentaizo.lock.json").read_text())["doc_snapshots"][0]
+            self.assertEqual(entry["status"], "ok")
+            self.assertEqual(entry["source"]["fetcher"], "single-page")
 
     def test_fetch_docs_external_non_http_scheme_no_network(self):
         with tempfile.TemporaryDirectory() as tmp:
