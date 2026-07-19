@@ -4,6 +4,12 @@ All notable changes to this project are documented here.
 
 This project uses the Keep a Changelog format. Versions 0.8.0 and earlier predate this changelog.
 
+## [0.10.3] - 2026-07-19
+
+### Changed
+
+- `graphify-out/` is now treated as derived output rebuilt per clone (integrations-0004): the scaffolded `.gitignore` ignores the whole directory (replacing the `cost.json`/`cache/stat-index.json` carve-outs), and the generated `AGENTS.md`/`README.md` document the policy — each clone runs `zentaizo graph` after `zentaizo fetch` (offline tree-sitter extraction, no LLM tokens, ~1 min). Motivated by real measurements: `graph.json` alone reached 97–99 MiB at a 12-repo workspace, at GitHub's hard 100 MiB per-file push limit. Repo docs aligned. Existing workspaces adopt the policy via `upgrade-zentaizo`.
+
 ## [0.10.2] - 2026-07-19
 
 ### Fixed
