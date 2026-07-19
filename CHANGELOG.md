@@ -4,6 +4,12 @@ All notable changes to this project are documented here.
 
 This project uses the Keep a Changelog format. Versions 0.8.0 and earlier predate this changelog.
 
+## [0.10.2] - 2026-07-19
+
+### Fixed
+
+- `fetch-docs` no longer corrupts binary documents (docs-layer-0004): content is classified as text or binary before any decoding, so PDFs and other binary formats are never round-tripped through the Unicode sanitizer (which stripped embedded images and rewrote byte streams while reporting `ok`). Binary sources are now recorded as `reference-only` with reason `unsupported-binary` (no snapshot file, surfaced as a `NOTE`), a binary answer to the `llms.txt` probe falls through to the page tier, and the summarize prompt marks such docs "do not decode the binary source". In-repo docs classify by suffix allow/deny lists with a git-style NUL sniff for unknown suffixes; external fetches classify by media type with the same sniff, keeping response bytes undecoded until classified.
+
 ## [0.10.1] - 2026-07-19
 
 ### Added
