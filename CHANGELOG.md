@@ -4,6 +4,12 @@ All notable changes to this project are documented here.
 
 This project uses the Keep a Changelog format. Versions 0.8.0 and earlier predate this changelog.
 
+## [0.11.0] - 2026-07-19
+
+### Added
+
+- Workspace conventions tracking (foundations-0005), establishing **conventions generation 1** as the baseline: `zentaizo create` seeds `zentaizo.lock.json` with a `conventions` block (`generation` is the comparison key; `tool_version`/`stamped_at` are provenance), the new `zentaizo upgraded` verb re-stamps it when an `upgrade-zentaizo` pass finishes (recreating a missing lock only when an atlas proves the directory is a workspace), and `zentaizo status` ends with a `Conventions:` section — `current` / `behind` (per-generation delta lines from the new `CONVENTIONS_DELTAS` map plus upgrade guidance) / `not tracked` — reporting a stamp newer than the installed tool as an outdated tool. Releases that change generated workspace artifacts or session-file conventions now bump `CONVENTIONS_GENERATION` and add one delta entry (rule in `docs/design/versioning.md`); the lock fallbacks in `fetch`/`fetch-docs`/`graph` deliberately never stamp, so a pre-tracking workspace keeps reporting `not tracked` until an upgrade pass records itself.
+
 ## [0.10.3] - 2026-07-19
 
 ### Changed
