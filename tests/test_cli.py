@@ -685,6 +685,27 @@ class CliTests(unittest.TestCase):
             self.assertIn("Workspace about widget pipelines.", focus)
             self.assertIn("DSG integration", focus)
 
+    def test_summarize_graph_guidance_requires_graph(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "graph-guidance"
+            atlas = default_atlas("graph-guidance")
+            self._write_atlas_and_lock(workspace, atlas=atlas)
+            guidance = "ground cross-source claims with `graphify query`"
+
+            with mock.patch(
+                "zentaizo.cli.utc_now", return_value="2026-07-19T00:00:00+00:00"
+            ):
+                _, without_graph, _ = self._run_summarize(workspace)
+                self.assertNotIn(guidance, without_graph)
+
+                graph_path = workspace / "graphify-out" / "graph.json"
+                graph_path.parent.mkdir()
+                graph_path.write_text("{}")
+                _, with_graph, _ = self._run_summarize(workspace)
+
+            self.assertIn(guidance, with_graph)
+            self.assertEqual(with_graph.splitlines()[:-1], without_graph.splitlines())
+
     def test_preserve_unchanged_fetched_at(self):
         prior = {
             "alpha": {"name": "alpha", "commit": "aaaa", "fetched_at": "OLD"},

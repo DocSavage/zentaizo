@@ -2768,6 +2768,17 @@ def summarize_workspace(args: argparse.Namespace) -> int:
         "- Ground all claims in source paths or locked document metadata.",
     ]
 
+    if (workspace / GRAPH_OUTPUT_DIR / "graph.json").exists():
+        lines.append(
+            "- The workspace knowledge graph exists (`graphify-out/graph.json`): when "
+            "writing `relationships.md`, ground cross-source claims with `graphify query` / "
+            "`graphify path` / `graphify explain` and cite the file:line coordinates they "
+            "return, rather than re-scanning whole repos. If `zentaizo status` reports the "
+            "graph stale, refresh with `zentaizo graph` first. In sensitive workspaces set "
+            "`GRAPHIFY_QUERY_LOG_DISABLE=1` when querying (queries are logged to "
+            "`~/.cache/graphify-queries.log` by default)."
+        )
+
     prompt_path.write_text("\n".join(lines) + "\n")
 
     print(f"Wrote summary prompt: {prompt_path}")
