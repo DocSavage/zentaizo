@@ -4,6 +4,16 @@ All notable changes to this project are documented here.
 
 This project uses the Keep a Changelog format. Versions 0.8.0 and earlier predate this changelog.
 
+## [0.10.1] - 2026-07-19
+
+### Added
+
+- The `zentaizo summarize` prompt gains a graph-grounding Guidance bullet when `graphify-out/graph.json` exists: ground cross-source claims in `relationships.md` with `graphify query`/`path`/`explain` citations instead of re-scanning repos. Graph-less workspaces see no change.
+
+### Fixed
+
+- Version bumps are visible to the lock resolver again: `pyproject.toml` declares `[tool.uv] cache-keys` including `src/zentaizo/__init__.py`, so `pixi lock`/`pixi update` invalidate the cached path-package metadata on a bump instead of silently keeping the old version.
+
 ## [0.10.0] - 2026-07-10
 
 Delegation-aware commit attribution (the `claude-integration` effort's ledger + nested-run arc).
