@@ -147,15 +147,20 @@ workspace works without it). Summaries are the prose level-of-detail spine;
 the graph answers structural questions (`graphify query` / `path` /
 `explain`), especially cross-repo relationships.
 
+The whole directory is derived output and gitignored — `graph.json` alone can
+sit near GitHub's 100 MiB per-file push limit on multi-repo workspaces, while
+a cold rebuild costs about a minute of local compute (offline tree-sitter
+extraction, no LLM tokens). Each clone rebuilds it locally: `zentaizo graph`
+after `zentaizo fetch`.
+
 ```text
-graphify-out/
-  graph.json              # committed — machine-derived, like the lock
-  GRAPH_REPORT.md         # committed — markdown context, like a summary
-  graph.html              # committed — interactive visualization
-  manifest.json           # committed — portable; spares a fresh clone a full rebuild
-  cache/                  # committed — extraction cache (no raw source chunks)
-  cache/stat-index.json   # gitignored — machine-local stat memo
-  cost.json               # gitignored — local-only run costs
+graphify-out/             # gitignored as a whole — rebuilt per clone
+  graph.json              # machine-derived graph, like the lock but rebuildable
+  GRAPH_REPORT.md         # markdown context, like a summary
+  graph.html              # interactive visualization
+  manifest.json           # build manifest (workspace-relative paths only)
+  cache/                  # content-addressed extraction cache
+  cost.json               # local-only run costs
 ```
 
 The default build is code-only and fully offline; `zentaizo graph --semantic

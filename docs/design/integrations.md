@@ -66,11 +66,16 @@ How it works in current code (`graph_workspace` and helpers in
   refused, never overwritten.
 - **Output and commit policy.** Graphify runs with CWD = workspace root scanning
   `.` (which coalesces all output into one `graphify-out/`), under
-  `PYTHONHASHSEED=0` (reproducible clustering) and `GRAPHIFY_NO_BACKUP=1` (git
-  history is the backup). `graphify-out/` is committed — `graph.json` is
-  machine-derived state like the lock, `GRAPH_REPORT.md` is markdown context like
-  a summary — except `cost.json` and `cache/stat-index.json`, which are
-  gitignored.
+  `PYTHONHASHSEED=0` (reproducible clustering) and `GRAPHIFY_NO_BACKUP=1` (a
+  rebuild is the backup). `graphify-out/` is derived output and not committed:
+  measured at real workspace scale (12 repos, ~5,900 code files), `graph.json`
+  alone reaches 97–99 MiB — at GitHub's hard 100 MiB per-file push limit —
+  while a cold rebuild costs about a minute, offline, zero LLM tokens. Each
+  clone rebuilds locally with `zentaizo graph` after `zentaizo fetch`; the
+  scaffolded `.gitignore` ignores the whole directory. (Considered and
+  rejected as the default: committing everything but
+  `graph.json`/`manifest.json` to keep warm caches — it commits ~200 MB of
+  cache churn; a workspace that wants it can un-ignore locally.)
 - **The report goes through the docs-scan safety pass.** `GRAPH_REPORT.md` is
   extraction *from* untrusted sources and is the one artifact agents read as
   prose, so it runs the same sanitize/flag pass as fetched docs with mechanical
@@ -130,7 +135,7 @@ an open question, not a decision.
 | Graph scope | One graph over the whole workspace | Cross-source (cross-repo, code↔doc) edges are the value a per-repo run can't see |
 | Execution modes | Code-only/offline default; `--semantic` opt-in, explicit `--backend` required | Only code extraction is local AST; semantic extraction is a model-API/cost/data-residency event that must be stated intent |
 | `GRAPH_REPORT.md` | Same docs-scan safety pass; move-aside quarantine | It is prose agents read, extracted from untrusted sources |
-| Output | Commit `graphify-out/` (minus `cost.json`, `cache/stat-index.json`) | `graph.json` is machine state like the lock; a fresh clone gets the map and `--update` diffs against it |
+| Output | Ignore `graphify-out/` entirely; each clone rebuilds (`zentaizo fetch` → `zentaizo graph`) | `graph.json` reaches GitHub's 100 MiB per-file limit at real workspace scale, while a cold rebuild is ~1 min, offline, no LLM tokens |
 | Provenance | Mode-scoped `built_from` + `not_graphed` in the lock | A source the mode never read must not stale the graph |
 | Fetch refresh | Best-effort, code-only, never fails the fetch | A code-only refresh is local/deterministic; an implicit semantic refresh would not be |
 | Context Hub | Proposed only — not implemented | Open direction pending a Context7/graph-layer comparison |

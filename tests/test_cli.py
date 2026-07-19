@@ -4498,13 +4498,31 @@ class GraphTests(WorkspaceCliCase):
             for line in (
                 "repos/",
                 "tmp/",
-                "graphify-out/cost.json",
-                "graphify-out/cache/stat-index.json",
+                "graphify-out/",
                 "docs/snapshots/*.flagged.*",
             ):
                 self.assertIn(line, text)
+            # Whole-directory ignore: the old narrow carve-outs are gone.
+            self.assertNotIn("graphify-out/cost.json", text)
+            self.assertNotIn("graphify-out/cache/stat-index.json", text)
             self.assertNotIn("docs/snapshots/\n", text)
             self.assertNotIn("papers/*.pdf", text)
+
+    def test_templates_state_graph_rebuild_per_clone_policy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            agents = (workspace / "AGENTS.md").read_text()
+            readme = (workspace / "README.md").read_text()
+            for text in (agents, readme):
+                self.assertIn("derived output and deliberately not committed", text)
+                self.assertIn("no LLM tokens", text)
+            self.assertIn("rebuilds it locally with `zentaizo graph` after `zentaizo fetch`", agents)
+            # The README's statement sits in the summarize/graph workflow step,
+            # right after the structural-counterpart paragraph.
+            self.assertLess(
+                readme.index("structural counterpart"),
+                readme.index("each clone rebuilds the graph locally"),
+            )
 
     def test_agents_md_consultation_order_includes_graph(self):
         with tempfile.TemporaryDirectory() as tmp:
