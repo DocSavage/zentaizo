@@ -4,6 +4,16 @@ All notable changes to this project are documented here.
 
 This project uses the Keep a Changelog format. Versions 0.8.0 and earlier predate this changelog.
 
+## [0.12.0] - 2026-07-20
+
+### Added
+
+- **Conventions generation 2** (feedback-0001): the generated workspace `AGENTS.md` gains a "Reporting Zentaizo Tool Issues" section — bugs, friction, or ideas about the tool or its workspace conventions are filed upstream with `gh issue create -R DocSavage/zentaizo` (confirm with the user first; fall back to a `sessions/` note when `gh` is unavailable), never silently worked around. The global skill and README carry the same procedure. Existing workspaces adopt it via `upgrade-zentaizo`.
+
+### Removed
+
+- The `-Z`/`--zentaizo` hub-routing flag, the `zentaizo config` command, and the tool-level hub config (feedback-0001). GitHub issues are the feedback channel a generated workspace can honestly document — `-Z` presupposed the maintainer's local filesystem layout, and `-C <path>` already covers filing a session doc into another local workspace. A leftover `~/.config/zentaizo/config.json` is now unused and can be deleted.
+
 ## [0.11.0] - 2026-07-19
 
 ### Added
