@@ -3040,9 +3040,10 @@ NOT_GRAPHED_UNFETCHED = "not fetched (run 'zentaizo fetch')"
 # directory (replacement, not overlay), so this file must carry every
 # graph-relevant exclusion itself. With it present, `repos/` is visible to
 # Graphify even though the workspace .gitignore hides it from git — no
-# negation needed. `docs/snapshots/*.flagged.*` is forward-compat: 0.8.39
-# prunes any `snapshots` dir outright, but quarantined text must stay
-# excluded if upstream ever makes snapshots reachable.
+# negation needed. The unanchored `.pixi/` rule excludes nested Pixi
+# environments inside those visible repos. `docs/snapshots/*.flagged.*` is
+# forward-compat: 0.8.39 prunes any `snapshots` dir outright, but quarantined
+# text must stay excluded if upstream ever makes snapshots reachable.
 GRAPHIFYIGNORE_TEXT = f"""\
 {GRAPHIFYIGNORE_MARKER} Do not edit; regenerated on every build.
 # Scope: graph the source trees (repos/, docs/, papers/, notes/) and the durable
@@ -3059,6 +3060,7 @@ tmp/
 {GRAPH_OUTPUT_DIR}/
 .zentaizo/
 .claude/
+.pixi/
 {ATLAS_NAME}
 {LOCK_NAME}
 AGENTS.md

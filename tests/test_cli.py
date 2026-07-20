@@ -4460,6 +4460,7 @@ class GraphTests(WorkspaceCliCase):
                 "skills/",
                 "tmp/",
                 "graphify-out/",
+                ".pixi/",
                 "zentaizo.atlas.json",
                 "zentaizo.lock.json",
                 "docs/snapshots/*.flagged.*",
