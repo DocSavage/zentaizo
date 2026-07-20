@@ -215,23 +215,3 @@ zentaizo next-report SLUG
 These commands allocate session files through the CLI. `next-change` and `next-debugging` share the per-effort slice counter and scaffold frontmatter from `skills/plan-template.md`; `--short-title` fills the `short_title` frontmatter field and rejects values over 30 characters. `next-handoff` creates a per-slice handoff letter without consuming the slice counter. `next-brainstorming` writes a dated, provenance-bearing planning input under `sessions/brainstorming/`; raw freeform dumps are still allowed there. `next-note` writes a dated Q&A log under `sessions/questions/`. `next-report` writes a living report under `sessions/reports/`.
 
 Every command in this section accepts `-C PATH` / `--workspace PATH` to target a workspace other than the current directory (it defaults to `.`).
-
-## Tool-Level Config and Hub Routing (`-Z`)
-
-```bash
-zentaizo config set hub PATH
-zentaizo config get [hub]
-zentaizo config unset hub
-```
-
-`config` manages **tool-level** (global) configuration, stored under `$XDG_CONFIG_HOME/zentaizo/config.json` (default `~/.config/zentaizo/config.json`) — distinct from the per-workspace atlas and lock. Today it holds one key, the **hub workspace**: the `zen-zentaizo` workspace that feedback about the tool *itself* is filed into. `config set hub` stores an absolute, existence-checked path (the target must be a real workspace — it needs both `zentaizo.atlas.json` and `sessions/`).
-
-```bash
-zentaizo next-brainstorming "acg-summarize-too-slow" --zentaizo
-```
-
-`-Z` / `--zentaizo` is the hub-equivalent of `-C`/`--workspace`: instead of the current directory (or a `-C` path), the command targets the configured hub workspace, resolved from the global config. The two flags are mutually exclusive. From any spoke workspace — with no symlink and no path — a contributor can file efforts and session docs straight into the hub, which then triages, plans, reviews, and implements.
-
-`-Z` is accepted by `effort new`, every `next-*` creator, and the read-only `path` / `effort show` / `effort list` commands. It is **not** accepted by the hub-administration commands (`effort switch` / `set-branch` / `close`) or by the positional-`PATH` commands (`status`, `validate`, `fetch`, …). Because routing into the hub has no meaningful "current effort" for a spoke, the effort-scoped creators (`next-change`, `next-debugging`, `next-handoff`) **require an explicit `--label`** under `-Z` — so feedback never silently lands in whatever effort the hub maintainer happens to have current. If the hub is unset, `-Z` is a hard error pointing at `config set hub` (there is no sibling auto-discovery).
-
-Heavy-tier contributions — a substantial change a spoke understands best — stay a **manual convention**: author the change doc in the originating workspace, then re-create it in the hub (`next-change --zentaizo --label <effort>`) and paste the content across. There is no automated cross-workspace export primitive.

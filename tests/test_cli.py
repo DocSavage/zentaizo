@@ -13,8 +13,8 @@ from pathlib import Path
 from unittest import mock
 
 from zentaizo.cli import (
+    CONVENTIONS_GENERATION,
     HOOK_MARKER,
-    HUB_CONFIG_KEY,
     CliError,
     _codex_editor_identity,
     _HttpResult,
@@ -28,7 +28,6 @@ from zentaizo.cli import (
     git_style_now,
     install_commit_attribution_hook,
     main,
-    read_global_config,
 )
 
 
@@ -100,6 +99,10 @@ class CliTests(unittest.TestCase):
             self.assertIn("status-frontmatter schema", agents)
             self.assertIn("skills/plan-template.md", agents)
             self.assertIn("skills/plan-and-implement.md", agents)
+            # Tool feedback goes upstream via GitHub issues (user-confirmed, public).
+            self.assertIn("Reporting Zentaizo Tool Issues", agents)
+            self.assertIn("gh issue create -R DocSavage/zentaizo", agents)
+            self.assertIn("confirm with the user first", agents)
 
             for subdir in [
                 "efforts",
@@ -4898,28 +4901,31 @@ class ConventionsTests(WorkspaceCliCase):
             write_example_atlas(workspace, "ws")
             code, out, _err = self._run(["status", str(workspace)])
             self.assertEqual(code, 0)
-            self.assertIn("Conventions: current (generation 1)", out)
+            self.assertIn(f"Conventions: current (generation {CONVENTIONS_GENERATION})", out)
             self.assertIn("match", out)
 
     def test_status_reports_behind_with_missed_deltas_and_guidance(self):
+        # The workspace stamps the real generation G; the tool is patched to
+        # G+2 so exactly the two newer deltas are "missed", never G's own.
+        gen = CONVENTIONS_GENERATION
+        deltas = {i: f"delta {i}" for i in range(1, gen + 1)}
+        deltas[gen + 1] = "second delta"
+        deltas[gen + 2] = "third delta"
         with tempfile.TemporaryDirectory() as tmp:
             workspace = self._make_workspace(tmp)
             write_example_atlas(workspace, "ws")
             with (
-                mock.patch("zentaizo.cli.CONVENTIONS_GENERATION", 3),
-                mock.patch(
-                    "zentaizo.cli.CONVENTIONS_DELTAS",
-                    {1: "baseline", 2: "second delta", 3: "third delta"},
-                ),
+                mock.patch("zentaizo.cli.CONVENTIONS_GENERATION", gen + 2),
+                mock.patch("zentaizo.cli.CONVENTIONS_DELTAS", deltas),
             ):
                 code, out, _err = self._run(["status", str(workspace)])
             self.assertEqual(code, 0)
             self.assertIn("Conventions: behind", out)
-            self.assertIn("stamped at generation 1", out)
-            self.assertIn("generates workspaces at generation 3", out)
-            self.assertIn("  missed 2: second delta", out)
-            self.assertIn("  missed 3: third delta", out)
-            self.assertNotIn("missed 1:", out)
+            self.assertIn(f"stamped at generation {gen}", out)
+            self.assertIn(f"generates workspaces at generation {gen + 2}", out)
+            self.assertIn(f"  missed {gen + 1}: second delta", out)
+            self.assertIn(f"  missed {gen + 2}: third delta", out)
+            self.assertNotIn(f"missed {gen}:", out)
             self.assertIn("'upgrade-zentaizo' skill", out)
             self.assertIn("'zentaizo upgraded'", out)
 
@@ -4970,7 +4976,7 @@ class ConventionsTests(WorkspaceCliCase):
             code, out, _err = self._run(["status", str(workspace)])
             self.assertEqual(code, 0)
             self.assertIn("Atlas: missing zentaizo.atlas.json", out)
-            self.assertIn("Conventions: current (generation 1)", out)
+            self.assertIn(f"Conventions: current (generation {CONVENTIONS_GENERATION})", out)
 
     def test_conventions_block_survives_fetch_docs(self):
         from zentaizo.cli import CONVENTIONS_GENERATION
@@ -5008,255 +5014,6 @@ class ConventionsTests(WorkspaceCliCase):
             self.assertEqual(lock["doc_snapshots"][0]["status"], "ok")
             self.assertEqual(lock["conventions"]["generation"], CONVENTIONS_GENERATION)
             self.assertIn("tool_version", lock["conventions"])
-
-
-class HubFlagTests(unittest.TestCase):
-    """Tool-level hub config + the -Z/--zentaizo routing flag."""
-
-    def setUp(self):
-        patcher = mock.patch(
-            "zentaizo.cli._probe_claude_session_title_command",
-            return_value=(False, "not on PATH"),
-        )
-        self.addCleanup(patcher.stop)
-        patcher.start()
-
-    def _workspace(self, tmp, name):
-        ws = Path(tmp) / name
-        with contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(main(["create", str(ws)]), 0)
-        write_example_atlas(ws, name)
-        return ws
-
-    @contextlib.contextmanager
-    def _env(self, cfg_dir):
-        # Isolate the global config under a temp XDG_CONFIG_HOME so tests never
-        # read or write the developer's real ~/.config.
-        with mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": str(cfg_dir)}):
-            yield
-
-    def _set_hub(self, hub):
-        with (
-            contextlib.redirect_stdout(io.StringIO()),
-            contextlib.redirect_stderr(io.StringIO()),
-        ):
-            self.assertEqual(main(["config", "set", "hub", str(hub)]), 0)
-
-    def test_config_set_get_unset_round_trip(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            hub = self._workspace(tmp, "hub").resolve()
-            with self._env(Path(tmp) / "cfg"):
-                self._set_hub(hub)
-                self.assertEqual(read_global_config().get(HUB_CONFIG_KEY), str(hub))
-                out = io.StringIO()
-                with contextlib.redirect_stdout(out):
-                    self.assertEqual(main(["config", "get"]), 0)
-                self.assertEqual(out.getvalue().strip(), str(hub))
-                with contextlib.redirect_stderr(io.StringIO()):
-                    self.assertEqual(main(["config", "unset", "hub"]), 0)
-                self.assertNotIn(HUB_CONFIG_KEY, read_global_config())
-
-    def test_config_set_rejects_non_workspace(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            plain = Path(tmp) / "plain"
-            plain.mkdir()
-            with self._env(Path(tmp) / "cfg"):
-                with contextlib.redirect_stderr(io.StringIO()):
-                    self.assertEqual(main(["config", "set", "hub", str(plain)]), 2)
-                self.assertEqual(read_global_config(), {})
-
-    def test_zentaizo_unset_is_hard_error(self):
-        with (
-            tempfile.TemporaryDirectory() as tmp,
-            self._env(Path(tmp) / "cfg"),
-            contextlib.redirect_stderr(io.StringIO()),
-        ):
-            self.assertEqual(main(["next-brainstorming", "probe", "--zentaizo"]), 2)
-
-    def test_zentaizo_routes_to_hub_regardless_of_cwd(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            hub = self._workspace(tmp, "hub").resolve()
-            spoke = self._workspace(tmp, "spoke").resolve()
-            with self._env(Path(tmp) / "cfg"):
-                self._set_hub(hub)
-                old = os.getcwd()
-                os.chdir(spoke)  # run from the spoke; -Z must still target the hub
-                try:
-                    with (
-                        contextlib.redirect_stdout(io.StringIO()),
-                        contextlib.redirect_stderr(io.StringIO()),
-                    ):
-                        self.assertEqual(
-                            main(["next-brainstorming", "from-spoke", "--zentaizo"]), 0
-                        )
-                finally:
-                    os.chdir(old)
-            self.assertEqual(
-                len(list((hub / "sessions" / "brainstorming").glob("*from-spoke*"))), 1
-            )
-            self.assertEqual(
-                list((spoke / "sessions" / "brainstorming").glob("*from-spoke*")), []
-            )
-
-    def test_dash_c_and_dash_z_mutually_exclusive(self):
-        with (
-            tempfile.TemporaryDirectory() as tmp,
-            self._env(Path(tmp) / "cfg"),
-            contextlib.redirect_stderr(io.StringIO()),
-            self.assertRaises(SystemExit),
-        ):
-            main(["next-brainstorming", "x", "-C", tmp, "--zentaizo"])
-
-    def test_slice_requires_label_under_hub(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            hub = self._workspace(tmp, "hub").resolve()
-            changes = hub / "sessions" / "changes"
-            with self._env(Path(tmp) / "cfg"):
-                self._set_hub(hub)
-                with contextlib.redirect_stderr(io.StringIO()):
-                    self.assertEqual(main(["next-change", "feedback", "--zentaizo"]), 2)
-                self.assertEqual(list(changes.glob("*feedback*")), [])  # nothing created
-                with (
-                    contextlib.redirect_stdout(io.StringIO()),
-                    contextlib.redirect_stderr(io.StringIO()),
-                ):
-                    self.assertEqual(
-                        main(["next-change", "feedback", "--zentaizo", "--label", "main"]), 0
-                    )
-                self.assertEqual(len(list(changes.glob("*feedback*"))), 1)
-
-    def test_effort_new_under_hub(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            hub = self._workspace(tmp, "hub").resolve()
-            with self._env(Path(tmp) / "cfg"):
-                self._set_hub(hub)
-                with (
-                    contextlib.redirect_stdout(io.StringIO()),
-                    contextlib.redirect_stderr(io.StringIO()),
-                ):
-                    self.assertEqual(
-                        main(["effort", "new", "consoleui", "--describe", "x", "--zentaizo"]), 0
-                    )
-            self.assertEqual(
-                len(list((hub / "sessions" / "efforts").glob("*consoleui*"))), 1
-            )
-
-    def test_admin_commands_reject_zentaizo(self):
-        with (
-            tempfile.TemporaryDirectory() as tmp,
-            self._env(Path(tmp) / "cfg"),
-            contextlib.redirect_stderr(io.StringIO()),
-        ):
-            for argv in (
-                ["effort", "switch", "main", "--zentaizo"],
-                ["effort", "close", "main", "--zentaizo"],
-                ["effort", "set-branch", "main", "--repo", "x", "--zentaizo"],
-            ):
-                with self.assertRaises(SystemExit):
-                    main(argv)
-
-    def test_label_guard_covers_debugging_and_handoff(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            hub = self._workspace(tmp, "hub").resolve()
-            with self._env(Path(tmp) / "cfg"):
-                self._set_hub(hub)
-                with contextlib.redirect_stderr(io.StringIO()):
-                    self.assertEqual(main(["next-debugging", "bug", "--zentaizo"]), 2)
-                    self.assertEqual(main(["next-handoff", "0000", "--zentaizo"]), 2)
-            self.assertEqual(list((hub / "sessions" / "debugging").glob("*bug*")), [])
-
-    def test_readonly_commands_route_to_hub(self):
-        # An effort created only in the hub is visible via read-only -Z commands
-        # run from elsewhere; if they hit the cwd instead they would not find it.
-        with tempfile.TemporaryDirectory() as tmp:
-            hub = self._workspace(tmp, "hub").resolve()
-            self._workspace(tmp, "spoke")
-            with self._env(Path(tmp) / "cfg"):
-                self._set_hub(hub)
-                with (
-                    contextlib.redirect_stdout(io.StringIO()),
-                    contextlib.redirect_stderr(io.StringIO()),
-                ):
-                    self.assertEqual(
-                        main(["effort", "new", "consoleui", "--describe", "x", "--zentaizo"]), 0
-                    )
-                old = os.getcwd()
-                os.chdir(Path(tmp) / "spoke")
-                try:
-                    out = io.StringIO()
-                    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
-                        self.assertEqual(main(["effort", "list", "--zentaizo"]), 0)
-                        self.assertEqual(main(["effort", "show", "consoleui", "--zentaizo"]), 0)
-                        self.assertEqual(main(["path", "slice", "--next", "--zentaizo"]), 0)
-                    self.assertIn("consoleui", out.getvalue())
-                finally:
-                    os.chdir(old)
-
-    def test_next_note_report_handoff_route_to_hub(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            hub = self._workspace(tmp, "hub").resolve()
-            with self._env(Path(tmp) / "cfg"):
-                self._set_hub(hub)
-                with (
-                    contextlib.redirect_stdout(io.StringIO()),
-                    contextlib.redirect_stderr(io.StringIO()),
-                ):
-                    self.assertEqual(main(["next-note", "q", "--zentaizo"]), 0)
-                    self.assertEqual(main(["next-report", "r", "--zentaizo"]), 0)
-                    self.assertEqual(
-                        main(["next-handoff", "0000", "--zentaizo", "--label", "main"]), 0
-                    )
-            self.assertEqual(len(list((hub / "sessions" / "questions").glob("*q*"))), 1)
-            self.assertEqual(len(list((hub / "sessions" / "reports").glob("*r*"))), 1)
-            self.assertEqual(len(list((hub / "sessions" / "handoffs").glob("main-0000*"))), 1)
-
-    def test_positional_workspace_commands_reject_zentaizo(self):
-        with (
-            tempfile.TemporaryDirectory() as tmp,
-            self._env(Path(tmp) / "cfg"),
-            contextlib.redirect_stderr(io.StringIO()),
-        ):
-            for cmd in ("status", "validate", "fetch", "graph", "summarize", "sandbox"):
-                with self.assertRaises(SystemExit):
-                    main([cmd, "--zentaizo"])
-
-    def test_config_set_stores_absolute_path(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            self._workspace(tmp, "hub")  # creates <tmp>/hub
-            with self._env(Path(tmp) / "cfg"):
-                old = os.getcwd()
-                os.chdir(tmp)
-                try:
-                    with (
-                        contextlib.redirect_stdout(io.StringIO()),
-                        contextlib.redirect_stderr(io.StringIO()),
-                    ):
-                        self.assertEqual(main(["config", "set", "hub", "hub"]), 0)  # relative
-                finally:
-                    os.chdir(old)
-                stored = read_global_config().get(HUB_CONFIG_KEY)
-                self.assertTrue(Path(stored).is_absolute())
-                self.assertEqual(Path(stored), (Path(tmp) / "hub").resolve())
-
-    def test_hub_disappearing_after_set_is_hard_error(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            hub = self._workspace(tmp, "hub").resolve()
-            with self._env(Path(tmp) / "cfg"):
-                self._set_hub(hub)
-                shutil.rmtree(hub)
-                with contextlib.redirect_stderr(io.StringIO()):
-                    self.assertEqual(main(["next-brainstorming", "x", "--zentaizo"]), 2)
-
-    def test_corrupt_or_non_object_config_is_cli_error(self):
-        for blob in ("{ not json", "[]", '"a string"'):
-            with tempfile.TemporaryDirectory() as tmp:
-                cfg = Path(tmp) / "cfg"
-                with self._env(cfg):
-                    cfg_file = cfg / "zentaizo" / "config.json"
-                    cfg_file.parent.mkdir(parents=True)
-                    cfg_file.write_text(blob)
-                    with contextlib.redirect_stderr(io.StringIO()):
-                        self.assertEqual(main(["config", "get"]), 2)
 
 
 if __name__ == "__main__":
