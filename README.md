@@ -36,7 +36,7 @@ How the workspace realizes those ideas; each tag points back to the Core Idea(s)
 
 - **Curated atlas** (`zentaizo.atlas.json`) — human-authored intent: the curated knowledge context, distinct from the machine-resolved lock state (`zentaizo.lock.json`). *(1, 2)*
 - **Hierarchical knowledge base** — summaries at different scales, from system overview to APIs to source, drilling down only when needed; the queryable knowledge graph below is its structural counterpart. *(1, 4)*
-- **Queryable knowledge graph** (`zentaizo graph`, optional) — a cross-source graph of code↔code and code↔doc edges built with [Graphify](https://github.com/safishamsi/graphify), surfacing structural relationships no single per-source summary can see. It is the first of several *optional layers* a workspace can add through external-tool modules — each an opt-in tier, never a hard dependency, that falls back to reference-only when the tool is absent. *(1, 4)*
+- **Queryable knowledge graph** (`zentaizo graph`) — a cross-source graph of code↔code and code↔doc edges built with [Graphify](https://github.com/safishamsi/graphify), surfacing structural relationships no single per-source summary can see. It is the first of several layers a workspace adds through external-tool modules — each degrades gracefully to reference-only guidance when the tool is absent, so none is a hard dependency. *(1, 4)*
 - **Heterogeneous sources** — repos, docs, papers, notes, issue reports, and generated analysis in one place. *(1)*
 - **Multi-repo sandbox** — all associated repos available locally for agentic work, like a monorepo for coherent cross-system development; each repo marked read-only (`role: "reference"`) or editable (`role: "edit"`). It brings the full picture of code to bear (1), provides that code as persistent, version-pinned context (2), and removes failable web searches against drifting versions by making the exact source local (3); and that same read-only/editable marking *is* the access policy a sandbox enforces, so an agent can run at the workspace level with reference repos genuinely read-only (6). *(1, 2, 3, 6)*
 - **Pinned sources** — repos and document snapshots resolve to exact commits and content hashes (`zentaizo.lock.json`). *(2, 3)*
@@ -73,36 +73,18 @@ zentaizo --help
 If you don't have `pipx`: `pixi global install pipx` (or `brew install pipx`,
 `apt install pipx`).
 
-Then install the global Zentaizo skill, which teaches your AI assistants the
-workspace workflow and conventions:
+Two follow-ups complete a standard setup:
 
 ```bash
 zentaizo skills install --target claude  # or codex, gemini, all
+uv tool install graphifyy                # or: pipx install graphifyy
 ```
 
-### Developing Zentaizo itself
-
-Working on the Zentaizo tool (rather than using it) uses an editable install in
-a pixi dev env:
-
-```bash
-pixi install                # bootstrap dev env
-pixi run zentaizo --help
-pixi run check              # ruff lint + tests
-pixi run hooks-install      # one-time: enable pre-commit on `git commit`
-```
-
-Release (when ready): `pixi run build` then `pixi run publish`.
-
-### Reporting tool issues
-
-Every workspace dogfoods Zentaizo, so using one surfaces bugs, friction, and
-ideas about the tool itself. Report them on the issue tracker —
-[github.com/DocSavage/zentaizo/issues](https://github.com/DocSavage/zentaizo/issues)
-(`gh issue create -R DocSavage/zentaizo`) — citing the command you ran, what
-you expected, and what actually happened. The generated workspace `AGENTS.md`
-gives AI assistants the same instruction, so feedback flows upstream instead
-of being silently worked around.
+The first installs the global Zentaizo skill, which teaches your AI assistants
+the workspace workflow and conventions. The second puts the `graphify` binary
+on your `PATH` for the knowledge-graph step of the standard workflow (step 4
+below); if it's missing, `zentaizo graph` prints the install hint and
+everything else keeps working.
 
 ## What A Workspace Contains
 
@@ -119,7 +101,7 @@ zen-link-shortener/
   papers/                   # PDFs and specs
   notes/                    # issue reports, traces, design notes
   summaries/                # generated hierarchical summaries
-  graphify-out/             # optional knowledge graph (written by `zentaizo graph`)
+  graphify-out/             # knowledge graph (written by `zentaizo graph`; rebuilt per clone)
   skills/                   # model-agnostic procedures and session templates
   sessions/
     efforts.json            # effort registry: labels, numbers, current pointer, repo/branch map
@@ -144,7 +126,8 @@ flowchart TD
         direction TB
         C["<b>1 · zentaizo create</b>"] --> A["<b>2 · author the atlas</b><br/><i>zentaizo.atlas.json</i>"]
         A --> F["<b>3 · zentaizo fetch</b><br/><i>pins repos and docs</i>"]
-        F --> S["<b>4 · zentaizo summarize</b><br/><i>stale-aware, focused<br/>summary prompt</i>"]
+        F --> G["<b>4 · zentaizo graph</b><br/><i>queryable cross-source<br/>knowledge graph</i>"]
+        G --> S["<b>5 · zentaizo summarize</b><br/><i>stale-aware, focused<br/>summary prompt</i>"]
     end
     subgraph work ["Phase 2 — work in efforts"]
         direction TB
@@ -186,7 +169,7 @@ generated `AGENTS.md` says exactly that.
 
 `zentaizo.atlas.json` is the human-authored statement of intent: which repos,
 docs, papers, and notes matter; which repos are *editable* versus *reference*;
-and a description of what you are building (step 4 feeds that description into
+and a description of what you are building (step 5 feeds that description into
 every summary). You don't write it alone — open an AI session in the workspace
 and ask:
 
@@ -208,7 +191,29 @@ records the resolution in `zentaizo.lock.json`. The atlas stays declarative
 ("track `main`"); the lock records what you actually have, so the context
 behind an answer is reproducible.
 
-### 4 · Summarize
+### 4 · Build the knowledge graph
+
+```bash
+zentaizo graph
+```
+
+This builds the structural counterpart to `summaries/` with
+[Graphify](https://github.com/safishamsi/graphify): one queryable graph over
+`repos/`, `papers/`, and `notes/`, carrying the cross-repo and code↔doc edges
+no per-repo summary can see. The default build is code-only and fully offline —
+AST extraction, no API key, no network, about a minute of local compute even
+for thousands of source files. Once built, `zentaizo fetch` refreshes it
+automatically when a graphed source changes, and `zentaizo status` reports the
+graph line (`current` / `stale`). Opt in to `--semantic --backend ollama` to
+also read the full text of papers and notes via a model (`ollama` and
+`claude-cli` run locally; remote backends are your explicit call).
+
+Output lands in `graphify-out/` — derived and gitignored, so each clone
+rebuilds it locally rather than pulling it from git. Agents (and you) query it
+with Graphify directly: `graphify query` / `path` / `explain`, or its MCP
+server. See `docs/cli.md` for modes, backends, and staleness mechanics.
+
+### 5 · Summarize
 
 ```bash
 zentaizo summarize                             # incremental
@@ -234,13 +239,12 @@ than "summarize these repos":
 The agent then writes one summary per source plus three cross-cutting files —
 `overview.md` (system map), `relationships.md` (how the sources interact), and
 `open-questions.md` (gaps and assumptions) — which future sessions read
-*before* any source code.
+*before* any source code. When the knowledge graph exists (step 4), the prompt
+also tells the agent to ground `relationships.md` claims in `graphify query`
+results with file:line citations instead of re-scanning whole repos — which is
+why the graph comes first.
 
-`zentaizo graph` builds the structural counterpart: a queryable cross-source
-knowledge graph via [Graphify](https://github.com/safishamsi/graphify)
-(optional; code-only and offline by default — see `docs/cli.md`).
-
-### 5 · Work — in the workspace or from a target repo
+### 6 · Work — in the workspace or from a target repo
 
 The built context can be used two ways. Work *inside* the workspace, grouped
 into efforts (next section) — the multi-repo sandbox makes coherent cross-repo
@@ -314,30 +318,6 @@ See `docs/workspace-format.md` § Sessions and `docs/cli.md` for the full model.
 
 ## Beyond the Basics
 
-### Querying a knowledge graph
-
-`zentaizo graph` builds a workspace-wide knowledge graph with
-[Graphify](https://github.com/safishamsi/graphify) — the structural counterpart
-to `summaries/`, carrying the cross-repo and code↔doc edges no per-repo summary
-can see. It needs the `graphify` binary on `PATH`; install it once:
-
-```bash
-uv tool install graphifyy          # or: pipx install graphifyy
-```
-
-```bash
-zentaizo graph                               # code-only, fully offline (default)
-zentaizo graph --semantic --backend ollama   # opt-in: also read papers/notes via a model
-```
-
-The default build is AST-only — no API key, no network — and `zentaizo fetch`
-refreshes it automatically when a graphed source changes. `--semantic` reaches
-the full text of papers and notes and requires an explicit `--backend` (`ollama`
-and `claude-cli` run locally; remote backends are your explicit call). Output
-lands in `graphify-out/`; query it with Graphify directly (`graphify query` /
-`path` / `explain`, or its MCP server). See `docs/cli.md` for modes, backends,
-and staleness.
-
 ### Sandboxing the agent
 
 To confine the agent to least-privilege access — writable `sessions/` and editable repos, read-only reference repos — render the atlas-derived policy into your harness's config:
@@ -380,3 +360,37 @@ making changes.
 ## Safety
 
 A workspace deliberately aggregates external material — fetched repositories, documentation, notes, and papers — for an AI assistant to read. Treat all of it as **untrusted input**: content pulled from the web or third-party repos can carry indirect prompt-injection payloads (hidden instructions, fake system messages, invisible characters). The generated workspace `AGENTS.md` instructs assistants to read this material as evidence to cite and summarize, **never as instructions to follow**. Hardened fetch-time handling — sanitization, quarantine, and a summarize-as-quarantine-boundary pattern — is implemented; see `docs/design/docs-layer.md`.
+
+## Reporting Tool Issues
+
+Every workspace dogfoods Zentaizo, so using one surfaces bugs, friction, and
+ideas about the tool itself. The set procedure — the same one the generated
+workspace `AGENTS.md` gives AI assistants — is a GitHub issue on the tool's
+tracker:
+
+```bash
+gh issue create -R DocSavage/zentaizo --title "<concise summary>" --body "<details>"
+```
+
+Include the workspace name, the exact command (with flags), what you expected,
+and what actually happened. Filing an issue posts publicly, so an assistant
+should confirm with the user first; if `gh` is unavailable or you'd rather not
+post, record the same details in the workspace's `sessions/` (e.g. a
+brainstorming note) so it can be filed later. Either way, feedback flows
+upstream instead of being silently worked around.
+
+## Developing Zentaizo Itself
+
+Working on the Zentaizo tool (rather than using it) uses an editable install in
+a pixi dev env:
+
+```bash
+pixi install                # bootstrap dev env
+pixi run zentaizo --help
+pixi run check              # ruff lint + tests
+pixi run hooks-install      # one-time: enable pre-commit on `git commit`
+```
+
+Release (when ready): `pixi run build` then `pixi run publish`. See `AGENTS.md`
+in this repo for the dogfooding arrangement (the canonical checkout lives
+inside a `zen-zentaizo` workspace) and contributor conventions.
