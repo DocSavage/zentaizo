@@ -1163,7 +1163,7 @@ packages:
   requires_python: '>=3.8'
 - pypi: ./
   name: zentaizo
-  version: 0.12.0
+  version: 0.13.0
   sha256: cdde9b404f8efa8bf71c35160b88c25ddf8a13767e6c5d936733e06371261520
   requires_dist:
   - llm-guard>=0.3.16 ; extra == 'docs-scan'

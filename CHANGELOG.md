@@ -4,6 +4,12 @@ All notable changes to this project are documented here.
 
 This project uses the Keep a Changelog format. Versions 0.8.0 and earlier predate this changelog.
 
+## [0.13.0] - 2026-07-24
+
+### Changed
+
+- **Conventions generation 3** (integrations-0005): the knowledge graph is presented as standard usage rather than an optional extra, matching the repo README's reworked workflow. The generated workspace `README.md` gains a "Build the knowledge graph" step between fetch and summarize; the generated `AGENTS.md` consultation order says build-if-missing (`zentaizo graph`) instead of conditioning on the graph's existence; the summarize prompt nudges toward building the graph when `graphify-out/graph.json` is missing; the `provide-info` block and the global skill name the graph alongside summaries. Graceful degradation is unchanged — a workspace still works without the `graphify` binary. Existing workspaces adopt the wording via `upgrade-zentaizo`.
+
 ## [0.12.0] - 2026-07-20
 
 ### Added
