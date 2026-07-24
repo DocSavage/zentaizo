@@ -48,17 +48,18 @@ Call `zentaizo.atlas.json` the "context atlas" so the user understands its role 
    - Preserve human intent in the manifest. Let lock files record resolved commits, hashes, timestamps, and fetch metadata.
 
 5. Prepare committed markdown context.
+   - Build the workspace knowledge graph with `zentaizo graph` as a standard part of context prep (code-only and offline by default; it degrades gracefully when the `graphify` binary is absent). Answer structural and cross-repo questions with `graphify query` / `path` / `explain` instead of re-scanning sources; `graphify-out/` is derived output, rebuilt per clone with `zentaizo graph` after `zentaizo fetch`.
    - Write or update `summaries/overview.md` for the system map.
-   - Write or update `summaries/relationships.md` for cross-source contracts and data flow.
+   - Write or update `summaries/relationships.md` for cross-source contracts and data flow, grounding claims in graph queries when the graph exists.
    - Write or update `summaries/open-questions.md` for gaps, assumptions, and follow-up discovery.
    - Write source-specific summaries under `summaries/sources/` when a source is important enough that future sessions should start with a compressed view.
    - Put incidents, traces, debugging records, and design notes under `notes/` or `sessions/` according to workspace convention.
    - Ground durable claims in source paths, URLs, locked versions, or explicit user-provided context.
 
 6. Validate and hand off.
-   - Run `zentaizo validate`, `zentaizo status`, and fetch or summarize commands when available and relevant.
+   - Run `zentaizo validate`, `zentaizo status`, and fetch, graph, or summarize commands when available and relevant.
    - Use `zentaizo provide-info TARGET` to add bounded Zentaizo instructions to another repo.
-   - Explain the intended consultation order: summaries first, then locked repos/docs/papers/notes as needed.
+   - Explain the intended consultation order: summaries first, the knowledge graph for structural questions, then locked repos/docs/papers/notes as needed.
 
 7. Allocate session files through the CLI — never hand-derive a name or counter.
    - Group work into an **effort** (a named body of work that may span several editable repos): `zentaizo effort new <word> --describe "…" --repo <name>=<branch>`; this also scaffolds `sessions/efforts/NNNN-<label>.md`, the effort-level plan doc. Inspect with `zentaizo effort list` / `zentaizo effort show`; resolve the doc with `zentaizo path effort [label]`.

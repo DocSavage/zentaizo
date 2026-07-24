@@ -154,10 +154,12 @@ The assistant should read summaries before scanning source code.
 
 `graphify-out/` is the structural counterpart to `summaries/`: a queryable
 knowledge graph over the whole workspace, built by `zentaizo graph` with
-[Graphify](https://github.com/safishamsi/graphify) (optional tier — the
-workspace works without it). Summaries are the prose level-of-detail spine;
-the graph answers structural questions (`graphify query` / `path` /
-`explain`), especially cross-repo relationships.
+[Graphify](https://github.com/safishamsi/graphify). It is a standard layer
+of the built context — build it right after `fetch` — though the workspace
+degrades gracefully when the `graphify` binary is absent. Summaries are the
+prose level-of-detail spine; the graph answers structural questions
+(`graphify query` / `path` / `explain`), especially cross-repo
+relationships.
 
 The whole directory is derived output and gitignored — `graph.json` alone can
 sit near GitHub's 100 MiB per-file push limit on multi-repo workspaces, while

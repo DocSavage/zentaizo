@@ -725,18 +725,20 @@ class CliTests(unittest.TestCase):
             self.assertIn("Workspace about widget pipelines.", focus)
             self.assertIn("DSG integration", focus)
 
-    def test_summarize_graph_guidance_requires_graph(self):
+    def test_summarize_graph_guidance_adapts_to_graph_presence(self):
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp) / "graph-guidance"
             atlas = default_atlas("graph-guidance")
             self._write_atlas_and_lock(workspace, atlas=atlas)
             guidance = "ground cross-source claims with `graphify query`"
+            nudge = "run `zentaizo graph` first"
 
             with mock.patch(
                 "zentaizo.cli.utc_now", return_value="2026-07-19T00:00:00+00:00"
             ):
                 _, without_graph, _ = self._run_summarize(workspace)
                 self.assertNotIn(guidance, without_graph)
+                self.assertIn(nudge, without_graph)
 
                 graph_path = workspace / "graphify-out" / "graph.json"
                 graph_path.parent.mkdir()
@@ -744,7 +746,11 @@ class CliTests(unittest.TestCase):
                 _, with_graph, _ = self._run_summarize(workspace)
 
             self.assertIn(guidance, with_graph)
-            self.assertEqual(with_graph.splitlines()[:-1], without_graph.splitlines())
+            self.assertNotIn(nudge, with_graph)
+            # The two prompts differ only in the final graph line.
+            self.assertEqual(
+                with_graph.splitlines()[:-1], without_graph.splitlines()[:-1]
+            )
 
     def test_preserve_unchanged_fetched_at(self):
         prior = {
@@ -1373,6 +1379,8 @@ class CliTests(unittest.TestCase):
             self.assertIn("BEGIN zentaizo", content)
             self.assertIn("Zentaizo Context", content)
             self.assertIn(str(workspace), content)
+            self.assertIn("graphify-out", content)
+            self.assertIn("ask the knowledge graph structural questions", content)
 
 
 class SkillsCommandTests(unittest.TestCase):
@@ -4523,12 +4531,32 @@ class GraphTests(WorkspaceCliCase):
                 self.assertIn("derived output and deliberately not committed", text)
                 self.assertIn("no LLM tokens", text)
             self.assertIn("rebuilds it locally with `zentaizo graph` after `zentaizo fetch`", agents)
-            # The README's statement sits in the summarize/graph workflow step,
+            # The README's statement sits in the graph workflow step,
             # right after the structural-counterpart paragraph.
             self.assertLess(
                 readme.index("structural counterpart"),
                 readme.index("each clone rebuilds the graph locally"),
             )
+
+    def test_templates_present_graph_as_standard_usage(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            agents = (workspace / "AGENTS.md").read_text()
+            readme = (workspace / "README.md").read_text()
+            # README: the graph is its own workflow step, before summarize,
+            # with no "optional" framing.
+            self.assertIn("### 4. Build the knowledge graph", readme)
+            self.assertLess(
+                readme.index("Build the knowledge graph"),
+                readme.index("Prepare hierarchical summaries"),
+            )
+            self.assertNotIn("optional knowledge graph", readme)
+            self.assertNotIn("Optionally, build", readme)
+            # AGENTS.md: consultation order says build-if-missing, not
+            # if-it-exists.
+            self.assertIn("standard layer of the built context", agents)
+            self.assertIn("if it is missing, build it with `zentaizo graph`", agents)
+            self.assertNotIn("When `graphify-out/graph.json` exists", agents)
 
     def test_agents_md_consultation_order_includes_graph(self):
         with tempfile.TemporaryDirectory() as tmp:
