@@ -3,10 +3,12 @@
 Zentaizo should feel like a normal tool:
 
 ```bash
+zentaizo setup
 zentaizo create my-system-atlas
 zentaizo fetch
 zentaizo discover-docs
 zentaizo fetch-docs
+zentaizo graph
 zentaizo summarize
 zentaizo provide-info /path/to/repo
 ```
@@ -51,10 +53,28 @@ The design rule is that `zentaizo` is the product interface. `python -m zentaizo
 ## Initial Commands
 
 ```bash
+zentaizo setup [--check] [--yes]
+```
+
+Finishes one-time user-level setup after installation. It detects Claude,
+Codex, and Gemini from their environment overrides
+(`CLAUDE_CONFIG_DIR`/`CODEX_HOME`/`GEMINI_DIR`) or canonical config roots,
+prompts before installing the global Zentaizo skill into each detected
+harness, and leaves undetected harnesses untouched. Non-interactive input fails
+closed unless `--yes` is supplied after the user has explicitly authorized the
+changes. Existing user-owned destinations are preserved or refused under the
+same rules as `zentaizo skills install`; reruns are idempotent.
+
+`--check` is read-only. It reports harness/skill state, Graphify resolution,
+`git`/`gh` availability, and whether the optional `docs-scan` distribution is
+installed. The docs-scan probe reads package metadata only and never loads its
+model.
+
+```bash
 zentaizo create PATH [--no-claude-hooks]
 ```
 
-Creates a workspace shell with source directories, summaries directory, and assistant instructions. It does not create `zentaizo.atlas.json`; the first AI-assisted setup step is to identify the source material and create that human-authored atlas. It does seed `zentaizo.lock.json` with a `conventions` stamp — the generation of workspace conventions this build scaffolds (see `zentaizo upgraded`); `zentaizo fetch` fills in the resolved sources later. By default it also installs the managed Claude `SessionStart` hook when a current `zentaizo session-title` command is available on `PATH`; pass `--no-claude-hooks` to skip that.
+Creates a workspace shell with source directories, summaries directory, and assistant instructions. It does not create `zentaizo.atlas.json`; the first AI-assisted setup step is to identify the source material and create that human-authored atlas. It does seed `zentaizo.lock.json` with a `conventions` stamp — the generation of workspace conventions this build scaffolds (see `zentaizo upgraded`); `zentaizo fetch` fills in the resolved sources later. By default it also installs the managed Claude `SessionStart` hook when a current `zentaizo session-title` command is available on `PATH`; pass `--no-claude-hooks` to skip that. If no managed global skill is detectable, the closeout points to `zentaizo setup`.
 
 ```bash
 zentaizo validate [PATH]
@@ -66,7 +86,7 @@ Checks that `zentaizo.atlas.json` exists and has the required shape. It also run
 zentaizo status [PATH]
 ```
 
-Shows source counts (split by role: edit vs reference) and the lock status. For each repo it inspects the working tree: edit repos report the current branch and whether they are at the locked SHA or have diverged; reference repos flag drift between HEAD and the locked SHA. When an edit repo is clean and behind its upstream, `status` prints the rebase command. Also prints one knowledge-graph line (`graph: not built` / `current` / `stale` — see `zentaizo graph`). If the atlas is missing, shows the setup prompt instead of failing.
+Shows source counts (split by role: edit vs reference) and the lock status. For each repo it inspects the working tree: edit repos report the current branch and whether they are at the locked SHA or have diverged; reference repos flag drift between HEAD and the locked SHA. When an edit repo is clean and behind its upstream, `status` prints the rebase command. It reports quarantined doc snapshots with their paths and prints one knowledge-graph line (`graph: not built` / `current` / `stale` — see `zentaizo graph`). If the atlas is missing, shows the setup prompt instead of failing.
 
 It ends with a `Conventions:` section comparing the generation stamped in the lock's `conventions` block against the generation the installed zentaizo generates: `current` (they match), `behind` (each missed generation's `CONVENTIONS_DELTAS` line is printed, followed by the pointer to the `upgrade-zentaizo` skill), or `not tracked` (the workspace predates conventions tracking — same pointer, full reconciliation). A stamp *newer* than the installed tool reports the tool itself as outdated. This is the only command that reports conventions state; nothing else advises about it.
 
@@ -96,9 +116,9 @@ Only text content enters the sanitize-and-write pipeline. In-repo docs are class
 Source handling:
 
 - **In-repo** (`repo` + `path`) — read from the already-fetched `repos/<repo>/<path>`. No network.
-- **External** (`url`) — a stdlib fetch cascade: probe `llms-full.txt`/`llms.txt` at the site root first (a single curated Markdown file), else salvage the single referenced page (HTML reduced to text). Full-site mirroring and Read-the-Docs archive extraction are deferred to the optional `[docs-rich]` extra.
+- **External** (`url`) — probe `llms-full.txt`/`llms.txt` at the site root first (a single curated Markdown file), else salvage the single referenced page. HTML pages use bundled Trafilatura main-content extraction and become Markdown; in-repo `.html`/`.htm` sources use the same path. Navigation, sidebars, comments, and footers are dropped before the mandatory safety pass. Full-site mirroring and Read-the-Docs archive extraction remain deferred.
 
-The stdlib safety pass always runs and cannot be disabled. Installing the optional `zentaizo[docs-scan]` extra (LLM Guard) adds a deeper, model-based scan layered **on top of** the baseline; it auto-enables when installed. `--no-deep-scan` turns off only that optional layer (the baseline still runs). Each `doc_snapshots` entry records `baseline_scanner` and `deep_scanner` (`llm-guard` / `none` / `disabled` / `unavailable`) for audit.
+The stdlib safety pass always runs and cannot be disabled. Trafilatura extraction is versioned as profile `main-content-v1`; the lock records its version and the raw-input hash. If extraction declines, cannot import, or fails at runtime, the command falls back to the prior stdlib HTML reducer and writes `.txt`; runtime failures are loud. Publishing any new result retires prior clean/quarantined suffix variants so a stale trusted snapshot cannot survive a later quarantine. Installing the optional `zentaizo[docs-scan]` extra (LLM Guard) adds a deeper, model-based scan layered **on top of** the baseline; it auto-enables when installed. `--no-deep-scan` turns off only that optional layer (the baseline still runs). Each `doc_snapshots` entry records `baseline_scanner` and `deep_scanner` (`llm-guard` / `none` / `disabled` / `unavailable`) for audit.
 
 ```bash
 zentaizo discover-docs [PATH]
@@ -116,14 +136,14 @@ Writes a prompt for hierarchical summarization. **Incremental:** each `summaries
 zentaizo graph [PATH] [--semantic --backend NAME [--model NAME]] [--force] [--no-deep-scan]
 ```
 
-Builds (or incrementally refreshes) a workspace-wide knowledge graph with [Graphify](https://github.com/safishamsi/graphify) — the structural counterpart to `summaries/`: one graph over `repos/`, `papers/`, and `notes/` whose cross-repo and code↔doc edges no per-repo run can see. The `graphify` binary must already be on `PATH` (`uv tool install graphifyy`, or `pip install "zentaizo[graph]"`); the command never installs it, and Graphify's query surface (`graphify query` / `path` / `explain`, MCP) is used directly, never wrapped.
+Builds (or incrementally refreshes) a workspace-wide knowledge graph with [Graphify](https://github.com/safishamsi/graphify) — the structural counterpart to `summaries/`: one graph over `repos/`, `papers/`, and `notes/` whose cross-repo and code↔doc edges no per-repo run can see. Graphify is a core dependency: resolution prefers the active environment's bundled module (`python -m graphify`), which works under pipx, then falls back to an external `graphify` on `PATH` for source environments missing dependencies. Graphify's query surface (`graphify query` / `path` / `explain`, MCP) remains native and is never wrapped.
 
 Two modes:
 
 - **Default — code-only, fully offline.** AST extraction (`graphify update`): no key, no network. Markdown gets shallow structural nodes (file + headings) on the same pass.
 - **`--semantic` — opt-in full-corpus extraction** of papers and notes through a model API. Requires an explicit `--backend` (`ollama` is fully local, `claude-cli` uses the local Claude Code CLI with no key; remote backends are your explicit call) — `--semantic` without `--backend` is an error, never key auto-detection. The backend (and `--model`, if given) is recorded in the lock.
 
-Mechanics: the command writes a managed `.graphifyignore` at the workspace root (marker comment, regenerated per build; a user-owned file without the marker is refused) that scopes Graphify to the source trees — Graphify reads it *instead of* the workspace `.gitignore`, which is what makes the gitignored `repos/` graphable. Output lands in upstream-fixed `graphify-out/`, which is derived output and not committed (the scaffolded `.gitignore` ignores the whole directory — `graph.json` alone can sit near GitHub's 100 MiB per-file limit); each clone rebuilds it locally with `zentaizo graph` after `zentaizo fetch`. `GRAPH_REPORT.md` goes through the same safety pass as fetched docs; a flagged report is moved aside to `GRAPH_REPORT.flagged.md` (nothing left in place) and recorded as `report_status: flagged`. The lock gains a `graph` block — mode, backend version, and a mode-scoped `built_from` (each graphed source's locked identity) plus `not_graphed` (excluded sources mapped to reasons). Known upstream limit (graphifyy 0.8.39): any directory named `snapshots` is skip-listed, so `docs/snapshots/` cannot be graphed in either mode and is always listed under `not_graphed`.
+Mechanics: the command writes a managed `.graphifyignore` at the workspace root (marker comment, regenerated per build; a user-owned file without the marker is refused) that scopes Graphify to the source trees. Graphify 0.9.x overlays it on `.gitignore`, so the managed file explicitly re-includes the gitignored `repos/` tree and then applies Zentaizo's exclusions. Output lands in upstream-fixed `graphify-out/`, which is derived output and not committed (the scaffolded `.gitignore` ignores the whole directory — `graph.json` alone can sit near GitHub's 100 MiB per-file limit); each clone rebuilds it locally with `zentaizo graph` after `zentaizo fetch`. `GRAPH_REPORT.md` goes through the same safety pass as fetched docs; a flagged report is moved aside to `GRAPH_REPORT.flagged.md` (nothing left in place) and recorded as `report_status: flagged`. The lock gains a `graph` block — mode, exact backend version, and a mode-scoped `built_from` (each graphed source's locked identity) plus `not_graphed` (excluded sources mapped to reasons). The tested compatibility range is Graphify 0.9.26 through the 0.9 series. Graphify 0.9.x can traverse ordinary `snapshots` directories, so Zentaizo explicitly excludes `docs/snapshots/` to keep doc-summary and graph staleness as separate layers.
 
 `zentaizo status` reports the graph line (`not built` / `current` / `stale: N source(s) changed`), counting `not_graphed` sources and surfacing a flagged report; staleness is a pure lock diff scoped to the recorded mode, so a doc hash change never stales a code-only graph. `--force` passes Graphify's own `--force` (from-scratch rebuild; covers a shrinking graph).
 

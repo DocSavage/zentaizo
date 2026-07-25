@@ -4,6 +4,23 @@ All notable changes to this project are documented here.
 
 This project uses the Keep a Changelog format. Versions 0.8.0 and earlier predate this changelog.
 
+## [0.14.0] - 2026-07-24
+
+### Added
+
+- Bundled Trafilatura 2.1 main-content extraction for external single-page and in-repo HTML doc snapshots (docs-layer-0005). HTML snapshots are Markdown, keep headings/lists/tables/code while dropping page chrome and comments, pass through the existing mandatory safety scan, and record extractor version/profile plus a raw-input hash in the lock. A loud stdlib fallback preserves the prior `.txt` behavior when extraction is unavailable or fails.
+- `zentaizo setup` and read-only `zentaizo setup --check` (foundations-0006). Setup detects Claude, Codex, and Gemini, prompts per harness, fails closed on non-interactive input unless the user explicitly authorizes `--yes`, preserves user-owned content, and is idempotent. The check reports harness skill state, Graphify, `git`/`gh`, and docs-scan package metadata without loading its model.
+
+### Changed
+
+- Graphify 0.9 is now a bounded core dependency (`>=0.9.26,<0.10`), with the historical `[graph]` extra retained as an empty compatibility alias. Graph execution resolves the active environment's module first and falls back to an external `graphify` command, so pipx installs work without separately exporting a dependency script. The managed ignore explicitly excludes `docs/snapshots/`, preserving mode-scoped graph staleness now that Graphify can traverse ordinary snapshot directories.
+- **Conventions generation 4** (foundations-0006): generated `AGENTS.md` files tell agents to run `zentaizo status` once per session, surface only non-current workspace conditions without repeating unchanged alerts, and never run setup or convention upgrades without explicit user authorization. `status` now lists quarantined doc snapshots.
+- Installation is two steps: install Zentaizo, then run `zentaizo setup`. Graphify and Trafilatura no longer require separate upfront install instructions.
+
+### Fixed
+
+- Snapshot replacement retires superseded clean and quarantined text variants before publishing the new result, preventing stale `.txt`/`.md` files and ensuring an `ok` snapshot cannot survive a later flagged quarantine.
+
 ## [0.13.0] - 2026-07-24
 
 ### Changed

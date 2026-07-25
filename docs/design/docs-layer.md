@@ -69,7 +69,8 @@ arbitrary external sites). It iterates atlas `docs` entries and routes each:
      (`_llms_candidates`); if present, that single curated Markdown file *is* the
      snapshot (fetcher `llms-txt`).
   2. **Tier 2.5** — otherwise salvage the single referenced page (fetcher
-     `single-page`); HTML is reduced to visible text.
+     `single-page`); bundled Trafilatura extracts the main content as Markdown
+     using the versioned `main-content-v1` profile.
   3. **Terminal** — if everything fails, the entry stays `reference-only` with a
      reason of `no-source` (a non-http(s) URL, quiet) or `fetch-error` (a real
      failure, surfaced as a loud `WARNING`).
@@ -80,14 +81,22 @@ with `status: ok`; flagged content is quarantined at
 `docs/snapshots/<name>.flagged.<ext>` with `status: flagged` and is never surfaced
 as a usable snapshot. Each result is recorded in the top-level
 `lock["doc_snapshots"]` with `content_hash`, `status`, `fetched_at`, the resolved
-source/fetcher, and a `safety` block. `fetched_at` is preserved across a no-op
-re-fetch (`_preserve_unchanged_fetched_at`, keyed on `content_hash`+`status`) so it
-means "when the content we hold was obtained," not "last attempt."
+source/fetcher, and a `safety` block. HTML entries also record an `extraction`
+block (`extractor`, exact version, profile, and raw-input hash). The same
+extraction path handles in-repo `.html`/`.htm` files. If Trafilatura declines
+or fails, the stdlib reducer remains a `.txt` fallback; runtime failures emit a
+warning and record the reason. Before publishing a new clean or quarantined
+result, known prior text variants are removed, so `.txt`/`.md` transitions and
+`ok`/`flagged` transitions cannot leave a stale trusted snapshot behind.
+`fetched_at` is preserved across a no-op re-fetch
+(`_preserve_unchanged_fetched_at`, keyed on `content_hash`+`status`) so it means
+"when the content we hold was obtained," not "last attempt."
 
 ### The safety pass (`src/zentaizo/safety.py`)
 
-`sanitize(content, *, is_html, deep_scan)` runs three always-on, stdlib-only steps:
-(1) reduce HTML to visible text, dropping scripts/styles/comments
+After optional main-content extraction, `sanitize(content, *, is_html,
+deep_scan)` runs the always-on, stdlib-only baseline: (1) for a fallback HTML
+path, reduce HTML to visible text, dropping scripts/styles/comments
 (`reduce_html_to_text`); (2) strip invisible/smuggling characters — the Unicode
 Tags block, zero-width and bidi controls, other C0/C1 format chars — and
 NFC-normalize (`strip_unsafe_unicode`); (3) flag injection signatures
@@ -167,7 +176,7 @@ Snapshots are single files under `docs/snapshots/`; flagged files
 | Docs schema | Reuse the `docs` kind + optional `kind` field; never a new `api/` kind | Avoids a parallel top-level concept for what is still "upstream-authored reference material." |
 | External vs in-repo source | One of `url` *or* (`repo`+`path`), validated mutually exclusive | In-repo specs are already local after `fetch`; only external sites need network snapshotting. |
 | Snapshotting command | Separate `fetch-docs`, not folded into `fetch` | Crawling arbitrary sites has a different risk/latency profile than cloning pinned git repos; keeps `fetch` fast and predictable. |
-| External fetch | Stdlib cascade: `llms.txt` → single page → reference-only | Always works with no build toolchain; prefers a site's own LLM-ready file before scraping. |
+| External fetch | `llms.txt` → Trafilatura single-page Markdown → stdlib fallback → reference-only | Prefers a site's own LLM-ready file, otherwise removes navigation/sidebars while retaining a deterministic no-crash fallback. |
 | Fetch failure | Never fail the entry; record `reference-only` with `no-source` (quiet) vs `fetch-error` (loud) | A doc reference is still useful as a live pointer; a real failure must be diagnosable. |
 | Safety pass placement | At fetch time, before anything is written | A snapshot is committed and re-read forever; sanitize closest to the source, fewest code paths a payload survives. |
 | Flagged content | Quarantine + human-in-the-loop; never auto-trust or silently strip | Injection detection is undecidable; architectural controls fail safe where model-level mitigations can be steered by the injected text. |
@@ -176,14 +185,23 @@ Snapshots are single files under `docs/snapshots/`; flagged files
 | Legacy summaries | Timestamp fallback (repo commit date, else `fetched_at`), self-retiring | Adopting incrementality must not force a one-time full regenerate of existing work. |
 | Generated API docs | Live in `summaries/`, not synthetic `docs/` entries | Keeps the invariant that `docs/` is upstream-authored and `summaries/` is workspace-generated. |
 
+## Decision update — 2026-07-24
+
+Trafilatura 2.x moved from the deferred `[docs]` tier into the default
+installation. The shipped `main-content-v1` profile uses Markdown output,
+tables on, comments and links off, and the balanced extraction mode. It records
+the exact extractor version because output is repeatable for a fixed version,
+not guaranteed identical across heuristic releases. The heavier crawling and
+multi-file `[docs-rich]` direction remains deferred.
+
 ## Considered and not taken
 
 - **CLI-side OpenAPI/Swagger → Markdown conversion** — skipped; raw spec + AI
   summarize is enough, and OpenAPI YAML is already LLM-legible.
-- **Heavy crawlers and full-site mirroring** — the `[docs]` (trafilatura + nh3) and
-  `[docs-rich]` (Crawl4AI/Firecrawl, Read-the-Docs archive extraction, `wget`
-  mirror) tiers, and the directory/multi-file snapshot model they imply, were
-  designed but deferred; the shipped baseline is stdlib single-file snapshots.
+- **Heavy crawlers and full-site mirroring** — the `[docs-rich]`
+  (Crawl4AI/Firecrawl, Read-the-Docs archive extraction, `wget` mirror) tier and
+  the directory/multi-file snapshot model it implies remain deferred; the
+  shipped path stays single-page and deterministic.
 - **A new top-level `api/` source kind** — rejected in favor of reusing `docs` with
   a `kind` field.
 - **Folding doc snapshotting into `fetch`** — rejected; doc fetching stays an
@@ -202,5 +220,7 @@ Snapshots are single files under `docs/snapshots/`; flagged files
 - `src/zentaizo/cli.py` — `validate_doc_entries`, `discover_docs_workspace`,
   `fetch_docs_workspace`, `_fetch_external_doc`, `_apply_safety_and_write`,
   `summarize_workspace` and its staleness helpers.
+- `src/zentaizo/extract.py` — the versioned Trafilatura profile and guarded
+  fallback boundary.
 - `src/zentaizo/safety.py`, `src/zentaizo/_llm_guard_scan.py` — the fetch-time safety
   pass and the optional `[docs-scan]` deep scanner.

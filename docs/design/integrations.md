@@ -4,13 +4,14 @@ _Distilled design doc — current architecture + rationale._
 
 ## What it is
 
-Zentaizo keeps its core CLI thin and deterministic, but a workspace can gain
-extra capability from external tools wired in as **optional tiers**. Each tier
-follows one standing rule: prefer the best backend that is installed, never make
-it a hard dependency, and fail safe (reference-only, or a clear install hint)
-when the tool is absent. The integration surface is deliberately small — the CLI
-owns workspace conventions (what to include, where output lives, how provenance
-and staleness are tracked) and delegates the heavy lifting to the external tool.
+Zentaizo keeps its CLI thin and deterministic while delegating specialized work
+to bounded library integrations. Baseline integrations that are Python-native
+and required by the standard workflow ship as core dependencies; heavy,
+model-backed, or separately distributed capabilities remain opt-in. Every
+boundary fails safe (a deterministic fallback, reference-only result, or a clear
+install hint). The CLI owns workspace conventions (what to include, where output
+lives, how provenance and staleness are tracked) and delegates the heavy lifting
+to the external tool.
 
 Today the integration layer has one shipped member: a workspace knowledge-graph
 layer (`zentaizo graph`) built over [Graphify](https://github.com/safishamsi/graphify).
@@ -40,14 +41,13 @@ consultation-order line in the generated `AGENTS.md`.
 How it works in current code (`graph_workspace` and helpers in
 `src/zentaizo/cli.py`):
 
-- **PATH gate, never auto-install.** `shutil.which("graphify")` must succeed; a
-  missing binary exits nonzero with the exact install commands
-  (`uv tool install graphifyy`, or `pip install "zentaizo[graph]"`). The
-  optional `graph` extra (`graphifyy>=0.8.39`) exists for a pinned in-environment
-  install, but the runtime gate is the binary on PATH, not the extra. Installing
-  is the user's call: the right installer and target are environment-specific,
-  and an implicit network install would mutate state outside the workspace
-  boundary — out of character for a thin, fail-safe CLI.
+- **Bundled module-first resolution.** Graphify is a core dependency pinned to
+  the tested `>=0.9.26,<0.10` line. Runtime resolution first invokes
+  `[sys.executable, "-m", "graphify"]`, which works inside pipx and ordinary
+  virtual environments even though dependency console scripts are not exported
+  onto the user's `PATH`; an external `graphify` binary is the fallback for
+  source environments missing the module. The historical `[graph]` extra
+  remains as an empty compatibility alias for one release.
 - **Two execution modes, because extraction is not uniformly offline.** Default
   is code-only and fully offline: `graphify update .` runs AST extraction (plus
   shallow markdown structure) with no key and no network. `--semantic` opts into
@@ -59,11 +59,11 @@ How it works in current code (`graph_workspace` and helpers in
   computes which source trees to graph from the workspace layout (`repos/`,
   `papers/`, `notes/`; doc snapshots are excluded — see below) and writes a
   marker-tagged, regenerated `.graphifyignore` at the workspace root. Graphify
-  reads this *instead of* the workspace `.gitignore` in the same directory, which
-  is precisely what makes the gitignored `repos/` graphable while keeping the
-  process trail (`sessions/`, `summaries/`, `skills/`, `tmp/`, atlas+lock,
-  flagged snapshots) out. A user-owned `.graphifyignore` without the marker is
-  refused, never overwritten.
+  0.9.x overlays it on the workspace `.gitignore` with last-match-wins
+  semantics, so Zentaizo explicitly re-includes the gitignored `repos/` tree
+  before keeping the process trail (`sessions/`, `summaries/`, `skills/`,
+  `tmp/`, atlas+lock, and doc snapshots) out. A user-owned `.graphifyignore`
+  without the marker is refused, never overwritten.
 - **Output and commit policy.** Graphify runs with CWD = workspace root scanning
   `.` (which coalesces all output into one `graphify-out/`), under
   `PYTHONHASHSEED=0` (reproducible clustering) and `GRAPHIFY_NO_BACKUP=1` (a
@@ -96,9 +96,11 @@ How it works in current code (`graph_workspace` and helpers in
   the graph in code-only mode (AST, offline) — never failing the fetch.
   `--no-graph` opts out; semantic re-extraction always stays an explicit command.
 
-One known upstream limit (graphifyy 0.8.39): any directory named `snapshots` is
-on Graphify's built-in skip list, so `docs/snapshots/` cannot be graphed in
-either mode and is always listed under `not_graphed`.
+Graphify 0.9.26 no longer drops every directory named `snapshots`; it only
+recognizes actual JS snapshot directories. Zentaizo now excludes
+`docs/snapshots/` explicitly in its managed ignore so the existing
+mode-scoped provenance contract remains stable: doc summary changes do not
+silently stale the structural graph.
 
 ### Proposed: Context Hub (`chub`) — not implemented
 
@@ -129,8 +131,8 @@ an open question, not a decision.
 
 | Decision | Choice | Why |
 |---|---|---|
-| Integration shape | Optional tier, never a hard dependency; fail safe when absent | Keeps the core CLI thin and deterministic; a workspace works without any external tool |
-| `zentaizo graph` install | PATH gate only; never auto-install (exit with exact commands) | Installer/target are environment-specific; implicit network installs mutate state outside the workspace |
+| Integration shape | Bundle deterministic Python-native baseline tools; keep heavy/model-backed capabilities optional | Standard setup works after one package install without silently adding heavyweight scanners |
+| `zentaizo graph` install | Core `graphifyy>=0.9.26,<0.10`, module-first with PATH fallback | pipx does not expose dependency scripts; module invocation works in the active environment |
 | Graph placement | Sibling of `summarize` (derived layer), not a fetcher | The graph derives structure from snapshotted sources; it brings nothing in |
 | Graph scope | One graph over the whole workspace | Cross-source (cross-repo, code↔doc) edges are the value a per-repo run can't see |
 | Execution modes | Code-only/offline default; `--semantic` opt-in, explicit `--backend` required | Only code extraction is local AST; semantic extraction is a model-API/cost/data-residency event that must be stated intent |
@@ -146,8 +148,9 @@ an open question, not a decision.
   Graphify-native; Zentaizo only points agents at it.
 - **A per-source `graph: false` atlas opt-out** — not added until a real
   workspace needs it (explicit boring JSON, but not preemptive JSON).
-- **Auto-installing the graph backend, or registering its skill** — both are
-  user-level concerns; the workspace only needs the binary.
+- **Auto-registering Graphify's own assistant skill** — still a user-level
+  concern; Zentaizo bundles the runtime but does not mutate unrelated assistant
+  configuration for Graphify.
 - **Graphing the `sessions/` process trail, or Graphify's cross-project
   `--global` graph** — out of scope; single-workspace graphing of the *system*
   only.

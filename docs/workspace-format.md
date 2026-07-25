@@ -105,9 +105,9 @@ The `conventions` block records which generation of workspace conventions scaffo
 
 ```json
 "conventions": {
-  "generation": 1,
-  "tool_version": "0.11.0",
-  "stamped_at": "2026-07-19T16:00:00+00:00"
+  "generation": 4,
+  "tool_version": "0.14.0",
+  "stamped_at": "2026-07-24T16:00:00+00:00"
 }
 ```
 
@@ -123,13 +123,28 @@ For repositories, the lock file should include:
 - dirty status
 - fetch time
 
-For docs and papers, future versions should record:
+Doc snapshots are recorded in the top-level `doc_snapshots` list. Every entry
+records the source/fetcher, snapshot or quarantine path, content hash, fetch
+time, status, and safety provenance. HTML snapshots also carry structured
+extraction provenance:
 
-- source URL
-- local snapshot path
-- content hash
-- fetch time
-- conversion metadata, if HTML or PDF was converted for summarization
+```json
+"extraction": {
+  "extractor": "trafilatura",
+  "version": "2.1.0",
+  "profile": "main-content-v1",
+  "raw_input_hash": "sha256:..."
+}
+```
+
+Trafilatura output is Markdown (`<name>.md`). The raw-input hash separates an
+upstream page change from an extractor-output change, while `content_hash`
+always hashes the bytes written to the snapshot or quarantine. A normal
+extractor decline, missing dependency, or runtime failure falls back to the
+stdlib HTML reducer (`<name>.txt`) and records `extractor: "stdlib"` plus the
+raw-input hash and a `fallback_reason`; runtime failures also print a warning.
+Only one clean/quarantined text variant survives a refresh. Binary sources are
+`reference-only` and have no converted snapshot.
 
 After `zentaizo graph` runs, the lock also carries a top-level `graph` block: the backend (`graphify`) and its version, the build `mode` (`code-only` or `semantic`, plus `semantic_backend`/`semantic_model` for the latter), `built_from` (each graphed source mapped to the locked identity it was built from), `not_graphed` (excluded sources mapped to reasons), and the safety verdict for `GRAPH_REPORT.md` (`report_status`). Staleness is a pure diff of `built_from` against the current lock, scoped to the recorded mode.
 

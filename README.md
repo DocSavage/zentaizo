@@ -36,7 +36,7 @@ How the workspace realizes those ideas; each tag points back to the Core Idea(s)
 
 - **Curated atlas** (`zentaizo.atlas.json`) — human-authored intent: the curated knowledge context, distinct from the machine-resolved lock state (`zentaizo.lock.json`). *(1, 2)*
 - **Hierarchical knowledge base** — summaries at different scales, from system overview to APIs to source, drilling down only when needed; the queryable knowledge graph below is its structural counterpart. *(1, 4)*
-- **Queryable knowledge graph** (`zentaizo graph`) — a cross-source graph of code↔code and code↔doc edges built with [Graphify](https://github.com/safishamsi/graphify), surfacing structural relationships no single per-source summary can see. It is the first of several layers a workspace adds through external-tool modules — each degrades gracefully to reference-only guidance when the tool is absent, so none is a hard dependency. *(1, 4)*
+- **Queryable knowledge graph** (`zentaizo graph`) — a cross-source graph of code↔code and code↔doc edges built with bundled [Graphify](https://github.com/safishamsi/graphify), surfacing structural relationships no single per-source summary can see. Deterministic Python-native baseline integrations ship with Zentaizo; heavy or model-backed integrations stay opt-in. *(1, 4)*
 - **Heterogeneous sources** — repos, docs, papers, notes, issue reports, and generated analysis in one place. *(1)*
 - **Multi-repo sandbox** — all associated repos available locally for agentic work, like a monorepo for coherent cross-system development; each repo marked read-only (`role: "reference"`) or editable (`role: "edit"`). It brings the full picture of code to bear (1), provides that code as persistent, version-pinned context (2), and removes failable web searches against drifting versions by making the exact source local (3); and that same read-only/editable marking *is* the access policy a sandbox enforces, so an agent can run at the workspace level with reference repos genuinely read-only (6). *(1, 2, 3, 6)*
 - **Pinned sources** — repos and document snapshots resolve to exact commits and content hashes (`zentaizo.lock.json`). *(2, 3)*
@@ -63,28 +63,21 @@ Zentaizo is meant to prepare the agent to answer that first, then help make the 
 
 ## Install
 
-Put `zentaizo` on your `PATH` (`pipx` keeps it isolated):
+Install Zentaizo in an isolated environment, then let its setup command detect
+your installed AI harnesses and offer the shared skill to each one:
 
 ```bash
 pipx install -e /path/to/zentaizo
-zentaizo --help
+zentaizo setup
 ```
 
 If you don't have `pipx`: `pixi global install pipx` (or `brew install pipx`,
 `apt install pipx`).
 
-Two follow-ups complete a standard setup:
-
-```bash
-zentaizo skills install --target claude  # or codex, gemini, all
-uv tool install graphifyy                # or: pipx install graphifyy
-```
-
-The first installs the global Zentaizo skill, which teaches your AI assistants
-the workspace workflow and conventions. The second puts the `graphify` binary
-on your `PATH` for the knowledge-graph step of the standard workflow (step 4
-below); if it's missing, `zentaizo graph` prints the install hint and
-everything else keeps working.
+Runtime support for Graphify and HTML main-content extraction is bundled.
+`zentaizo setup` prompts before changing each detected Claude, Codex, or Gemini
+configuration; `zentaizo setup --check` reports setup and tool health without
+writing anything.
 
 ## What A Workspace Contains
 

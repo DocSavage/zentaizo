@@ -4,6 +4,7 @@ import argparse
 import collections
 import contextlib
 import hashlib
+import importlib.util
 import json
 import os
 import pathlib
@@ -17,9 +18,9 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from importlib import resources
+from importlib import metadata, resources
 
-from zentaizo import __version__, safety
+from zentaizo import __version__, extract, safety
 
 
 class CliError(Exception):
@@ -61,7 +62,7 @@ VALID_DOC_KINDS = ("api-reference", "guide", "tutorial", "spec", "changelog")
 # generated workspace artifacts or session-file conventions — the same class
 # of change docs/design/versioning.md already calls MINOR. Behavior-only
 # releases leave it alone, so `zentaizo status` never over-reports staleness.
-CONVENTIONS_GENERATION = 3
+CONVENTIONS_GENERATION = 4
 
 # One concise entry per generation (machine/AI-read: `status` prints them as
 # "missed" lines and the upgrade-zentaizo skill scopes its reconciliation by
@@ -75,6 +76,9 @@ CONVENTIONS_DELTAS = {
     "optional extra — the README workflow gains a 'Build the knowledge "
     "graph' step before summarize, and the AGENTS.md consultation order "
     "says build-if-missing instead of if-it-exists",
+    4: "AGENTS.md: once-per-session workspace health checks surface only "
+    "non-current status without running setup or convention upgrades unless "
+    "the user explicitly authorizes them",
 }
 
 
@@ -284,7 +288,7 @@ Repos marked `role: "edit"` are cloned once and then left alone on subsequent fe
 zentaizo graph
 ```
 
-This builds the structural counterpart to `summaries/` — a queryable cross-source knowledge graph (code-only and offline by default). Agents answer relationship questions with `graphify query` / `path` / `explain` instead of re-scanning sources, and the summarize prompt (next step) tells them to ground `summaries/relationships.md` claims in graph queries — which is why the graph comes first. It needs the `graphify` CLI on `PATH`; if it's missing, `zentaizo graph` prints the install hint and everything else keeps working.
+This builds the structural counterpart to `summaries/` — a queryable cross-source knowledge graph (code-only and offline by default). Agents answer relationship questions with `graphify query` / `path` / `explain` instead of re-scanning sources, and the summarize prompt (next step) tells them to ground `summaries/relationships.md` claims in graph queries — which is why the graph comes first. Graphify ships with Zentaizo and is resolved from the active Python environment; source checkouts missing the dependency get a focused install hint while everything else keeps working.
 
 `graphify-out/` is derived output and deliberately not committed — `graph.json` can approach GitHub's 100 MiB per-file push limit on multi-repo workspaces. Instead, **each clone rebuilds the graph locally**: run `zentaizo graph` after `zentaizo fetch` (a fetch also auto-refreshes an existing graph when a graphed source changes). The build spends no LLM tokens (offline tree-sitter extraction) and typically costs about a minute of local compute even for workspaces with thousands of source files.
 
@@ -340,6 +344,12 @@ Before interviewing from scratch, check `sessions/brainstorming/` — if the use
 Read `skills/curate-atlas.md` for the full interview procedure and follow it. (If your host tool also exposes a `zentaizo` or `curate-atlas` skill, that skill loads the same file.) If it is missing, reinstall the bundled skills with `zentaizo skills install` rather than improvising.
 
 Do not write to Claude Memory, ChatGPT Memory, global Codex memory, IDE-wide rule stores, or other personal memory systems unless the user explicitly asks. Keep durable project context in this workspace as committed markdown, JSON, and lock files.
+
+## Workspace Health
+
+Once per session, before substantial workspace work, run `zentaizo status`. Report only non-current conditions (for example stale conventions, a stale or missing graph when the task needs graph evidence, or flagged doc snapshots). Do not repeat an unchanged alert later in the same session.
+
+Do not run the `upgrade-zentaizo` procedure, `zentaizo upgraded`, or `zentaizo setup` without explicit user authorization. Source Consultation below owns graph behavior: build or refresh the graph only when the task needs structural evidence under those rules.
 
 ## Source Consultation
 
@@ -1166,8 +1176,7 @@ def commit_trailer(args: argparse.Namespace) -> int:
         role = str(entry.get("role") or "author")  # CLI-written entries are authors
         if role != "author":
             print(
-                f"delegation: skipping ledger entry {entry.get('id')} with "
-                f"unhandled role {role!r}",
+                f"delegation: skipping ledger entry {entry.get('id')} with unhandled role {role!r}",
                 file=sys.stderr,
             )
             continue
@@ -1459,6 +1468,8 @@ def create_workspace(args: argparse.Namespace) -> int:
 
     print(f"Created Zentaizo workspace: {target}")
     print(f"Next: start an AI session in {target} to create {ATLAS_NAME}")
+    if not _global_skill_install_detected():
+        print("Setup: no global Zentaizo skill detected; run `zentaizo setup`.")
     return 0
 
 
@@ -1795,6 +1806,20 @@ def _print_conventions_status(lock: dict | None) -> None:
     )
 
 
+def _print_doc_snapshot_status(lock: dict | None) -> None:
+    entries = (lock or {}).get("doc_snapshots") or []
+    if not entries:
+        return
+    flagged = [entry for entry in entries if entry.get("status") == "flagged"]
+    if not flagged:
+        print(f"Docs: current — {len(entries)} snapshot(s), none flagged")
+        return
+    print(f"Docs: FLAGGED — {len(flagged)} snapshot(s) quarantined")
+    for entry in flagged:
+        location = entry.get("quarantine") or entry.get("name") or "<unknown>"
+        print(f"  {location}")
+
+
 def status_workspace(args: argparse.Namespace) -> int:
     workspace = pathlib.Path(args.workspace).resolve()
     atlas = find_atlas(workspace)
@@ -1837,6 +1862,7 @@ def status_workspace(args: argparse.Namespace) -> int:
         for repo in ref_repos:
             _print_repo_status(workspace, repo, locked_index.get(repo["name"]))
 
+    _print_doc_snapshot_status(lock)
     _print_graph_status(workspace, config, lock)
 
     if lock:
@@ -2090,16 +2116,57 @@ _HTTP_MAX_BYTES = 5_000_000
 _TEXT_SUFFIXES = frozenset(
     _HTML_SUFFIXES
     + (
-        ".adoc", ".cfg", ".conf", ".csv", ".ini", ".json", ".markdown", ".md",
-        ".rst", ".text", ".toml", ".tsv", ".txt", ".xml", ".yaml", ".yml",
+        ".adoc",
+        ".cfg",
+        ".conf",
+        ".csv",
+        ".ini",
+        ".json",
+        ".markdown",
+        ".md",
+        ".rst",
+        ".text",
+        ".toml",
+        ".tsv",
+        ".txt",
+        ".xml",
+        ".yaml",
+        ".yml",
     )
 )
 _BINARY_SUFFIXES = frozenset(
     {
-        ".7z", ".bmp", ".bz2", ".doc", ".docx", ".epub", ".gif", ".gz", ".ico",
-        ".jpeg", ".jpg", ".mp3", ".mp4", ".odt", ".otf", ".pdf", ".png", ".ppt",
-        ".pptx", ".tar", ".tgz", ".tiff", ".ttf", ".wav", ".webp", ".woff",
-        ".woff2", ".xls", ".xlsx", ".xz", ".zip",
+        ".7z",
+        ".bmp",
+        ".bz2",
+        ".doc",
+        ".docx",
+        ".epub",
+        ".gif",
+        ".gz",
+        ".ico",
+        ".jpeg",
+        ".jpg",
+        ".mp3",
+        ".mp4",
+        ".odt",
+        ".otf",
+        ".pdf",
+        ".png",
+        ".ppt",
+        ".pptx",
+        ".tar",
+        ".tgz",
+        ".tiff",
+        ".ttf",
+        ".wav",
+        ".webp",
+        ".woff",
+        ".woff2",
+        ".xls",
+        ".xlsx",
+        ".xz",
+        ".zip",
     }
 )
 
@@ -2121,6 +2188,10 @@ def _hash_text(text: str) -> str:
     return "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def _hash_bytes(data: bytes) -> str:
+    return "sha256:" + hashlib.sha256(data).hexdigest()
+
+
 def _new_doc_entry(doc: dict, source: dict) -> dict:
     return {
         "name": doc.get("name") or "<unnamed>",
@@ -2132,6 +2203,20 @@ def _new_doc_entry(doc: dict, source: dict) -> dict:
     }
 
 
+def _retire_snapshot_variants(workspace: pathlib.Path, name: str) -> None:
+    """Remove prior clean/quarantined text variants for one validated source."""
+    if ".." in name or not SAFE_SOURCE_NAME.match(name):
+        raise CliError(f"fetch-docs: unsafe doc source name {name!r}", 1)
+    snapshots_dir = workspace.joinpath(*DOC_SNAPSHOTS_SUBDIR)
+    if not snapshots_dir.is_dir():
+        return
+    for suffix in _TEXT_SUFFIXES | {".txt", ".md"}:
+        for filename in (f"{name}{suffix}", f"{name}.flagged{suffix}"):
+            path = snapshots_dir / filename
+            if path.is_file() or path.is_symlink():
+                path.unlink()
+
+
 def _apply_safety_and_write(
     workspace: pathlib.Path,
     entry: dict,
@@ -2139,6 +2224,8 @@ def _apply_safety_and_write(
     *,
     is_html: bool,
     suffix: str,
+    raw_bytes: bytes | None = None,
+    page_url: str | None = None,
     deep_scan: safety.DeepScanner | None = None,
     deep_scanner_state: str = "none",
 ) -> dict:
@@ -2148,6 +2235,43 @@ def _apply_safety_and_write(
     Flagged content is written to a `.flagged` path and never surfaced as a
     usable snapshot.
     """
+    if is_html:
+        raw_hash = _hash_bytes(raw_bytes if raw_bytes is not None else raw.encode("utf-8"))
+        try:
+            extracted = extract.extract_main_content(raw, url=page_url)
+        except extract.ExtractionUnavailable as exc:
+            reason = str(exc)
+            print(
+                f"  WARNING {entry['name']!r}: {reason}; falling back to stdlib HTML extraction",
+                file=sys.stderr,
+            )
+            entry["extraction"] = {
+                "extractor": "stdlib",
+                "raw_input_hash": raw_hash,
+                "fallback_reason": reason,
+            }
+            extracted = None
+            extraction_failed = True
+        else:
+            extraction_failed = False
+
+        if extracted is not None:
+            raw = extracted.markdown
+            is_html = False
+            suffix = ".md"
+            entry["extraction"] = {
+                "extractor": "trafilatura",
+                "version": extracted.version,
+                "profile": extracted.profile,
+                "raw_input_hash": raw_hash,
+            }
+        elif not extraction_failed:
+            entry["extraction"] = {
+                "extractor": "stdlib",
+                "raw_input_hash": raw_hash,
+                "fallback_reason": "no-main-content",
+            }
+
     result = safety.sanitize(raw, is_html=is_html, deep_scan=deep_scan)
     entry["content_hash"] = _hash_text(result.cleaned_text)
     entry["safety"] = {
@@ -2162,14 +2286,15 @@ def _apply_safety_and_write(
     snapshots_dir.mkdir(parents=True, exist_ok=True)
     suffix = ".txt" if is_html else (suffix or ".txt")
     name = entry["name"]
+    _retire_snapshot_variants(workspace, name)
     if result.verdict == "flagged":
         out = snapshots_dir / f"{name}.flagged{suffix}"
-        out.write_text(result.cleaned_text)
+        out.write_text(result.cleaned_text, encoding="utf-8", newline="")
         entry["status"] = "flagged"
         entry["quarantine"] = str(out.relative_to(workspace))
     else:
         out = snapshots_dir / f"{name}{suffix}"
-        out.write_text(result.cleaned_text)
+        out.write_text(result.cleaned_text, encoding="utf-8", newline="")
         entry["status"] = "ok"
         entry["snapshot"] = str(out.relative_to(workspace))
     return entry
@@ -2212,6 +2337,7 @@ def _snapshot_in_repo_doc(
         raw,
         is_html=suffix in _HTML_SUFFIXES,
         suffix=src_path.suffix or ".txt",
+        raw_bytes=raw_bytes,
         deep_scan=deep_scan,
         deep_scanner_state=deep_scanner_state,
     )
@@ -2342,6 +2468,7 @@ def _fetch_external_doc(
                 result.text,
                 is_html=False,
                 suffix=".md",
+                raw_bytes=result.data,
                 deep_scan=deep_scan,
                 deep_scanner_state=deep_scanner_state,
             )
@@ -2364,6 +2491,8 @@ def _fetch_external_doc(
             result.text,
             is_html=is_html,
             suffix=".txt",
+            raw_bytes=result.data,
+            page_url=result.url,
             deep_scan=deep_scan,
             deep_scanner_state=deep_scanner_state,
         )
@@ -3000,7 +3129,7 @@ def summarize_workspace(args: argparse.Namespace) -> int:
 # graph — workspace knowledge graph (Graphify backend)
 # Design: docs/design/integrations.md. Behavioral facts
 # below (ignore semantics, skip dirs, env vars) were verified against
-# graphifyy 0.8.39 — see that doc's "Step-1 findings".
+# graphifyy 0.9.26 — see that doc's "Step-1 findings".
 # ---------------------------------------------------------------------------
 
 GRAPH_OUTPUT_DIR = "graphify-out"
@@ -3010,31 +3139,34 @@ GRAPH_REPORT_NAME = "GRAPH_REPORT.md"
 GRAPH_REPORT_FLAGGED_NAME = "GRAPH_REPORT.flagged.md"
 
 GRAPH_INSTALL_HINT = (
-    "graph: `graphify` is not on PATH. Install it first:\n"
-    "  uv tool install graphifyy    # or: pipx install graphifyy\n"
-    '  pip install "zentaizo[graph]"   # carries a pinned-compatible Graphify\n'
+    "graph: the bundled `graphify` module and an external `graphify` command "
+    "were both unavailable.\n"
+    "  Reinstall zentaizo with its default dependencies, or for a source "
+    "checkout run: pip install graphifyy\n"
     "Then re-run `zentaizo graph`."
 )
 
 # Reasons recorded in the lock's `graph.not_graphed` map (source -> reason).
-NOT_GRAPHED_SNAPSHOTS = "skipped by graphify (snapshots dir)"
+NOT_GRAPHED_SNAPSHOTS = "excluded by zentaizo graph policy (doc snapshots)"
 NOT_GRAPHED_SEMANTIC_ONLY = "semantic-only source (code-only build)"
 NOT_GRAPHED_FLAGGED = "flagged snapshot (quarantined)"
 NOT_GRAPHED_UNFETCHED = "not fetched (run 'zentaizo fetch')"
 
-# Graphify reads .graphifyignore INSTEAD of the .gitignore in the same
-# directory (replacement, not overlay), so this file must carry every
-# graph-relevant exclusion itself. With it present, `repos/` is visible to
-# Graphify even though the workspace .gitignore hides it from git — no
-# negation needed. The unanchored `.pixi/` rule excludes nested Pixi
-# environments inside those visible repos. `docs/snapshots/*.flagged.*` is
-# forward-compat: 0.8.39 prunes any `snapshots` dir outright, but quarantined
-# text must stay excluded if upstream ever makes snapshots reachable.
+# Graphify 0.9.x merges .gitignore and .graphifyignore with last-match-wins
+# semantics. The workspace .gitignore hides `repos/` from git, so the managed
+# overlay must explicitly re-include that directory for Graphify. The
+# unanchored `.pixi/` rule excludes nested Pixi environments inside those
+# visible repos. `docs/snapshots/*.flagged.*` is
+# Graphify 0.9.x no longer prunes every directory named `snapshots`; Zentaizo
+# explicitly keeps fetched snapshots out so doc-summary and graph staleness
+# remain separate layers. Quarantined text is redundantly excluded as defense
+# in depth.
 GRAPHIFYIGNORE_TEXT = f"""\
 {GRAPHIFYIGNORE_MARKER} Do not edit; regenerated on every build.
 # Scope: graph the source trees (repos/, docs/, papers/, notes/) and the durable
 # session docs (brainstorming/, questions/, reports/); never the process trail
 # (efforts/, changes/, debugging/, handoffs/) or Zentaizo-owned metadata.
+!repos/
 sessions/efforts/
 sessions/changes/
 sessions/debugging/
@@ -3053,6 +3185,7 @@ AGENTS.md
 README.md
 CLAUDE.md
 GEMINI.md
+docs/snapshots/
 docs/snapshots/*.flagged.*
 """
 
@@ -3085,8 +3218,8 @@ def _graph_input_set(
     (repo head/commit, else ``UNFETCHED_REV``); ``not_graphed`` maps every
     excluded source to the reason. Notes are read in both modes (the AST
     pass does shallow markdown extraction); papers only under semantic;
-    doc snapshots in neither under graphifyy 0.8.39 (`snapshots` is a
-    built-in skip dir).
+    doc snapshots in neither because the managed ignore excludes that derived
+    fetched-content layer.
     """
     sources = source_groups(config)
     locked_index = _locked_source_index(lock)
@@ -3133,9 +3266,24 @@ def _graph_input_set(
     return built_from, not_graphed
 
 
-def _graphify_version(binary: str) -> str:
+def _graphify_module_available() -> bool:
     try:
-        result = subprocess.run([binary, "--version"], capture_output=True, text=True, timeout=30)
+        return importlib.util.find_spec("graphify") is not None
+    except (ImportError, ModuleNotFoundError, ValueError):
+        return False
+
+
+def _graphify_command() -> list[str] | None:
+    """Resolve the bundled module first, then an external PATH command."""
+    if _graphify_module_available():
+        return [sys.executable, "-m", "graphify"]
+    binary = shutil.which("graphify")
+    return [binary] if binary else None
+
+
+def _graphify_version(command: list[str]) -> str:
+    try:
+        result = subprocess.run([*command, "--version"], capture_output=True, text=True, timeout=30)
     except (OSError, subprocess.TimeoutExpired):
         return "unknown"
     parts = (result.stdout or "").strip().split()
@@ -3143,10 +3291,11 @@ def _graphify_version(binary: str) -> str:
 
 
 def _run_graphify(
-    binary: str, cli_args: list[str], workspace: pathlib.Path, *, force: bool = False
+    command: list[str], cli_args: list[str], workspace: pathlib.Path, *, force: bool = False
 ) -> int:
-    """Run graphify with CWD = workspace root (0.8.39 writes manifest.json
-    relative to CWD; CWD = scanned path keeps all output in one graphify-out/).
+    """Run graphify with CWD = workspace root.
+
+    CWD = scanned path keeps all output in one graphify-out/.
     """
     env = dict(os.environ)
     # Deterministic clustering: community assignment is hash-order dependent.
@@ -3157,7 +3306,7 @@ def _run_graphify(
     if force:
         env["GRAPHIFY_FORCE"] = "1"
     try:
-        proc = subprocess.run([binary, *cli_args], cwd=workspace, env=env)
+        proc = subprocess.run([*command, *cli_args], cwd=workspace, env=env)
     except OSError as exc:
         print(f"graph: failed to run graphify: {exc}", file=sys.stderr)
         return 1
@@ -3237,7 +3386,7 @@ def _graph_staleness(workspace: pathlib.Path, config: dict, lock: dict | None) -
 def _record_graph_build(
     lock: dict,
     *,
-    binary: str,
+    command: list[str],
     mode: str,
     built_from: dict[str, str],
     not_graphed: dict[str, str],
@@ -3249,7 +3398,7 @@ def _record_graph_build(
     """Write the ``graph`` block into ``lock`` (in memory) and return it."""
     graph_block = {
         "backend": "graphify",
-        "backend_version": _graphify_version(binary),
+        "backend_version": _graphify_version(command),
         "mode": mode,
         "built_at": utc_now(),
         "output_dir": GRAPH_OUTPUT_DIR,
@@ -3284,8 +3433,8 @@ def graph_workspace(args: argparse.Namespace) -> int:
     if (backend or model) and not semantic:
         raise SystemExit("graph: --backend/--model only apply with --semantic")
 
-    binary = shutil.which("graphify")
-    if binary is None:
+    command = _graphify_command()
+    if command is None:
         raise SystemExit(GRAPH_INSTALL_HINT)
 
     deep_scan = None
@@ -3314,7 +3463,7 @@ def graph_workspace(args: argparse.Namespace) -> int:
         extract_args = ["extract", ".", "--backend", backend]
         if model:
             extract_args += ["--model", model]
-        rc = _run_graphify(binary, extract_args, workspace, force=force)
+        rc = _run_graphify(command, extract_args, workspace, force=force)
         if rc != 0:
             raise SystemExit(f"graph: `graphify extract` failed (exit {rc}); lock not updated")
         # Headless extract defers GRAPH_REPORT.md to cluster-only (community
@@ -3322,14 +3471,14 @@ def graph_workspace(args: argparse.Namespace) -> int:
         cluster_args = ["cluster-only", ".", f"--backend={backend}"]
         if model:
             cluster_args.append(f"--model={model}")
-        rc = _run_graphify(binary, cluster_args, workspace)
+        rc = _run_graphify(command, cluster_args, workspace)
         if rc != 0:
             raise SystemExit(f"graph: `graphify cluster-only` failed (exit {rc}); lock not updated")
     else:
         update_args = ["update", "."]
         if force:
             update_args.append("--force")
-        rc = _run_graphify(binary, update_args, workspace, force=force)
+        rc = _run_graphify(command, update_args, workspace, force=force)
         if rc != 0:
             raise SystemExit(f"graph: `graphify update` failed (exit {rc}); lock not updated")
 
@@ -3337,7 +3486,7 @@ def graph_workspace(args: argparse.Namespace) -> int:
 
     graph_block = _record_graph_build(
         lock,
-        binary=binary,
+        command=command,
         mode=mode,
         built_from=built_from,
         not_graphed=not_graphed,
@@ -3380,17 +3529,17 @@ def _auto_refresh_graph(workspace: pathlib.Path, config: dict, lock: dict) -> No
         if state is None or not state["stale"]:
             return
         graph = state["graph"]
-        binary = shutil.which("graphify")
-        if binary is None:
+        command = _graphify_command()
+        if command is None:
             print(
                 f"graph: now stale ({len(state['stale'])} source(s) changed) — "
-                "run 'zentaizo graph' (graphify not on PATH; "
-                "install: uv tool install graphifyy)"
+                "run 'zentaizo graph' (Graphify dependency unavailable; "
+                "reinstall zentaizo with its default dependencies)"
             )
             return
         print(f"graph: refreshing (code-only) — {len(state['stale'])} source(s) changed")
         _write_managed_graphifyignore(workspace)
-        rc = _run_graphify(binary, ["update", "."], workspace)
+        rc = _run_graphify(command, ["update", "."], workspace)
         if rc != 0:
             print(
                 f"graph: refresh failed (exit {rc}) — run 'zentaizo graph' manually; "
@@ -3403,7 +3552,7 @@ def _auto_refresh_graph(workspace: pathlib.Path, config: dict, lock: dict) -> No
         )
         _record_graph_build(
             lock,
-            binary=binary,
+            command=command,
             mode=graph.get("mode", "code-only"),
             built_from=built_from,
             not_graphed=not_graphed,
@@ -3794,6 +3943,125 @@ def _gemini_status() -> str:
     if BEGIN_MARKER in path.read_text():
         return f"{path}: block injected"
     return f"{path}: file exists, no zentaizo block"
+
+
+def _global_skill_install_detected() -> bool:
+    try:
+        return any(_setup_target_installed(target) for target in GLOBAL_SKILL_TARGETS)
+    except OSError:
+        return False
+
+
+def _harness_base(env_key: str, default_dir: str) -> tuple[pathlib.Path, bool]:
+    override = os.environ.get(env_key)
+    if override:
+        return pathlib.Path(override), True
+    base = pathlib.Path.home() / default_dir
+    return base, base.exists()
+
+
+def _setup_harnesses() -> list[tuple[str, pathlib.Path, bool]]:
+    claude_base, claude_detected = _harness_base("CLAUDE_CONFIG_DIR", ".claude")
+    codex_base, codex_detected = _harness_base("CODEX_HOME", ".codex")
+    gemini_base, gemini_detected = _harness_base("GEMINI_DIR", ".gemini")
+    return [
+        ("claude", claude_base / "skills" / GLOBAL_SKILL_NAME, claude_detected),
+        ("codex", codex_base / "skills" / GLOBAL_SKILL_NAME, codex_detected),
+        ("gemini", gemini_base / "GEMINI.md", gemini_detected),
+    ]
+
+
+def _setup_target_installed(target: str) -> bool:
+    if target in {"claude", "codex"}:
+        root = _claude_skills_root() if target == "claude" else _codex_skills_root()
+        dest = root / GLOBAL_SKILL_NAME
+        source = _global_skill_source()
+        if dest.is_symlink():
+            return pathlib.Path(os.readlink(dest)) == source
+        installed_skill = dest / "SKILL.md"
+        source_skill = source / "SKILL.md"
+        try:
+            return (
+                installed_skill.is_file()
+                and source_skill.is_file()
+                and installed_skill.read_bytes() == source_skill.read_bytes()
+            )
+        except OSError:
+            return False
+    path = _gemini_memory_file()
+    try:
+        return path.is_file() and BEGIN_MARKER in path.read_text(errors="replace")
+    except OSError:
+        return False
+
+
+def _install_setup_target(target: str, source: pathlib.Path) -> str:
+    if target == "claude":
+        return _install_folder_skill(source, _claude_skills_root(), copy=False)
+    if target == "codex":
+        return _install_folder_skill(source, _codex_skills_root(), copy=False)
+    return _install_gemini_block(source)
+
+
+def _package_version(distribution: str) -> str | None:
+    try:
+        return metadata.version(distribution)
+    except metadata.PackageNotFoundError:
+        return None
+
+
+def setup_command(args: argparse.Namespace) -> int:
+    """Finish user-level harness setup, or report it without writing."""
+    if args.check and args.yes:
+        raise SystemExit("setup: --check and --yes are mutually exclusive")
+    source = _global_skill_source()
+    harnesses = _setup_harnesses()
+
+    if args.check:
+        print("Harness skills:")
+        for target, path, detected in harnesses:
+            if not detected:
+                print(f"  {target}: not detected ({path})")
+            else:
+                state = "installed" if _setup_target_installed(target) else "not installed"
+                print(f"  {target}: detected, {state} ({path})")
+        print("Tools:")
+        command = _graphify_command()
+        graphify = " ".join(command) if command else "unavailable"
+        print(f"  graphify: {graphify}")
+        for tool in ("git", "gh"):
+            resolved = shutil.which(tool)
+            print(f"  {tool}: {resolved or 'unavailable'}")
+        docs_scan = _package_version("llm-guard")
+        print(
+            "  docs-scan: "
+            + (f"installed (llm-guard {docs_scan})" if docs_scan else "not installed")
+        )
+        return 0
+
+    detected = [(target, path) for target, path, found in harnesses if found]
+    if not detected:
+        print("No supported AI harnesses detected; nothing to install.")
+        return 0
+    if not source.exists():
+        raise SystemExit(f"Cannot find packaged skill at {source}")
+    if not args.yes and not sys.stdin.isatty():
+        raise SystemExit(
+            "setup: non-interactive input is denied by default; ask the user, "
+            "then re-run with --yes after explicit authorization"
+        )
+
+    for target, path in detected:
+        if _setup_target_installed(target):
+            print(f"{target}: already installed at {path}")
+            continue
+        if not args.yes:
+            answer = input(f"Install Zentaizo skill for {target} at {path}? [y/N] ")
+            if answer.strip().lower() not in {"y", "yes"}:
+                print(f"{target}: declined")
+                continue
+        print(f"{target}: {_install_setup_target(target, source)}")
+    return 0
 
 
 def skills_list(args: argparse.Namespace) -> int:
@@ -5518,7 +5786,7 @@ def build_parser() -> argparse.ArgumentParser:
     graph.add_argument(
         "--force",
         action="store_true",
-        help="from-scratch rebuild: pass Graphify's --force (overwrites even a " "shrinking graph)",
+        help="from-scratch rebuild: pass Graphify's --force (overwrites even a shrinking graph)",
     )
     graph.add_argument(
         "--no-deep-scan",
@@ -5592,6 +5860,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="report what would be transferred without modifying the target",
     )
     seed.set_defaults(func=seed_from_workspace)
+
+    setup = sub.add_parser(
+        "setup",
+        help="finish one-time AI-harness setup, or report setup health",
+    )
+    setup.add_argument(
+        "--check",
+        action="store_true",
+        help="report harness skill and tool availability without writing",
+    )
+    setup.add_argument(
+        "--yes",
+        action="store_true",
+        help="install into every detected harness without prompting "
+        "(requires prior explicit user authorization)",
+    )
+    setup.set_defaults(func=setup_command)
 
     skills = sub.add_parser(
         "skills",
