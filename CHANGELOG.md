@@ -4,6 +4,21 @@ All notable changes to this project are documented here.
 
 This project uses the Keep a Changelog format. Versions 0.8.0 and earlier predate this changelog.
 
+## [0.14.1] - 2026-07-26
+
+### Added
+
+- `docs/STYLE.md` (main-0003): a documentation style guide for this repository — five numbered rule groups (sentences, paragraphs, documents, diction, claims) plus a canonical-terms glossary that names the losing synonym for each concept. The claims group requires measured values with their conditions, a named baseline, limits stated alongside the capability, and a cited implementation for any claim about generated output or CLI surface.
+
+### Changed
+
+- Canonical vocabulary across the docs (main-0004): **agent** replaces *assistant* for the AI system working in a workspace, and bare *the tool* is replaced by **Zentaizo** or **the Zentaizo CLI** by context. Section headings are sentence case. Generated workspace text still says *assistant* and is aligned separately, since that is a conventions change.
+- Versioning policy: work on the reserved `main` effort bumps per landed slice, because `effort close main` is refused and trunk work otherwise never gets a version.
+
+### Fixed
+
+- Ten documented claims that no longer matched the code (main-0004), each corrected against the implementation: `zentaizo sandbox` renders two targets (`policy`, `claude`) and is a file-tool guardrail rather than the read-only enforcement the README implied; the lock is written by six commands, not only `fetch`; `next-note` emits no frontmatter and stamps no `edited_by`; `create` has five undocumented flags and `fetch-docs` one; `--json` exists on every `effort`/`path`/`next-*` command and `cache-commit-trailer`/`seed-from`/`skills`/`sandbox` were undocumented; `.graphifyignore` overlays `.gitignore` last-match-wins rather than replacing it; `graphifyy` and `trafilatura` are core dependencies and `[graph]` is an empty alias; `effort switch` also writes the registry; slice frontmatter carries seven fields, not two; and the stale `cli.py:<line>` citations in the Claude-integration doc are now symbol-only.
+
 ## [0.14.0] - 2026-07-24
 
 ### Added

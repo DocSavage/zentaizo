@@ -32,7 +32,7 @@ it derives structure from what `fetch`/`fetch-docs` already snapshotted, so it
 sits as a sibling of `summarize`, not inside the fetch cascade.
 
 The verb is capability-named with Graphify as the first backend tier. Graphify
-owns installation, per-assistant skill registration, the build engine and its
+owns installation, per-agent skill registration, the build engine and its
 semantic backends, and the entire query surface — none of which Zentaizo wraps.
 Zentaizo owns only the workspace conventions Graphify cannot know: what to graph
 and in which mode, where output lives, provenance/staleness, and the one
@@ -148,8 +148,8 @@ an open question, not a decision.
   Graphify-native; Zentaizo only points agents at it.
 - **A per-source `graph: false` atlas opt-out** — not added until a real
   workspace needs it (explicit boring JSON, but not preemptive JSON).
-- **Auto-registering Graphify's own assistant skill** — still a user-level
-  concern; Zentaizo bundles the runtime but does not mutate unrelated assistant
+- **Auto-registering Graphify's own agent skill** — still a user-level
+  concern; Zentaizo bundles the runtime but does not mutate unrelated agent
   configuration for Graphify.
 - **Graphing the `sessions/` process trail, or Graphify's cross-project
   `--global` graph** — out of scope; single-workspace graphing of the *system*

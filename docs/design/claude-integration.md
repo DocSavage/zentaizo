@@ -6,7 +6,7 @@ _Distilled design doc — current architecture + rationale._
 
 Zentaizo produces and maintains a *workspace*, but the workspace is only useful
 inside an AI coding harness. This subsystem is the glue that wires a generated
-workspace into Claude Code (and, more loosely, other harnesses) so the assistant
+workspace into Claude Code (and, more loosely, other harnesses) so the agent
 arrives with the right context, names its session after the work, and attributes
 its commits — all without the user prompting and without the model having to
 choose to do the right thing.
@@ -15,7 +15,7 @@ It covers three concerns: (1) a Claude `SessionStart` hook that titles a session
 after the active slice rather than the first thing typed; (2) loading the
 workspace `AGENTS.md` into Claude in full via a `CLAUDE.md` `@AGENTS.md` import;
 and (3) deterministic AI commit attribution — including delegated work, in both
-shapes: an orchestrator committing another assistant's reviewed result, and a
+shapes: an orchestrator committing another agent's reviewed result, and a
 delegated run committing directly — via a `commit-trailer` reader an agent can
 call plus a bundled `prepare-commit-msg` hook as a backstop. Each piece
 follows the project's core split — *deterministic work in the CLI, judgment in
@@ -34,35 +34,33 @@ fix is a workspace-state-derived title.
 - **The `short_title` field.** `changes/` and `debugging/` slices carry an
   agent-authored `short_title` in frontmatter — an ultra-short (≤ 30-char),
   discriminator-first description of the slice. `SHORT_TITLE_MAX = 30`
-  (`src/zentaizo/cli.py:46`) is the budget, designed to the most compressed
+  (`src/zentaizo/cli.py`) is the budget, designed to the most compressed
   header surface. `zentaizo next-change`/`next-debugging` accept `--short-title`
-  and reject an over-budget value (`normalize_short_title`, `cli.py:3204`);
+  and reject an over-budget value (`normalize_short_title`);
   `validate` warns (never errors) on an open slice with an empty or overlong
-  `short_title` (`cli.py:1026`–1032). The field is deliberately *not* named
+  `short_title` (`session_frontmatter_warnings`). The field is deliberately *not* named
   `session_title`, which is the name of Claude's own hook-input field.
-- **The `zentaizo session-title` hook command** (`session_title_command`,
-  `cli.py:4275`) reads `SessionStart` JSON on stdin and prints a `sessionTitle`
+- **The `zentaizo session-title` hook command** (`session_title_command`) reads `SessionStart` JSON on stdin and prints a `sessionTitle`
   decision. It emits `{}` when `source` is not `startup`/`resume` (the title is
   ignored otherwise) or when a `session_title` is already set (respecting a
   manual `--name`/`/rename`), and is wrapped best-effort so any exception emits
   `{}` and exits 0 — a hook must never break a session.
-- **Title resolution** (`resolve_session_title`, `cli.py:3834`) walks a
+- **Title resolution** (`resolve_session_title`) walks a
   precedence chain, most-specific first: active slice `short_title` → active
   slice slug → current non-`main` effort label → workspace directory name.
   "Active slice" is the highest-counter *open* slice for the current effort
-  across both `changes/` and `debugging/` (`find_active_slice`, `cli.py:3799`).
-  `usable_short_title` (`cli.py:3214`) discards blanks and scaffold placeholders
+  across both `changes/` and `debugging/` (`find_active_slice`).
+  `usable_short_title` discards blanks and scaffold placeholders
   so a freshly created slice falls through rather than titling on `<...>`.
 - **Installation.** The hook is a managed entry in `.claude/settings.json` under
   `hooks.SessionStart`, identified by its exact command string
-  `zentaizo session-title` (`CLAUDE_SESSION_TITLE_COMMAND`, `cli.py:47`).
-  `_render_claude_session_title_settings` (`cli.py:753`) deep-copies existing
+  `zentaizo session-title` (`CLAUDE_SESSION_TITLE_COMMAND`).
+  `_render_claude_session_title_settings` deep-copies existing
   settings, drops any prior managed entry, re-adds one, and preserves
   user-authored hooks and all other settings — the same never-clobber contract
-  as the commit hook's marker. `create_workspace` installs it best-effort
-  (`cli.py:911`); `--no-claude-hooks` opts out, and `zentaizo claude-hooks`
-  (`claude_hooks_command`, `cli.py:4314`) retrofits an existing workspace.
-  Both gate the write on `_probe_claude_session_title_command` (`cli.py:792`),
+  as the commit hook's marker. `create_workspace` installs it best-effort; `--no-claude-hooks` opts out, and `zentaizo claude-hooks`
+  (`claude_hooks_command`) retrofits an existing workspace.
+  Both gate the write on `_probe_claude_session_title_command`,
   which resolves `zentaizo` on `PATH` and runs it once with empty stdin,
   requiring exit 0 — this rules out both *no* `zentaizo` on `PATH` and a *stale*
   one lacking the subcommand, either of which would fail at argparse, outside
@@ -77,13 +75,13 @@ references the command name.
 
 Claude Code reads `CLAUDE.md`, not `AGENTS.md`. To guarantee the workspace's full
 conventions are in context at launch, `create_workspace` writes `CLAUDE.md` as a
-single-line import — `CLAUDE_IMPORT_MD = "@AGENTS.md\n"` (`cli.py:423`), written
-at `cli.py:868`. `@path` imports load in full at session start, with no length
+single-line import — `CLAUDE_IMPORT_MD = "@AGENTS.md\n"`, written by
+`create_workspace`. `@path` imports load in full at session start, with no length
 cap. This replaced an earlier prose pointer and is the officially documented
 pattern for a repo that keeps its instructions in `AGENTS.md`.
 
 `GEMINI.md` is still written as the prose `WORKSPACE_POINTER_MD` pointer
-(`cli.py:415`, `cli.py:869`) — whether Gemini CLI honors an `@AGENTS.md` import
+(`WORKSPACE_POINTER_MD`, also written by `create_workspace`) — whether Gemini CLI honors an `@AGENTS.md` import
 was left unverified, so its behavior was not changed. The session-title hook and
 the import coexist trivially: the hook writes `.claude/settings.json`, the import
 writes `CLAUDE.md`.
@@ -104,9 +102,9 @@ One producer writes a cache; three readers consume it, so `edited_by` ledgers an
   fallback.
 - **Reader A — the bundled hook**
   (`src/zentaizo/templates/hooks/prepare-commit-msg`) resolves the active
-  assistant and identity (see *Which assistant is committing* below), formats the
+  agent and identity (see *Which agent is committing* below), formats the
   trailer, and appends it to the message. It is **fail-open** (any error skips the
-  trailer, never blocking a commit — and when the committing assistant is known
+  trailer, never blocking a commit — and when the committing agent is known
   but its identity is not resolvable, it emits *no* trailer rather than another
   provider's), **idempotent per provider** (a regex guard on
   `^(?:Co-authored-by|Reviewed-by):\s+{provider}` suppresses duplicates on
@@ -119,11 +117,11 @@ One producer writes a cache; three readers consume it, so `edited_by` ledgers an
   template reaches a repo only when the installer runs again (typically the next
   `fetch` with an upgraded CLI).
 - **Reader B — `zentaizo edited`** stamps the `edited_by:` ledger on session files
-  via `agent_editor_identity`, using the same innermost-first assistant detection
+  via `agent_editor_identity`, using the same innermost-first agent detection
   and identity chain as the other readers.
 - **Reader C — `zentaizo commit-trailer`** (`commit_trailer`) prints
   the resolved trailer to stdout for an agent to paste into a commit body. Provider
-  detection mirrors the hook (innermost assistant first); `--claude`/`--codex`
+  detection mirrors the hook (innermost agent first); `--claude`/`--codex`
   force a provider, even from a non-AI shell or CI job with the right
   cache/config. Resolution uses the shared identity chain
   (`_resolve_commit_trailer_identity`, `_resolve_codex_identity`), and the
@@ -142,14 +140,14 @@ workspace `AGENTS.md` § Commits (`workspace_agents`) tells the agent to run
 `commit-trailer` and paste the line, noting the hook remains a best-effort
 backstop.
 
-### Which assistant is committing (nested runs)
+### Which agent is committing (nested runs)
 
 The environment answers the question per branch: `CLAUDECODE` marks a Claude
 Code session, `CODEX_THREAD_ID` a Codex run. The subtlety is nesting: when a
 Claude session delegates to Codex (e.g. via the Codex companion plugin), the
 Codex process inherits the whole Claude environment — so during a Codex-made
 commit **both** markers are present. Detection is therefore
-**innermost-assistant-first**: `CODEX_THREAD_ID` is injected by the codex CLI
+**innermost-agent-first**: `CODEX_THREAD_ID` is injected by the codex CLI
 only into the shells of its own live run, while `CLAUDECODE` leaks downward into
 everything a Claude session spawns, so when both are set, Codex made the commit.
 All three sniff sites (the hook's `_provider_trailer`, `commit_trailer`,
@@ -190,7 +188,7 @@ A warn-only safety net flags a fresh Codex session with an empty ledger.
 
 The two delegation shapes split cleanly: *orchestrator commits after the run
 returns* → the ledger ritual (note → `commit-trailer` → clear); *the delegated
-assistant commits during its own run* → no ritual, the innermost-first hook
+agent commits during its own run* → no ritual, the innermost-first hook
 attributes it directly.
 
 ### Model-agnosticism boundary
@@ -199,7 +197,7 @@ attributes it directly.
 provider-keyed cache). The Claude-specific surface is isolated: the
 `hooks.SessionStart` entry and the `@AGENTS.md` `CLAUDE.md`, both under the
 workspace's Claude-owned files. `AGENTS.md` and the `skills/` procedures stay
-model-neutral, and `zentaizo session-title` / `commit-trailer` are themselves
+model-agnostic, and `zentaizo session-title` / `commit-trailer` are themselves
 generic subcommands — only the settings wiring and the `CLAUDE.md`/`GEMINI.md`
 filenames name a specific harness.
 
@@ -217,7 +215,7 @@ filenames name a specific harness.
 | Commit attribution shape | One cache producer + three readers | A single resolved `(model, effort)` source keeps `edited_by` and `Co-authored-by` consistent. |
 | `commit-trailer` failure mode | Fail-loud (non-zero, stderr reason) | An agent shelling out can see and act on the failure, unlike the hook's silent skip. |
 | Keep the hook self-contained | Do not refactor it to shell out to `commit-trailer` | Self-containment lets it run in any installed repo without `zentaizo` on `PATH`; a format-lock test prevents drift. |
-| Nested-run provider detection | Innermost assistant first (`CODEX_THREAD_ID` over `CLAUDECODE`) | The outer session's marker leaks into delegated runs; the inner run's marker exists only inside it. |
+| Nested-run provider detection | Innermost agent first (`CODEX_THREAD_ID` over `CLAUDECODE`) | The outer session's marker leaks into delegated runs; the inner run's marker exists only inside it. |
 | Codex identity ground truth | The run's own rollout log, ahead of `latest.json`/config | Nothing populates the cache during a delegated run; config only knows the configured default; the rollout log records what the run actually used. |
 | Delegated-authorship record | Explicit per-repo pending-authors ledger, `commit-trailer` as sole consumer | The environment can never answer *who authored*; recording the delegation event keeps the hook simple and the lifecycle explicit (`clear` is never implicit). |
 | Wrong-provider fallback | A known-but-unresolvable committer yields *no* trailer | A missing trailer is recoverable; a mis-attributed one silently corrupts history. |
@@ -276,4 +274,4 @@ filenames name a specific harness.
   `cache-commit-trailer`, `edited`, `next-change`/`next-debugging --short-title`.
 - `docs/workspace-format.md` — `short_title`, the `CLAUDE.md` `@AGENTS.md` wiring,
   and the `edited_by:` ledger / commit-trailer cache.
-- `README.md` — Mechanisms (model-neutral instructions; deterministic tooling).
+- `README.md` — Mechanisms (model-agnostic instructions; deterministic tooling).

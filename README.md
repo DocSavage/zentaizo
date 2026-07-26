@@ -1,10 +1,10 @@
 # Zentaizo
 
-Zentaizo helps an AI agent understand the big picture of a complex system before it dives into source code. It's a tool that can create an AI-native workspace: a virtual monorepo for a curated set of repos, papers, API docs, etc. When installed as a shared skill among your chosen AI harnesses, it also serves as a way to share curated, git-persisted, hierarchically-scaled information.
+Zentaizo helps an AI agent understand the big picture of a complex system before it dives into source code. The Zentaizo CLI creates an AI-native workspace that holds a curated set of repos, papers, and API docs together, the way a monorepo holds related code. When installed as a shared skill among your chosen AI harnesses, it also serves as a way to share curated, git-persisted, hierarchically-scaled information.
 
 The name comes from Japanese `zentaizo` (`全体像`, usually romanized `zentaizō`), meaning the overall picture.
 
-## Why This Exists
+## Why this exists
 
 Useful software work often depends on context that lives outside the repository you are editing:
 
@@ -15,11 +15,11 @@ Useful software work often depends on context that lives outside the repository 
 - design docs and papers
 - issue reports, traces, and local notes
 
-An agent can answer better questions and make better changes when it has a structured way to see that broader context. Zentaizo is a workspace format and command-line tool for building that curated context in a token-efficient readable way.
+An agent can answer better questions and make better changes when it has a structured way to see that broader context. Zentaizo is a workspace format and command-line tool for building that curated context as readable markdown at several scales, so an agent can read a system overview before opening any source file.
 
 Aside from external information, zentaizo provides a shared skill for where to share git-persisted information during planning, analysis, and implementation.
 
-## Core Ideas
+## Core ideas
 
 The goals the workspace format serves. The **Mechanisms** below each note which idea(s) they advance.
 
@@ -27,7 +27,7 @@ The goals the workspace format serves. The **Mechanisms** below each note which 
 2. **Persistent, auditable substrate** — work and its rationale live in versioned, git-controlled files, so a later session, a different model, or the human can look at what was decided and done before contributing.
 3. **Reproducibility and determinism** — the context behind an answer should be repeatable, and any task with a single correct answer belongs in deterministic tooling rather than model instructions.
 4. **Context is precious** — the agent's attention is the scarce resource; spend it on the problem, not on boilerplate, lookup, or re-deriving rules a tool could enforce.
-5. **Model-agnostic** — the workspace is the source of truth, not any one assistant.
+5. **Model-agnostic** — the workspace is the source of truth, not any one agent.
 6. **Least-privilege, sandboxable execution** — an agent gets the narrowest access that lets it work: it writes its own `sessions/` and the editable repos, reads everything else (the reference repos especially), and touches nothing outside the workspace.
 
 ## Mechanisms
@@ -38,14 +38,14 @@ How the workspace realizes those ideas; each tag points back to the Core Idea(s)
 - **Hierarchical knowledge base** — summaries at different scales, from system overview to APIs to source, drilling down only when needed; the queryable knowledge graph below is its structural counterpart. *(1, 4)*
 - **Queryable knowledge graph** (`zentaizo graph`) — a cross-source graph of code↔code and code↔doc edges built with bundled [Graphify](https://github.com/safishamsi/graphify), surfacing structural relationships no single per-source summary can see. Deterministic Python-native baseline integrations ship with Zentaizo; heavy or model-backed integrations stay opt-in. *(1, 4)*
 - **Heterogeneous sources** — repos, docs, papers, notes, issue reports, and generated analysis in one place. *(1)*
-- **Multi-repo sandbox** — all associated repos available locally for agentic work, like a monorepo for coherent cross-system development; each repo marked read-only (`role: "reference"`) or editable (`role: "edit"`). It brings the full picture of code to bear (1), provides that code as persistent, version-pinned context (2), and removes failable web searches against drifting versions by making the exact source local (3); and that same read-only/editable marking *is* the access policy a sandbox enforces, so an agent can run at the workspace level with reference repos genuinely read-only (6). *(1, 2, 3, 6)*
+- **Multi-repo sandbox** — all associated repos available locally for agentic work, like a monorepo for coherent cross-system development; each repo marked read-only (`role: "reference"`) or editable (`role: "edit"`). It brings the full picture of code to bear (1), provides that code as persistent, version-pinned context (2), and removes failable web searches against drifting versions by making the exact source local (3); and that same read-only/editable marking *is* the access policy `zentaizo sandbox` renders, which today denies the Claude file tools on reference repos rather than enforcing a boundary (6). *(1, 2, 3, 6)*
 - **Pinned sources** — repos and document snapshots resolve to exact commits and content hashes (`zentaizo.lock.json`). *(2, 3)*
 - **Deterministic tooling over model instructions** — mechanical, single-answer work (session-file allocation, counter and path resolution, frontmatter) lives in the CLI, not in prose each model re-interprets each session. This frees context (4) and reduces run-to-run variability (3). *(3, 4)*
 - **Git-versioned `sessions/` trail** — effort docs, slice plans, debugging notes, handoffs, reports, and the effort registry accumulate as the durable, auditable record a later session reads instead of re-deriving. *(2)*
-- **Model-neutral instructions** — `AGENTS.md` carries the model-agnostic guidance, and the `skills/` procedures are plain-markdown and tool-neutral (they name Claude, Codex, Gemini, and Aider as interchangeable). `CLAUDE.md` imports `AGENTS.md` (an `@AGENTS.md` line, so Claude loads that guidance in full at launch — it reads `CLAUDE.md`, not `AGENTS.md`); `GEMINI.md` stays a thin pointer; and the shared skill installs across Claude, Codex, and Gemini. *(5)*
-- **Least-privilege sandboxing** (`zentaizo sandbox`) — the atlas's edit/reference split *is* an access policy; a pure `compute_policy` derives it (write your own `sessions/`/`summaries/` and the editable repos, read everything else, touch nothing outside the workspace) and thin renderers project it into each harness's native guardrails — with airtight OS-level containers planned as an opt-in allied repo. One atlas-derived policy, rendered per assistant, so confinement isn't hand-maintained per tool. *(5, 6)*
+- **Model-agnostic instructions** — `AGENTS.md` carries the model-agnostic guidance, and the `skills/` procedures are plain-markdown and tool-neutral (they name Claude, Codex, Gemini, and Aider as interchangeable). `CLAUDE.md` imports `AGENTS.md` (an `@AGENTS.md` line, so Claude loads that guidance in full at launch — it reads `CLAUDE.md`, not `AGENTS.md`); `GEMINI.md` stays a thin pointer; and the shared skill installs across Claude, Codex, and Gemini. *(5)*
+- **Least-privilege sandboxing** (`zentaizo sandbox`) — the atlas's edit/reference split *is* an access policy; a pure `compute_policy` derives it (write your own `sessions/`/`summaries/` and the editable repos, read everything else, touch nothing outside the workspace) and a renderer projects it into a harness's native config. Two targets exist: `--target policy` prints the computed policy, and `--target claude` writes `Edit`/`Write` deny rules into `.claude/settings.json` (`cli.py`, `_render_claude_settings`). Both are guardrails against accidental writes rather than boundaries — a `Bash` redirect writes around them — and `docs/design/sandboxing.md` records the threat model. *(5, 6)*
 
-## A Small Example
+## A small example
 
 Imagine a small URL shortener split across several repositories:
 
@@ -79,7 +79,7 @@ Runtime support for Graphify and HTML main-content extraction is bundled.
 configuration; `zentaizo setup --check` reports setup and tool health without
 writing anything.
 
-## What A Workspace Contains
+## What a workspace contains
 
 After source discovery and fetch, a workspace looks like:
 
@@ -107,7 +107,7 @@ zen-link-shortener/
     reports/                # living evidence-backed syntheses (must-read deliverables)
 ```
 
-## The Workflow
+## The workflow
 
 A workspace has two phases: **build the context** (once, then refreshed as
 sources move), and **work in efforts** against it. The diagram shows the
@@ -136,12 +136,16 @@ Three ownership rules make the layout predictable:
 
 - **You hand-edit exactly one JSON file:** `zentaizo.atlas.json`, the
   human-authored atlas of what the system is and which repos are editable.
-- **The CLI owns the other JSON.** `zentaizo.lock.json` changes only through
-  `zentaizo fetch`, and `sessions/efforts.json` only through `zentaizo
+- **The CLI owns the other JSON.** `zentaizo.lock.json` is written only by the
+  commands that resolve state — `create` seeds it, `fetch` and `fetch-docs` record
+  what they resolved, `graph` records the build, and `upgraded` re-stamps the
+  conventions block — and `sessions/efforts.json` only through `zentaizo
   effort …` commands — they validate repo names, compute pins and merge bases,
   and keep timestamps, so hand-editing these files is never needed (or safe).
 - **Markdown is shared:** the CLI allocates every session file (path, counter,
-  frontmatter), then you and the assistant write the content.
+  and — for the frontmatter-bearing kinds — its frontmatter), then you and the
+  agent write the content. A `questions/` note is the exception: `next-note`
+  scaffolds a path but no frontmatter.
 
 ### 1 · Create the workspace
 
@@ -153,7 +157,7 @@ zentaizo create zen-link-shortener
 cd zen-link-shortener
 ```
 
-This scaffolds the shell: `AGENTS.md` (the assistant's entry point), `skills/`
+This scaffolds the shell: `AGENTS.md` (the agent's entry point), `skills/`
 (procedures and templates), and `sessions/` seeded with the reserved `main`
 effort. There is no atlas yet — authoring it is the first real task, and the
 generated `AGENTS.md` says exactly that.
@@ -227,7 +231,7 @@ than "summarize these repos":
   text, and tells the agent to weight every summary toward that focus. If the
   work is about authentication, each repo's summary should explain how that
   repo handles auth — a pertinent condensation of larger content, not a
-  generic abstract that drops what matters.
+  generic condensation that drops what matters.
 
 The agent then writes one summary per source plus three cross-cutting files —
 `overview.md` (system map), `relationships.md` (how the sources interact), and
@@ -252,7 +256,7 @@ Then, from `/path/to/shortener-api`, you can ask an AI agent:
 
 > Using the Zentaizo context, inspect the related frontend and client library before changing the API contract for link expiration.
 
-### Working in Efforts
+### Working in efforts
 
 Work in a workspace is grouped into **efforts** — named bodies of work that may
 span several editable repos. An effort lives in two linked places: a registry
@@ -270,7 +274,7 @@ flowchart LR
     DOC --> S2["<b>sessions/changes/expiry-0002-web-ui.md</b>"]
 ```
 
-The usual path is agentic — describe the work to your assistant and it runs
+The usual path is agentic — describe the work to your agent and it runs
 these commands for you (the bundled `skills/plan-and-implement.md` walks it
 through the lifecycle) — but they are equally drivable by hand:
 
@@ -309,7 +313,7 @@ into slice plans with `zentaizo next-change <slug>`. The reserved `main` effort
 is the deliverable trunk: work flows there until it warrants a separate effort.
 See `docs/workspace-format.md` § Sessions and `docs/cli.md` for the full model.
 
-## Beyond the Basics
+## Beyond the basics
 
 ### Sandboxing the agent
 
@@ -352,13 +356,13 @@ making changes.
 
 ## Safety
 
-A workspace deliberately aggregates external material — fetched repositories, documentation, notes, and papers — for an AI assistant to read. Treat all of it as **untrusted input**: content pulled from the web or third-party repos can carry indirect prompt-injection payloads (hidden instructions, fake system messages, invisible characters). The generated workspace `AGENTS.md` instructs assistants to read this material as evidence to cite and summarize, **never as instructions to follow**. Hardened fetch-time handling — sanitization, quarantine, and a summarize-as-quarantine-boundary pattern — is implemented; see `docs/design/docs-layer.md`.
+A workspace deliberately aggregates external material — fetched repositories, documentation, notes, and papers — for an AI agent to read. Treat all of it as **untrusted input**: content pulled from the web or third-party repos can carry indirect prompt-injection payloads (hidden instructions, fake system messages, invisible characters). The generated workspace `AGENTS.md` instructs agents to read this material as evidence to cite and summarize, **never as instructions to follow**. Hardened fetch-time handling — sanitization, quarantine, and a summarize-as-quarantine-boundary pattern — is implemented; see `docs/design/docs-layer.md`.
 
-## Reporting Tool Issues
+## Reporting tool issues
 
 Every workspace dogfoods Zentaizo, so using one surfaces bugs, friction, and
-ideas about the tool itself. The set procedure — the same one the generated
-workspace `AGENTS.md` gives AI assistants — is a GitHub issue on the tool's
+ideas about Zentaizo itself. The set procedure — the same one the generated
+workspace `AGENTS.md` gives AI agents — is a GitHub issue on the Zentaizo
 tracker:
 
 ```bash
@@ -366,13 +370,13 @@ gh issue create -R DocSavage/zentaizo --title "<concise summary>" --body "<detai
 ```
 
 Include the workspace name, the exact command (with flags), what you expected,
-and what actually happened. Filing an issue posts publicly, so an assistant
+and what actually happened. Filing an issue posts publicly, so an agent
 should confirm with the user first; if `gh` is unavailable or you'd rather not
 post, record the same details in the workspace's `sessions/` (e.g. a
 brainstorming note) so it can be filed later. Either way, feedback flows
 upstream instead of being silently worked around.
 
-## Developing Zentaizo Itself
+## Developing Zentaizo itself
 
 Working on the Zentaizo tool (rather than using it) uses an editable install in
 a pixi dev env:

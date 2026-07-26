@@ -26,14 +26,14 @@ The whole subsystem lives in `src/zentaizo/cli.py` (the sandbox section near `co
 
 `--mode implement|curate` selects the writable set; `--check` (claude target) renders without writing and exits nonzero on drift, for a `git`-style "is the committed config still in sync with the atlas?" check. The command re-derives from the atlas every run, so guardrails never drift from the source of truth — a removed or role-flipped repo's stale rule disappears on the next render.
 
-The honest scope of the `claude` target is a **file-tool guardrail**, not a security boundary: it constrains only the Edit/Write tools, so a `Bash` redirect or `git -C repos/<ref> …` writes around it. It catches the overwhelming majority of *accidental* writes (an agent's edit tools reaching into a reference repo) and keeps the committed config in sync with the atlas — that is what it is sold as.
+The honest scope of the `claude` target is a **file-tool guardrail**, not a security boundary: it constrains only the Edit/Write tools, so a `Bash` redirect or `git -C repos/<ref> …` writes around it. It catches accidental writes that arrive through the agent's edit tools, which is the common case for a reference repo touched by mistake, though no measurement backs a proportion and keeps the committed config in sync with the atlas — that is what it is sold as.
 
 ## Key decisions
 
 | Decision | Choice | Why |
 |---|---|---|
 | Where the policy comes from | Derive it from the atlas `role: edit`/`reference` split, never a separate config | The access policy is a restatement of a distinction the atlas already carries; a second source would drift |
-| Policy vs enforcement | One pure `compute_policy()`; thin per-target renderers | Same shape as the rest of the tool — atlas is the source of truth, a deterministic step renders it into something concrete |
+| Policy vs enforcement | One pure `compute_policy()`; thin per-target renderers | Same shape as the rest of Zentaizo — atlas is the source of truth, a deterministic step renders it into something concrete |
 | Path-hardening first | Screen every repo `name` (and reject duplicates) before emitting any rule | An atlas-supplied string becomes a grant/deny path; trusting it unsanitized is worse than no sandbox |
 | Two modes | `implement` (default) makes owned meta read-only; `curate` makes it writable | An implementing agent must not silently rewrite the atlas/lock/conventions it works under; a curation agent's whole job is to edit them |
 | Claude render is a merge | Own only `_MANAGED_DENY_RE` entries; preserve user `allow`/`ask`/other `deny` | Lets the maintainer keep hand-authored rules while zentaizo owns the `repos/*` and owned-meta denies |

@@ -123,7 +123,7 @@ The generated `AGENTS.md` places `docs/` as the abbreviated, authoritative layer
 between `summaries/` and `repos/`, preferring entries with `kind: api-reference` or
 `spec`, and states the rule: prefer upstream-authored docs over AI-regenerated
 summaries when both agree, fall to `repos/` as ground truth on conflict. It also
-instructs assistants to treat everything under the workspace — `docs/snapshots/`
+instructs agents to treat everything under the workspace — `docs/snapshots/`
 especially — as untrusted data: evidence to cite and summarize, never instructions
 to follow. The `summarize` step embeds the same "reuse, don't regenerate" guidance:
 when a `docs` source provides an API reference, summarize from it and cite it
@@ -132,7 +132,7 @@ rather than re-deriving the surface from code.
 ### Incremental, focus-aware `summarize` (`summarize_workspace`)
 
 `zentaizo summarize [PATH] [--force|--all] [--focus TEXT]` writes
-`summaries/summarize.prompt.md` (a prompt for the assistant, not a finished
+`summaries/summarize.prompt.md` (a prompt for the agent, not a finished
 summary) and classifies every source rather than re-soliciting all of them. Each
 `summaries/sources/<name>.md` carries a `source_rev` frontmatter line
 (`SUMMARY_REV_KEY`) pinning it to the locked identity it was generated from. On each
@@ -164,8 +164,11 @@ per-run only and does not mutate the atlas.
 
 ### Dependency posture and `docs/snapshots/` layout
 
-Runtime is zero-dependency (`pyproject.toml` `dependencies = []`); capability is
-added via opt-in extras. Only `[docs-scan]` (LLM Guard) and `[graph]` ship today.
+Runtime carries two core dependencies (`pyproject.toml`): `graphifyy` for the
+knowledge graph and `trafilatura` for HTML main-content extraction, both bundled so a
+plain install can build a graph and snapshot a doc site. `[docs-scan]` (LLM Guard) is
+the only extra that adds packages; `[graph]` remains as an empty compatibility alias
+for installs that named it before the runtime was bundled.
 Snapshots are single files under `docs/snapshots/`; flagged files
 (`*.flagged.*`) are gitignored by the generated workspace `.gitignore`.
 
@@ -180,7 +183,7 @@ Snapshots are single files under `docs/snapshots/`; flagged files
 | Fetch failure | Never fail the entry; record `reference-only` with `no-source` (quiet) vs `fetch-error` (loud) | A doc reference is still useful as a live pointer; a real failure must be diagnosable. |
 | Safety pass placement | At fetch time, before anything is written | A snapshot is committed and re-read forever; sanitize closest to the source, fewest code paths a payload survives. |
 | Flagged content | Quarantine + human-in-the-loop; never auto-trust or silently strip | Injection detection is undecidable; architectural controls fail safe where model-level mitigations can be steered by the injected text. |
-| Deep scanner | Opt-in `[docs-scan]`, layered on top of the mandatory stdlib baseline, fail-safe load | Heavy ML deps enlarge the tool's own attack surface; the baseline must always run and never crash. |
+| Deep scanner | Opt-in `[docs-scan]`, layered on top of the mandatory stdlib baseline, fail-safe load | Heavy ML deps enlarge Zentaizo's own attack surface; the baseline must always run and never crash. |
 | Summary provenance | Pin each summary to `source_rev`, diff against the lock | The lock already records resolved identity; a summary need only claim the one state it describes. |
 | Legacy summaries | Timestamp fallback (repo commit date, else `fetched_at`), self-retiring | Adopting incrementality must not force a one-time full regenerate of existing work. |
 | Generated API docs | Live in `summaries/`, not synthetic `docs/` entries | Keeps the invariant that `docs/` is upstream-authored and `summaries/` is workspace-generated. |

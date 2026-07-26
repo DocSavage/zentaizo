@@ -86,10 +86,12 @@ check against the code.
   `docs/workspace-format.md`, and `docs/use-cases.md` say what a user does and what
   Zentaizo does; rationale, alternatives, and rejected options belong in
   `docs/design/`. README-level explanations stay short and example-driven.
-- **D6.** A design doc under `docs/design/` opens with the line `_Distilled design doc
-  — current architecture + rationale._` and uses the sections *What it is*,
-  *Architecture*, *Key decisions*, *Considered and not taken*, and *See also*. A dated
-  `## Decision update — YYYY-MM-DD` section may be appended when a decision changes.
+- **D6.** A **subsystem** design doc under `docs/design/` opens with the line
+  `_Distilled design doc — current architecture + rationale._` and uses the sections
+  *What it is*, *Architecture*, *Key decisions*, *Considered and not taken*, and
+  *See also*. A dated `## Decision update — YYYY-MM-DD` section may be appended when a
+  decision changes. The rule does not reach the two files in that directory that are
+  not subsystem docs: `README.md` is an index, and `versioning.md` states a policy.
 - **D7.** A passage that tells an agent to read fetched material states that the
   material is untrusted input, or links to the section that does.
 

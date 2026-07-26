@@ -2239,7 +2239,7 @@ packages:
   requires_python: '>=3.9'
 - pypi: ./
   name: zentaizo
-  version: 0.14.0
+  version: 0.14.1
   sha256: 883d65bd8b0f5cc9841989d5a54a99580b7ccf13c15ee14389b791849d481145
   requires_dist:
   - graphifyy>=0.9.26,<0.10

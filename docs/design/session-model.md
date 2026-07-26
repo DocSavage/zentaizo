@@ -60,9 +60,12 @@ Division of authority is exact: the **registry** owns effort identity, the
 per-repo branch/base, and the effort number; the **filesystem** owns slice
 numbering. The registry deliberately does *not* store the slice counter, so
 creating a slice never writes the registry — keeping it a low-frequency,
-low-conflict file (touched only by `effort new` / `set-branch` / `close`). A
-slice's frontmatter names only `label` and `editable_repos`; the branch/base are
-looked up from the registry, never duplicated.
+low-conflict file (written only by `effort new` / `set-branch` / `close` /
+`switch` — `switch` moves the `current` pointer, which is registry state). Of a
+slice's frontmatter, only `label` and `editable_repos` name the effort and its repos;
+`status`, `created`, `short_title`, `edited_by`, and the optional `related` complete
+the template (`templates/skills/plan-template.md`). The branch and base are looked up
+from the registry, never duplicated into the plan.
 
 ### `main` is the deliverable trunk
 
@@ -186,15 +189,17 @@ Frontmatter-bearing session files (`efforts/`, generated `brainstorming/`,
 `changes/`, `debugging/`, `reports/`, `handoffs/`) carry an `edited_by:` ledger —
 git-style local-timestamped entries recording who crafted, reviewed, or modified
 the file, in order; the latest entry is the effective last-modified time (there is
-no `updated:` field on slices). Every scaffolder stamps the first entry
-(`_record_edited_by()` after `_write_exclusive()`); `zentaizo edited <path>`
+no `updated:` field on slices). Every scaffolder of a frontmatter-bearing file
+stamps the first entry (`_record_edited_by()` after `_write_exclusive()`), while
+`next-note` deliberately writes a frontmatter-free Q&A stub and stamps nothing
+(`next_note()`); `zentaizo edited <path>`
 appends a later one, or *refreshes in place* when the most recent entry is the
 same editor (a run of edits by one editor collapses to one line —
 `_stamp_edited_by()`).
 
 The identity is resolved deterministically, never hand-written by the model:
 `resolve_editor_identity()` takes an explicit `--as` override, else the active AI
-assistant, else the human `git config user.name`. The AI identity comes from the
+agent, else the human `git config user.name`. The AI identity comes from the
 **same commit-trailer cache** the bundled `prepare-commit-msg` hook and
 `zentaizo commit-trailer` read — the exact model plus reasoning effort — with a
 Codex-config fallback that populates that cache when missing. This keeps the
