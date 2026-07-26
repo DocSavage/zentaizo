@@ -6,26 +6,19 @@ This project uses the Keep a Changelog format. Versions 0.8.0 and earlier predat
 
 ## [0.15.0] - 2026-07-26
 
-### Changed
-
-- **Conventions generation 5** (main-0005): generated workspace text, bundled skills, and CLI descriptions use **agent** for the AI system doing the work, and default atlas text, `provide-info`, CLI descriptions, and the global skill use **Zentaizo workspace** instead of *context workspace*.
-
-## [0.14.2] - 2026-07-26
-
-### Changed
-
-- *workspace* is qualified as **Zentaizo workspace** at its first standalone use on each documentation page (main-0006), then left bare. The word names at least four other things a reader may have in mind, so the guide now requires the qualifier rather than suggesting it. Compound modifiers (*workspace format*, *workspace root*) stay bare, and two uses that did not mean a Zentaizo workspace at all were reworded instead.
-
-## [0.14.1] - 2026-07-26
+Documentation style guide, its application across every doc, and the matching
+vocabulary change in generated workspace text.
 
 ### Added
 
-- `docs/STYLE.md` (main-0003): a documentation style guide for this repository — five numbered rule groups (sentences, paragraphs, documents, diction, claims) plus a canonical-terms glossary that names the losing synonym for each concept. The claims group requires measured values with their conditions, a named baseline, limits stated alongside the capability, and a cited implementation for any claim about generated output or CLI surface.
+- `docs/STYLE.md`: a documentation style guide for this repository — five numbered rule groups (sentences, paragraphs, documents, diction, claims) plus a canonical-terms glossary that names the losing synonym for each concept. The claims group requires measured values with their conditions, a named baseline, limits stated alongside the capability, and a cited implementation for any claim about generated output or CLI surface.
 
 ### Changed
 
-- Canonical vocabulary across the docs (main-0004): **agent** replaces *assistant* for the AI system working in a workspace, and bare *the tool* is replaced by **Zentaizo** or **the Zentaizo CLI** by context. Section headings are sentence case. Generated workspace text still says *assistant* and is aligned separately, since that is a conventions change.
-- Versioning policy: work on the reserved `main` effort bumps per landed slice, because `effort close main` is refused and trunk work otherwise never gets a version.
+- **Conventions generation 5**: generated workspace text, the bundled skills, and the CLI descriptions use **agent** for the AI system doing the work, and the default atlas text, `provide-info`, the CLI descriptions, and the global skill say **Zentaizo workspace** rather than *context workspace*. Existing workspaces report conventions `behind` until the `upgrade-zentaizo` skill reconciles them.
+- Canonical vocabulary across the docs: **agent** replaces *assistant*, and bare *the tool* becomes **Zentaizo** or **the Zentaizo CLI** by context. Section headings are sentence case.
+- *workspace* is qualified as **Zentaizo workspace** at its first standalone use on each page, then left bare. The word names at least four other things a reader may have in mind. Compound modifiers (*workspace format*, *workspace root*) stay bare, and two uses that did not mean a Zentaizo workspace at all were reworded instead.
+- Versioning policy: work on the reserved `main` effort bumps per landed slice, because `effort close main` is refused and trunk work would otherwise never get a version. One *landing* still gets one version, even when it carries several slices.
 
 ### Fixed
 
