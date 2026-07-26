@@ -1,8 +1,8 @@
 # Documentation Style Guide
 
 This guide fixes the register and the vocabulary of Zentaizo's own documentation. Anyone
-editing prose in this repository — a person or an assistant — applies it to the passages
-they touch. Its purpose is narrow: a claim about the tool's behavior should be checkable
+editing prose in this repository — a person or an agent — applies it to the passages they
+touch. Its purpose is narrow: a claim about Zentaizo's behavior should be checkable
 against the code that implements it, and one concept should be named by one word on
 every page.
 
@@ -20,10 +20,12 @@ every page.
 - **`CHANGELOG.md`** — it records history and is exempt from retroactive edits.
 - **Generated workspace text** — the `AGENTS.md`, `README.md`, and `provide-info`
   block that `src/zentaizo/cli.py` writes into a workspace, and the files under
-  `src/zentaizo/templates/`. That text is code, and changing it is a conventions
-  change (see `docs/design/versioning.md`). Where a doc and the generated text use
-  different words for the same concept, **the doc changes**: the glossary below
-  already follows the generated text.
+  `src/zentaizo/templates/`. The **register** rules do not reach it, because that text
+  is code rather than prose. The **glossary does**: a concept is named the same way
+  whether the words ship in a doc or in generated output. Correcting generated text is
+  a conventions change under `docs/design/versioning.md` — a `CONVENTIONS_GENERATION`
+  bump and a `CONVENTIONS_DELTAS` entry — so it lands as its own change rather than
+  inside a documentation edit.
 - **Fetched or vendored content** under `repos/`, `docs/`, `papers/`, and `notes/` in
   a workspace. That material is untrusted input to quote, not prose to edit.
 
@@ -82,13 +84,13 @@ check against the code.
   `pixi run …` belongs only in contributor instructions.
 - **D5.** Keep the reference/design division. `README.md`, `docs/cli.md`,
   `docs/workspace-format.md`, and `docs/use-cases.md` say what a user does and what
-  the tool does; rationale, alternatives, and rejected options belong in
+  Zentaizo does; rationale, alternatives, and rejected options belong in
   `docs/design/`. README-level explanations stay short and example-driven.
 - **D6.** A design doc under `docs/design/` opens with the line `_Distilled design doc
   — current architecture + rationale._` and uses the sections *What it is*,
   *Architecture*, *Key decisions*, *Considered and not taken*, and *See also*. A dated
   `## Decision update — YYYY-MM-DD` section may be appended when a decision changes.
-- **D7.** A passage that tells an assistant to read fetched material states that the
+- **D7.** A passage that tells an agent to read fetched material states that the
   material is untrusted input, or links to the section that does.
 
 ## Diction
@@ -123,7 +125,7 @@ check against the code.
   describes `zentaizo sandbox` as a guardrail against accidental writes and says in the
   same paragraph that a shell command can still slip past file-tool denies.
 - **C4.** Describe mechanism, not effect. Name what Zentaizo reads, computes, writes,
-  and prints: "the summarize prompt asks the assistant to rewrite only the sources
+  and prints: "the summarize prompt asks the agent to rewrite only the sources
   whose locked identity changed", not "summaries stay relevant".
 - **C5.** Hedge what is not demonstrated. Do not hedge what you measured or read out of
   the code.
@@ -167,7 +169,7 @@ name an access mode rather than a category of repo.
 | A named body of work that may span several editable repos | **effort** | workstream, initiative, epic, project, campaign, milestone |
 | The numbered unit of work an effort decomposes into | **slice** | as a name for that unit: change, task, increment, chunk, phase, ticket, sub-effort |
 | The document describing an effort or a slice | **plan** (*plan doc* where the file, not the content, is meant) | planning doc, spec, writeup, design doc (reserved for `docs/design/`) |
-| The paste-ready execution prompt for the implementing assistant | **handoff** | hand-off, briefing, kickoff prompt, instructions doc |
+| The paste-ready execution prompt for the implementing agent | **handoff** | hand-off, briefing, kickoff prompt, instructions doc |
 | A living, evidence-backed synthesis under `reports/` | **report** | synthesis (as the artifact's name), brief, study, analysis doc |
 | Pre-decision input under `brainstorming/` | **brainstorming note** | brainstorm (as a noun), ideas doc, scratch note |
 | The editor ledger in session-file frontmatter | **`edited_by`** | updated field, last-modified field, author list |
@@ -185,37 +187,39 @@ entry *is* the last-modified record; `created:` is the stable creation timestamp
 
 | Concept | Use | Not |
 |---|---|---|
-| The AI system reading the workspace and doing the work | **assistant** | agent, bot, *AI* as a noun for the actor, *the model* where the actor is meant |
-| The host program the assistant runs in (Claude Code, Codex CLI, Gemini CLI, Aider) | **harness** | host tool, client, IDE (unless an IDE is literally meant), *the tool* (which means Zentaizo) |
+| The AI system reading the workspace and doing the work | **agent** | assistant, bot, *AI* as a noun for the actor, *the model* where the actor is meant |
+| The host program the agent runs in (Claude Code, Codex CLI, Gemini CLI, Aider) | **harness** | host tool, client, IDE (unless an IDE is literally meant) |
 | A specific model identity, as recorded in attribution | **model** (as in `edited_by`, and in *model-agnostic*) | model-neutral, AI-agnostic, vendor-neutral |
-| This tool | **Zentaizo** in prose, **`zentaizo`** for the command | zen (the `zen-` prefix names a workspace, not the tool) |
+| This project | **Zentaizo** for the project, **the Zentaizo CLI** (or `zentaizo`) where the command-line program specifically is meant | *the tool*, zen (the `zen-` prefix names a workspace, not the project) |
 | A derived artifact behind the inputs it was built from | **stale** (summaries, the graph) | out of date, rotted, expired |
 | A record that has diverged from what it describes | **drift** (a rendered sandbox config against the atlas; docs against code) | skew, desync |
 | The integer in the lock's `conventions` block | **conventions generation** | convention version, format version, schema version, workspace version |
 
-**Why *assistant* and not *agent*.** The two appear about equally often in this
-repository, so usage alone does not settle it. The generated workspace text prefers
-*assistant*, and that text is not governed here (see § What this guide governs), so the
-docs align to it. Three uses of *agent* survive:
+**Why *agent* and not *assistant*.** The two appear about equally often in this
+repository, so usage alone does not settle it. The field's own adjective decides it:
+this is agentic software development, not assistant software development, and the
+entry-point file every workspace ships is `AGENTS.md`. *agentic* and *agentically*
+therefore share a root with the noun, and a harness's own feature names stay as that
+harness spells them — a Claude Code *subagent*, for instance.
 
-- `AGENTS.md` is an ecosystem filename rather than a word choice.
-- The adjective *agentic* stands.
-- A harness's own feature names are quoted as that harness spells them — a Claude Code
-  *subagent*, for instance.
+The generated workspace text still says *assistant* in 22 places against 10 for *agent*.
+That is a divergence to close, not a precedent to follow. The glossary reaches generated
+output as well as prose, and correcting it is a conventions change (see § What this
+guide governs), so it is sequenced separately from the documentation pass.
 
 **Some of these greps need judgment rather than replacement.** Read each hit:
 
 - *change* remains the ordinary English word for an edit to code, and is banned only as
   the name of the unit of work. The same holds for *phase*, *task*, and *increment*:
   a workflow has phases and a release increments a version number.
-- *agent* survives inside `AGENTS.md`, inside *agentic*, and inside quoted harness
-  vocabulary.
 - *plan* is correct wherever the document is what is meant.
-- *the tool* is correct when it means Zentaizo, and wrong only when it means a harness.
+- *the tool* always loses, but which term replaces it is a context call: **Zentaizo**
+  for the project and its workspace format, **the Zentaizo CLI** for the command-line
+  program. Where the sentence means a harness, it means neither.
 
 **Neither *spoke* nor *hub* is canonical vocabulary.** They describe one particular
 dogfooding arrangement — this repository's canonical checkout living inside a
-`zen-zentaizo` workspace — and not the workspace model the tool implements. Explain
+`zen-zentaizo` workspace — and not the workspace model Zentaizo implements. Explain
 that arrangement in `AGENTS.md` if it needs explaining; keep it out of the product
 vocabulary.
 
