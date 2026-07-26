@@ -69,8 +69,8 @@ codex -C /path/to/disposable-worktree \
 ```
 
 This is the least interruptive setup for long runs, but it removes Codex's
-filesystem guardrails. Do not use it in a workspace where broad local access
-would be unsafe.
+filesystem guardrails. Do not use it on a machine or in a checkout where broad
+local access would be unsafe.
 
 ## Safe patch-only setup
 

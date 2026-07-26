@@ -153,7 +153,7 @@ column lists the wordings that lose, so that drift is greppable.
 
 | Concept | Use | Not |
 |---|---|---|
-| The directory `zentaizo create` makes | **workspace** (a *zen workspace* where the sentence also discusses another kind) | context workspace, atlas directory, context directory, project |
+| The directory `zentaizo create` makes | **Zentaizo workspace** at the first standalone use on a page, then **workspace** alone | zen workspace, context workspace, atlas directory, context directory, project |
 | `zentaizo.atlas.json`, the human-authored statement of intent | **atlas** (*context atlas* at first mention on a page) | manifest, config, configuration file, source list |
 | `zentaizo.lock.json`, the machine-resolved state | **lock** (or the filename) | lockfile, lock file, state file |
 | One atlas entry: a repo, doc, paper, or note | **source** | input, asset |
@@ -163,6 +163,18 @@ column lists the wordings that lose, so that drift is greppable.
 
 *read-only* and *writable* stay reserved for describing sandbox permissions, where they
 name an access mode rather than a category of repo.
+
+**Qualifying *workspace*.** The word names at least four other things a reader may have
+in mind — a Git or GitButler workspace, an editor workspace, a package-manager
+workspace, a harness workspace — so the first standalone use on a page reads **Zentaizo
+workspace**, and later uses on that page drop the qualifier. Requalify inside any
+passage that also discusses one of those other kinds. Two exemptions keep the rule from
+becoming noise: a compound modifier is already unambiguous and stays bare (*workspace
+format*, *workspace root*, *workspace conventions*, *workspace-relative*, the generated
+workspace `AGENTS.md`), and a sentence that already names Zentaizo carries the
+qualification ("the Zentaizo CLI creates an AI-native workspace"). *zen workspace* is
+serviceable in conversation; it does not appear in governed prose, because it only
+parses for a reader who already knows the `zen-` directory prefix.
 
 ### Session artifacts
 

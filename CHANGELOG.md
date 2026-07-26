@@ -4,6 +4,12 @@ All notable changes to this project are documented here.
 
 This project uses the Keep a Changelog format. Versions 0.8.0 and earlier predate this changelog.
 
+## [0.14.2] - 2026-07-26
+
+### Changed
+
+- *workspace* is qualified as **Zentaizo workspace** at its first standalone use on each documentation page (main-0006), then left bare. The word names at least four other things a reader may have in mind, so the guide now requires the qualifier rather than suggesting it. Compound modifiers (*workspace format*, *workspace root*) stay bare, and two uses that did not mean a Zentaizo workspace at all were reworded instead.
+
 ## [0.14.1] - 2026-07-26
 
 ### Added

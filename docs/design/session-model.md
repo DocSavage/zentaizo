@@ -4,7 +4,7 @@ _Distilled design doc — current architecture + rationale._
 
 ## What it is
 
-The session model is the part of Zentaizo that turns "doing work in a workspace"
+The session model is the part of Zentaizo that turns "doing work in a Zentaizo workspace"
 into a durable, auditable trail under `sessions/`. It rests on one move: every
 deterministic chore an agent would otherwise re-derive from prose each session —
 naming a body of work, allocating the next filename, computing a counter,

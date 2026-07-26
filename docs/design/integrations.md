@@ -24,7 +24,7 @@ built-vs-proposed split is unambiguous.
 ### Graphify graph layer — `zentaizo graph` (built)
 
 `zentaizo graph` derives a single queryable knowledge graph over the whole
-workspace. It is the structural counterpart to `summaries/`: where summaries are
+Zentaizo workspace. It is the structural counterpart to `summaries/`: where summaries are
 the prose level-of-detail spine, the graph answers structural questions
 (`graphify query` / `path` / `explain`, or Graphify's MCP server) — especially
 the cross-repo and code↔doc edges no per-repo run can see. It is not a fetcher;

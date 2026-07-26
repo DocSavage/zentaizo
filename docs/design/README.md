@@ -2,8 +2,8 @@
 
 Distilled, repo-scoped design docs — the current architecture of each subsystem
 and the rationale behind it. The full before/after design *provenance* lives in
-the development workspace's `sessions/` trail; these docs are the settled
-distillate that ships with the repo.
+the `sessions/` trail of the Zentaizo workspace this repo is developed inside;
+these docs are the settled distillate that ships with the repo.
 
 - [foundations.md](foundations.md) — source roles (`edit`/`reference`), the
   atlas-vs-lock split + curation, and how workspace conventions feed back into

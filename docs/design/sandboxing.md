@@ -4,7 +4,7 @@ _Distilled design doc — current architecture + rationale._
 
 ## What it is
 
-Agents run at the *workspace* level, not inside a single repo, because the value of a workspace is that the agent can see every associated repo, the summaries, and the `sessions/` trail at once. But "see all of it" must not mean "write all of it." The access an agent actually needs is narrow: write its own `sessions/` and `summaries/` plus the *editable* repos, read everything else (the *reference* repos especially), and touch nothing outside the workspace root. Zentaizo derives this least-privilege policy directly from the `role: edit` / `role: reference` split the atlas already carries — it does not invent a new access model — and renders it into a harness's native config. The policy is the durable artifact; the renderers are thin adapters that change as harnesses change.
+Agents run at the level of a whole *Zentaizo workspace*, not inside a single repo, because the value of a workspace is that the agent can see every associated repo, the summaries, and the `sessions/` trail at once. But "see all of it" must not mean "write all of it." The access an agent actually needs is narrow: write its own `sessions/` and `summaries/` plus the *editable* repos, read everything else (the *reference* repos especially), and touch nothing outside the workspace root. Zentaizo derives this least-privilege policy directly from the `role: edit` / `role: reference` split the atlas already carries — it does not invent a new access model — and renders it into a harness's native config. The policy is the durable artifact; the renderers are thin adapters that change as harnesses change.
 
 ## Architecture
 
