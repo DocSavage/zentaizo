@@ -95,7 +95,7 @@ When the work ships (or is abandoned):
 
 ## Boundaries — what this procedure does NOT do
 
-- It does not write to Claude Memory, ChatGPT Memory, global Codex memory, or any other assistant-personal store. Project context lives in committed markdown and JSON.
+- It does not write to Claude Memory, ChatGPT Memory, global Codex memory, or any other agent-personal store. Project context lives in committed markdown and JSON.
 - It does not modify `zentaizo.atlas.json`. If a plan reveals the atlas is wrong (a repo's role should change, a new dependency emerged, a description is stale), surface that to the user and suggest running the curate-atlas procedure separately.
 - It does not commit code on the user's behalf unless the user explicitly authorizes it.
 - It does not rename or move the plan file once created. The same path holds intent and outcome so future sessions can read both.

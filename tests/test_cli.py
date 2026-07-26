@@ -142,7 +142,7 @@ class CliTests(unittest.TestCase):
             self.assertIn("sessions/reports/", readme)
             self.assertIn("Plan and implement changes", readme)
             self.assertIn("auto-discovers", readme)
-            self.assertNotIn("Do not write to assistant memory", readme)
+            self.assertNotIn("Do not write to agent memory", readme)
             self.assertTrue((workspace / "skills" / "brainstorming-template.md").exists())
 
             text = output.getvalue()

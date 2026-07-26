@@ -62,7 +62,7 @@ VALID_DOC_KINDS = ("api-reference", "guide", "tutorial", "spec", "changelog")
 # generated workspace artifacts or session-file conventions — the same class
 # of change docs/design/versioning.md already calls MINOR. Behavior-only
 # releases leave it alone, so `zentaizo status` never over-reports staleness.
-CONVENTIONS_GENERATION = 4
+CONVENTIONS_GENERATION = 5
 
 # One concise entry per generation (machine/AI-read: `status` prints them as
 # "missed" lines and the upgrade-zentaizo skill scopes its reconciliation by
@@ -79,6 +79,8 @@ CONVENTIONS_DELTAS = {
     4: "AGENTS.md: once-per-session workspace health checks surface only "
     "non-current status without running setup or convention upgrades unless "
     "the user explicitly authorizes them",
+    5: "AGENTS.md/README.md/zentaizo.atlas.json, bundled skills, and provide-info: "
+    "generated text adopts the canonical 'agent' and 'Zentaizo workspace' vocabulary",
 }
 
 
@@ -136,7 +138,7 @@ def default_atlas(name: str) -> dict:
     return {
         "version": 1,
         "name": name,
-        "description": "A multi-source context workspace for an AI assistant.",
+        "description": "A multi-source Zentaizo workspace for an AI agent.",
         "sources": {
             "repos": [
                 {
@@ -215,7 +217,7 @@ def workspace_readme(name: str) -> str:
     # top-level README.md ("What A Workspace Contains") and docs/workspace-format.md.
     return f"""# {name}
 
-This is a Zentaizo workspace: a local context atlas for an AI assistant.
+This is a Zentaizo workspace: a local context atlas for an AI agent.
 
 ## Layout
 
@@ -250,7 +252,7 @@ A workspace organizes knowledge as a level-of-detail spine — start at `summari
 
 ## First Step
 
-This workspace intentionally starts without `{ATLAS_NAME}`. The first useful interaction is to ask an AI assistant to help identify the repos, docs, papers, notes, deployment material, and issue context that belong in this atlas.
+This workspace intentionally starts without `{ATLAS_NAME}`. The first useful interaction is to ask an AI agent to help identify the repos, docs, papers, notes, deployment material, and issue context that belong in this atlas.
 
 Example prompt:
 
@@ -458,7 +460,7 @@ Commit at verified milestones. The Zentaizo-specific rule: **commit workspace no
 
 For AI-authored commits, run `zentaizo commit-trailer` and paste the printed trailer line(s) into the commit body you are already writing. It carries the real model + reasoning effort used, works without a per-repo hook (including vendored editable repos), and fails loudly if attribution cannot be resolved. The bundled commit-attribution hook remains a best-effort backstop when installed.
 
-When implementation was **delegated** to another assistant (e.g. Claude orchestrates, Codex implements) and the orchestrating session commits the reviewed result, follow the delegation ritual — *note on return → `commit-trailer` at commit → `clear` after landing*: when the delegated run returns, record it with `zentaizo delegation note --codex|--claude --repo <repo>` (once per touched repo; `--as "<identity>"` overrides resolution). At commit time `zentaizo commit-trailer` then prints one `Co-authored-by:` per recorded implementor plus `Reviewed-by:` for the committing session (pass `--also-author` when the committer also wrote code); after the commit lands, run `zentaizo delegation clear`. Delegated attribution flows only through `commit-trailer` — the hook alone records just the committer. The other delegation shape needs no ritual: when the delegated assistant commits *during* its own run, the hook detects the innermost assistant (a Codex run inside a Claude session stamps Codex, resolved from the run's own rollout log) — no `delegation note` for those commits.
+When implementation was **delegated** to another agent (e.g. Claude orchestrates, Codex implements) and the orchestrating session commits the reviewed result, follow the delegation ritual — *note on return → `commit-trailer` at commit → `clear` after landing*: when the delegated run returns, record it with `zentaizo delegation note --codex|--claude --repo <repo>` (once per touched repo; `--as "<identity>"` overrides resolution). At commit time `zentaizo commit-trailer` then prints one `Co-authored-by:` per recorded implementor plus `Reviewed-by:` for the committing session (pass `--also-author` when the committer also wrote code); after the commit lands, run `zentaizo delegation clear`. Delegated attribution flows only through `commit-trailer` — the hook alone records just the committer. The other delegation shape needs no ritual: when the delegated agent commits *during* its own run, the hook detects the innermost agent (a Codex run inside a Claude session stamps Codex, resolved from the run's own rollout log) — no `delegation note` for those commits.
 
 The effort doc carries only `created` + `edited_by` frontmatter; the registry owns `number`, `status`, and repo branch/base state. Slice files use the status-frontmatter schema (`status`/`created`/`label`/`editable_repos`/`edited_by` plus the optional `related` field), the `## Plan`/`## Outcome` body sections, and the acceptance-checkbox closeout rule documented in `skills/plan-and-implement.md` and scaffolded by `skills/plan-template.md`. The CLI fills `status`/`created`/`label` and stamps the first `edited_by:` entry (see § Editor attribution); you fill `editable_repos` (the subset of the effort's repos this slice touches) and the body. Each repo's branch and divergence base live in the effort registry (`sessions/efforts.json`), not in the plan frontmatter. Follow the skill/template rather than reproducing the schema here.
 
@@ -714,7 +716,7 @@ def _resolve_codex_identity() -> tuple[str, str]:
 
 
 def cache_commit_trailer(args: argparse.Namespace) -> int:
-    """Producer for the commit-attribution hook: capture the current assistant's
+    """Producer for the commit-attribution hook: capture the current agent's
     model + reasoning effort into a cache the hook reads at commit time.
 
     One provider branch each; each reads a source it can trust. Keeping the
@@ -746,7 +748,7 @@ def cache_commit_trailer(args: argparse.Namespace) -> int:
     model_obj = data.get("model")
     model = model_obj.get("display_name", "") if isinstance(model_obj, dict) else ""
     # display_name is e.g. "Claude Opus 4.8"; the hook already prepends the
-    # assistant label ("Co-authored-by: Claude ..."), so strip the redundant
+    # agent label ("Co-authored-by: Claude ..."), so strip the redundant
     # leading "Claude " here to avoid a doubled "Claude Claude Opus 4.8" trailer.
     model = model.removeprefix("Claude ").strip()
     effort_obj = data.get("effort")
@@ -844,7 +846,7 @@ def _resolve_commit_trailer_identity(provider: str) -> tuple[str, str, str]:
 
 # --- Delegation attribution (pending-authors ledger) ----------------------------
 #
-# When an orchestrating session delegates implementation to another assistant and
+# When an orchestrating session delegates implementation to another agent and
 # later commits the reviewed result, the environment answers *who is committing*,
 # not *who authored the changes*. `zentaizo delegation note` records the returned
 # delegation as one JSON file per entry under <git-dir>/zentaizo/pending-authors/
@@ -1136,7 +1138,7 @@ def _warn_unnoted_codex_session(repo_dir: pathlib.Path, provider: str) -> None:
 
 
 def commit_trailer(args: argparse.Namespace) -> int:
-    """Print the current assistant's canonical commit attribution trailer.
+    """Print the current agent's canonical commit attribution trailer.
 
     Sole consumer of the pending-authors ledger: when `zentaizo delegation note`
     recorded implementors for the target repo, they become ``Co-authored-by:``
@@ -1146,7 +1148,7 @@ def commit_trailer(args: argparse.Namespace) -> int:
     """
     if getattr(args, "claude", False):
         provider = "claude"
-    # Env sniffing is innermost-assistant-first: CODEX_THREAD_ID exists only
+    # Env sniffing is innermost-agent-first: CODEX_THREAD_ID exists only
     # inside a live Codex run, while CLAUDECODE leaks into delegated runs from
     # the spawning Claude session — when both are present, Codex is committing.
     elif getattr(args, "codex", False) or os.environ.get("CODEX_THREAD_ID"):
@@ -1237,15 +1239,15 @@ def _codex_editor_identity() -> str:
 
 
 def agent_editor_identity() -> str | None:
-    """The active AI assistant's human-readable identity, or None outside one.
+    """The active AI agent's human-readable identity, or None outside one.
 
     Reuses the commit-trailer cache, so it carries the exact model + reasoning
     effort rather than the model's own guess. Codex can also populate that cache
-    from its local config when a session starts cold. When an assistant
+    from its local config when a session starts cold. When an agent
     environment is detected but no trusted identity source is available, it
     returns a ``<Provider> (model unknown)`` label rather than None — so an AI's
     edit is never silently misattributed to the human git user. Innermost
-    assistant first: CODEX_THREAD_ID exists only inside a live Codex run, while
+    agent first: CODEX_THREAD_ID exists only inside a live Codex run, while
     CLAUDECODE leaks into delegated runs from the spawning Claude session.
     """
     if os.environ.get("CODEX_THREAD_ID"):
@@ -1262,7 +1264,7 @@ def human_editor_identity(cwd: pathlib.Path) -> str:
 
 def resolve_editor_identity(cwd: pathlib.Path, override: str | None) -> str:
     """Who to record for an edit: an explicit override, else the active AI
-    assistant, else the human git user."""
+    agent, else the human git user."""
     if override and override.strip():
         return override.strip()
     return agent_editor_identity() or human_editor_identity(cwd)
@@ -3121,7 +3123,7 @@ def summarize_workspace(args: argparse.Namespace) -> int:
         )
     if orphans:
         print(f"Note: {len(orphans)} orphaned summary file(s): {', '.join(orphans)}")
-    print("Next: ask your assistant to follow that prompt from this workspace.")
+    print("Next: ask your agent to follow that prompt from this workspace.")
     return 0
 
 
@@ -3509,7 +3511,7 @@ def graph_workspace(args: argparse.Namespace) -> int:
     if not _graphify_skill_registered():
         print(
             "graph: tip — `graphify install` registers the /graphify skill with "
-            "your assistants (user-level, optional; workspace queries only need "
+            "your agents (user-level, optional; workspace queries only need "
             "the binary)"
         )
     return 0
@@ -3870,7 +3872,7 @@ def _gemini_skill_block(source: pathlib.Path) -> str:
             BEGIN_MARKER,
             "## Zentaizo Global Skill",
             "",
-            "The `zentaizo` workflow builds curated multi-source AI context workspaces.",
+            "The `zentaizo` workflow builds curated multi-source Zentaizo workspaces.",
             f"Read the full skill definition at `{skill_path}` when the user mentions zentaizo,",
             "context atlases, or multi-repo AI workspaces.",
             END_MARKER,
@@ -5253,7 +5255,7 @@ def next_report(args: argparse.Namespace) -> int:
 
 
 def edited_session(args: argparse.Namespace) -> int:
-    """Record that the current editor (AI assistant or human) touched a session
+    """Record that the current editor (AI agent or human) touched a session
     file, appending or refreshing its ``edited_by`` frontmatter ledger."""
     path = pathlib.Path(args.path)
     if not path.is_file():
@@ -5567,7 +5569,7 @@ def sandbox_command(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="zentaizo",
-        description="Build hierarchical context workspaces for AI assistants.",
+        description="Build hierarchical Zentaizo workspaces for AI agents.",
     )
     parser.add_argument("--version", action="version", version=f"zentaizo {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -5612,7 +5614,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     cache_trailer = sub.add_parser(
         "cache-commit-trailer",
-        help="cache the current assistant's model + reasoning effort for the "
+        help="cache the current agent's model + reasoning effort for the "
         "commit-attribution hook, 'commit-trailer', and 'edited' to read",
     )
     provider = cache_trailer.add_mutually_exclusive_group(required=True)
@@ -5630,7 +5632,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     commit_trailer_cmd = sub.add_parser(
         "commit-trailer",
-        help="print the current assistant's canonical Co-authored-by trailer",
+        help="print the current agent's canonical Co-authored-by trailer",
     )
     commit_provider = commit_trailer_cmd.add_mutually_exclusive_group()
     commit_provider.add_argument(

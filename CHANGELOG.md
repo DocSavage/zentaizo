@@ -4,6 +4,12 @@ All notable changes to this project are documented here.
 
 This project uses the Keep a Changelog format. Versions 0.8.0 and earlier predate this changelog.
 
+## [0.15.0] - 2026-07-26
+
+### Changed
+
+- **Conventions generation 5** (main-0005): generated workspace text, bundled skills, and CLI descriptions use **agent** for the AI system doing the work, and default atlas text, `provide-info`, CLI descriptions, and the global skill use **Zentaizo workspace** instead of *context workspace*.
+
 ## [0.14.2] - 2026-07-26
 
 ### Changed

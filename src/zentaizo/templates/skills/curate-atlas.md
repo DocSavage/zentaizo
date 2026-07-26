@@ -76,7 +76,7 @@ Examples to prompt the user:
 
 ### Step 4 — Documentation and API references
 
-Ask: "Are there docs or API references the assistant should be able to consult?" Then *actively probe* rather than relying on memory — for each central repo, look for:
+Ask: "Are there docs or API references the agent should be able to consult?" Then *actively probe* rather than relying on memory — for each central repo, look for:
 
 - An `llms.txt` / `llms-full.txt` at the project's doc site (the ideal source: a single LLM-ready Markdown file).
 - A published docs site: readthedocs (`.readthedocs.yaml`), Sphinx (`docs/conf.py`), MkDocs (`mkdocs.yml`), GitHub Pages, or a `Documentation` URL in `pyproject.toml`/package metadata.
@@ -87,7 +87,7 @@ Record each as a `docs` entry. Two shapes, never both:
 - **External** — a `url` (the doc site, an `llms.txt`, or an OpenAPI URL).
 - **In-repo** — a `repo` (the name of a repo source) plus a `path` relative to that repo, for a spec that lives in the code.
 
-Add an optional `kind` to each: `api-reference`, `guide`, `tutorial`, `spec`, or `changelog`. It orders how the assistant consults docs (an `api-reference`/`spec` sits between summaries and raw code).
+Add an optional `kind` to each: `api-reference`, `guide`, `tutorial`, `spec`, or `changelog`. It orders how the agent consults docs (an `api-reference`/`spec` sits between summaries and raw code).
 
 Tip: after the repos are fetched (`zentaizo fetch`), run `zentaizo discover-docs` to scan the fetched trees for in-repo specs and print ready-to-paste entries. `zentaizo fetch-docs` then snapshots these sources (with a safety pass) into `docs/snapshots/`.
 
@@ -100,7 +100,7 @@ Ask: "Any papers, RFCs, or design docs that explain *why* the system is the way 
 
 ### Step 6 — Internal notes
 
-Ask: "Any postmortems, oncall traces, issue threads, or scratch findings the assistant should consult?"
+Ask: "Any postmortems, oncall traces, issue threads, or scratch findings the agent should consult?"
 
 - These often hold the load-bearing context for debugging — "we tried X in Q3, it didn't work because of Y."
 - Skip if none.

@@ -1,6 +1,6 @@
 ---
 name: zentaizo
-description: Build and maintain Zentaizo context workspaces for AI-assisted work across related repositories, docs, papers, notes, and generated markdown summaries. Use when creating or revising a Zentaizo workspace, deciding what belongs in the human-authored context atlas zentaizo.atlas.json, preparing markdown context to commit for future assistant use, injecting Zentaizo context into another repo, or avoiding conflicts with Claude Memory, AGENTS.md, CLAUDE.md, ChatGPT Memory, Cursor rules, or other assistant memory/instruction systems.
+description: Build and maintain Zentaizo workspaces for AI-assisted work across related repositories, docs, papers, notes, and generated markdown summaries. Use when creating or revising a Zentaizo workspace, deciding what belongs in the human-authored context atlas zentaizo.atlas.json, preparing markdown context to commit for future agent use, injecting Zentaizo context into another repo, or avoiding conflicts with Claude Memory, AGENTS.md, CLAUDE.md, ChatGPT Memory, Cursor rules, or other agent memory/instruction systems.
 ---
 
 # Zentaizo
@@ -16,7 +16,7 @@ description: Build and maintain Zentaizo context workspaces for AI-assisted work
 
 ## Overview
 
-Use Zentaizo as a project-local context atlas, not as a replacement for an assistant's memory system. Help the user identify sources that define a system's goals/architecture/implementation, and turn that real-world knowledge into committed markdown and, crucially, the human-curated context atlas (`zentaizo.atlas.json`).
+Use Zentaizo as a project-local context atlas, not as a replacement for an agent's memory system. Help the user identify sources that define a system's goals/architecture/implementation, and turn that real-world knowledge into committed markdown and, crucially, the human-curated context atlas (`zentaizo.atlas.json`).
 
 Call `zentaizo.atlas.json` the "context atlas" so the user understands its role as the curated engine of the workspace.
 
@@ -88,13 +88,13 @@ Use these prompts when the source set is not obvious:
 - What is the system or ecosystem this atlas should explain?
 - Which repo would a developer usually edit first, and which repos does it depend on?
 - Which frontend, SDK, CLI, deployment, schema, or docs must stay compatible with that repo?
-- What questions should a future assistant answer better after reading this workspace?
+- What questions should a future agent answer better after reading this workspace?
 - Are there incidents, traces, issue links, papers, or design notes that explain behavior not obvious from code?
 - Which sources must be pinned to exact versions, and which can track a branch while exploring?
 
 ## Memory And Instruction Boundaries
 
-Avoid conflicts with assistant memory systems:
+Avoid conflicts with agent memory systems:
 
 - Do not write to Claude Memory, ChatGPT Memory, user-level custom instructions, global Codex memory, or IDE-wide rule stores unless the user explicitly asks.
 - Keep durable project knowledge in the Zentaizo workspace as markdown, JSON, and lock files.
