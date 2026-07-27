@@ -4,6 +4,18 @@ All notable changes to this project are documented here.
 
 This project uses the Keep a Changelog format. Versions 0.8.0 and earlier predate this changelog.
 
+## [0.15.2] - 2026-07-27
+
+Three CLI-surface defects found by the main-0004 docs audit, where verifying a
+documented claim showed the *code* to be wrong.
+
+### Fixed
+
+- `path slice --next --json` emitted no JSON. The parser accepted `--json`, but the `--next` branch returned before reaching the emitter, so a caller that explicitly asked for JSON got a bare id it could not parse. It now emits `{"kind": "slice", "label": …, "counter": …, "next_id": …}`. `counter` is included because the predicted number is what the command computes, and a caller should not have to parse it back out of the id; `path`, `created`, and `wrote` are omitted because no file exists yet — `"wrote": false` would make a successful prediction look like a failed allocation.
+- The `graph --semantic` help text and the `graph: refreshed` follow-up message both claimed docs are read. `_graph_input_set()` places every `docs` source in `not_graphed`; only papers and notes are extracted. Both strings now say papers/notes, pinned against the input set by a test so they cannot drift apart again.
+- `--repo` accepted only a filesystem path, so `--repo <name>` failed from a workspace root exactly as the generated `AGENTS.md` documents it. The contract was internally inconsistent: `AGENTS.md` documented a repo name while the parser and `docs/cli.md` documented a path. `--repo` now takes `NAME_OR_PATH` under a lexical rule — a bare name selects `repos/<name>` in the containing workspace, while anything with a path separator or a `./`, `../`, `~`, or `/` prefix keeps its filesystem meaning. The name form is validated with an **exact-directory** check: because a workspace is itself a git repo and git discovery searches upward, a mistyped name would otherwise have resolved to the workspace's own git directory and silently written the pending-authors ledger there, misattributing a later commit. A name that also matches a different git repo in the current directory is refused with both candidates named.
+- `commit-trailer --repo` learned the same form. As the ledger's sole consumer, leaving it path-only would have made one `--repo <name>` token mean different repositories across a single note → trailer → clear lifecycle, and its failure mode is silent: a missed ledger prints the committer-only trailer and drops the recorded implementor. The two commands share only the lexical selector — `delegation` still refuses a non-repository path while `commit-trailer` stays tolerant of one, printing its ordinary output unchanged.
+
 ## [0.15.1] - 2026-07-26
 
 ### Fixed

@@ -154,20 +154,22 @@ zentaizo provide-info TARGET [PATH]
 Adds a Zentaizo reference block to `TARGET/AGENTS.md` so an agent working in that repository knows where to look.
 
 ```bash
-zentaizo commit-trailer [--claude | --codex] [--repo PATH] [--also-author]
+zentaizo commit-trailer [--claude | --codex] [--repo NAME_OR_PATH] [--also-author]
 ```
 
 Prints the current AI agent's canonical attribution trailer(s) to stdout so they can be pasted into a commit body. Provider detection uses the active agent environment, **innermost agent first**: `CODEX_THREAD_ID` is injected by the codex CLI only into the shells of a live Codex run, while `CLAUDECODE` is inherited by everything a Claude Code session spawns — including delegated Codex runs — so when both are present the commit is attributed to Codex. (`--claude` or `--codex` forces a provider, including from a non-AI shell or CI job that has the provider cache/config available.) The command reads the same commit-trailer cache used by the bundled `prepare-commit-msg` hook and by `zentaizo edited`; the Codex identity falls back from the thread-keyed cache entry to the run's own rollout log (`$CODEX_HOME/sessions/…/rollout-*-<thread>.jsonl`, which records the model + effort the run actually used), then the cache `latest.json`, then the configured default in `config.toml`, and a rollout/config resolution repopulates the cache. Unlike the hook, this command fails loudly with no stdout and a stderr reason when attribution cannot be resolved. It does not fall back to `git config user.name`.
 
-`commit-trailer` is also the **sole consumer of the pending-authors ledger** (see `zentaizo delegation`). When the target repo (`--repo`, default the current directory; any path inside the repo works) has pending delegation entries, it prints one `Co-authored-by:` per recorded implementor (`role: "author"` entries, oldest note first — other roles are skipped with a stderr warning) followed by `Reviewed-by:` for the committing session; `--also-author` additionally credits the committer as `Co-authored-by:` when it wrote code too. Identities are deduplicated per role, so a committer that already appears as a ledger author gets both lines exactly once. On a non-empty ledger it reminds on stderr to run `zentaizo delegation clear` after the commit lands, and warns (without dropping anything) when an entry is older than 24 hours. With an empty ledger, stdout is the single `Co-authored-by:` line, unchanged; as a warn-only safety net, if the Codex cache shows a session more recent than the repo's last commit while the ledger is empty, a stderr nudge suggests `zentaizo delegation note --codex`.
+`commit-trailer` is also the **sole consumer of the pending-authors ledger** (see `zentaizo delegation`). Its `--repo` option accepts the `NAME_OR_PATH` form described below. The default is the current directory, and any explicit path inside the repo works. When the target repo has pending delegation entries, the command prints one `Co-authored-by:` per recorded implementor (`role: "author"` entries, oldest note first — other roles are skipped with a stderr warning) followed by `Reviewed-by:` for the committing session; `--also-author` additionally credits the committer as `Co-authored-by:` when it wrote code too. Identities are deduplicated per role, so a committer that already appears as a ledger author gets both lines exactly once. On a non-empty ledger it reminds on stderr to run `zentaizo delegation clear` after the commit lands, and warns (without dropping anything) when an entry is older than 24 hours. With an empty ledger, stdout is the single `Co-authored-by:` line, unchanged; as a warn-only safety net, if the Codex cache shows a session more recent than the repo's last commit while the ledger is empty, a stderr nudge suggests `zentaizo delegation note --codex`.
 
 ```bash
-zentaizo delegation note (--claude | --codex) [--repo PATH] [--as IDENTITY] [--max-age HOURS]
-zentaizo delegation list [--repo PATH]
-zentaizo delegation clear [--repo PATH] [--id ID]
+zentaizo delegation note (--claude | --codex) [--repo NAME_OR_PATH] [--as IDENTITY] [--max-age HOURS]
+zentaizo delegation list [--repo NAME_OR_PATH]
+zentaizo delegation clear [--repo NAME_OR_PATH] [--id ID]
 ```
 
 Records who *authored* a repo's pending changes when implementation was delegated to another agent (e.g. Claude orchestrates, Codex implements) so commit attribution reflects authorship, not just the committing environment. The ritual: **`note` when the delegated run returns → `commit-trailer` at commit → `clear` after the commit lands.** Run `note` once per touched repo, at review time rather than dispatch, so the freshest cache entry is the delegated run itself.
+
+`NAME_OR_PATH` uses a lexical rule implemented by `_select_repo_dir()` (`src/zentaizo/cli.py`). A bare name selects the exact `repos/NAME` git repository in the containing Zentaizo workspace. A value with a path separator, or one starting with `./`, `../`, `~`, or `/`, remains a filesystem path. If a bare name also identifies a different git repository in the current directory, the command errors and names both candidates.
 
 Each `note` writes one JSON entry file (`{id, provider, model, effort, identity, role, noted_at, source}`) under `<git-dir>/zentaizo/pending-authors/` in the target repo — uncommittable and per-checkout by construction (the git dir is discovered from any path inside the repo, resolving worktree/submodule `gitdir:` pointer files), and safe under concurrent notes because entries never share a file. Identity resolution precedence, with each entry recording its `source`: the session/thread-keyed commit-trailer cache entry, then the cache `latest.json` only if captured within `--max-age` (default 6 hours), then — Codex only — the configured default from `config.toml` with a stderr warning that it may not be the model the delegated run used (`source: "config"`), and `--as "<identity>"` bypasses resolution entirely (`source: "override"`). When nothing resolves, `note` fails loudly and suggests `--as`. `list` shows each pending entry with its age and source; `clear` empties the ledger (or removes one entry with `--id`) — clearing is always explicit, never a side effect of committing.
 
@@ -240,8 +242,7 @@ Every command in this section also accepts `--json`, as does `zentaizo edited`: 
 `effort` operation, each `path` operation, and each `next-*` allocator. The payload is
 the machine-readable form of what the command prints — an allocator emits the created
 file's kind, label, and workspace-relative path (`_emit_created`), and a `path` lookup
-emits the resolved path and its kind (`_emit_path`). One gap is worth knowing: `path
-slice --next` ignores `--json` and prints the bare id.
+emits the resolved path and its kind (`_emit_path`).
 
 ## Other commands
 

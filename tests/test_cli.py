@@ -20,6 +20,7 @@ from zentaizo.cli import (
     CliError,
     _apply_safety_and_write,
     _codex_editor_identity,
+    _graph_input_set,
     _graphify_command,
     _graphify_version,
     _HttpResult,
@@ -2547,6 +2548,26 @@ class SessionPathTests(WorkspaceCliCase):
             self._out(["path", "slice", "--next", "-C", str(workspace)])
             self.assertEqual(set(changes.iterdir()), before)
 
+    def test_path_slice_next_json_has_prediction_only_shape(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._new_effort(workspace, "dojo")
+            payload = json.loads(
+                self._out(["path", "slice", "--next", "--json", "-C", str(workspace)])
+            )
+            self.assertEqual(
+                payload,
+                {
+                    "kind": "slice",
+                    "label": "dojo",
+                    "counter": 1,
+                    "next_id": "dojo-0001",
+                },
+            )
+            self.assertIsInstance(payload["counter"], int)
+            for key in ("kind", "label", "next_id"):
+                self.assertIsInstance(payload[key], str)
+
     def test_path_slice_not_found_and_bad_id(self):
         with tempfile.TemporaryDirectory() as tmp:
             workspace = self._make_workspace(tmp)
@@ -4268,7 +4289,7 @@ class DelegationLedgerTests(unittest.TestCase):
 
     def _git_repo(self, name: str, committed_at: str = "2026-01-01T00:00:00Z") -> Path:
         repo = self.tmp / name
-        repo.mkdir()
+        repo.mkdir(parents=True)
         subprocess.run(["git", "init", "-q", str(repo)], check=True)
         subprocess.run(
             [
@@ -4289,7 +4310,7 @@ class DelegationLedgerTests(unittest.TestCase):
         )
         return repo
 
-    def _run(self, argv, env=None) -> tuple[int, str, str]:
+    def _run(self, argv, env=None, cwd: Path | None = None) -> tuple[int, str, str]:
         clean = dict(os.environ)
         for key in (
             "CLAUDECODE",
@@ -4304,9 +4325,12 @@ class DelegationLedgerTests(unittest.TestCase):
         stdout = io.StringIO()
         stderr = io.StringIO()
         # Fresh non-git cwd: only --repo decides which ledger is touched.
+        cwd_context = (
+            tempfile.TemporaryDirectory() if cwd is None else contextlib.nullcontext(cwd)
+        )
         with (
-            tempfile.TemporaryDirectory() as cwd,
-            contextlib.chdir(cwd),
+            cwd_context as run_cwd,
+            contextlib.chdir(run_cwd),
             mock.patch.dict(os.environ, clean, clear=True),
             contextlib.redirect_stdout(stdout),
             contextlib.redirect_stderr(stderr),
@@ -4329,6 +4353,12 @@ class DelegationLedgerTests(unittest.TestCase):
 
     def _ledger_dir(self, repo: Path | None = None) -> Path:
         return (repo or self.repo) / ".git" / "zentaizo" / "pending-authors"
+
+    def _workspace_repo(self, name: str = "alpha") -> tuple[Path, Path]:
+        workspace = self._git_repo("workspace")
+        (workspace / "sessions").mkdir()
+        repo = self._git_repo(f"workspace/repos/{name}")
+        return workspace, repo
 
     def _write_entry(self, filename: str, entry: dict, repo: Path | None = None) -> Path:
         ledger = self._ledger_dir(repo)
@@ -4514,6 +4544,80 @@ class DelegationLedgerTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(len(list(self._ledger_dir().glob("*.json"))), 1)
 
+    def test_name_form_note_targets_workspace_repo_from_root(self):
+        workspace, repo = self._workspace_repo()
+        code, stdout, stderr = self._run(
+            ["delegation", "note", "--codex", "--repo", "alpha", "--as", "Codex X"],
+            cwd=workspace,
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("Codex X", stdout)
+        self.assertEqual(stderr, "")
+        self.assertEqual(len(list(self._ledger_dir(repo).glob("*.json"))), 1)
+        self.assertFalse(self._ledger_dir(workspace).exists())
+
+        code, stdout, stderr = self._run(
+            ["delegation", "list", "--repo", "alpha"], cwd=repo
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("Codex X", stdout)
+        self.assertEqual(stderr, "")
+
+        path_repo = self._git_repo("path-repo")
+        code, stdout, stderr = self._run(
+            ["delegation", "note", "--codex", "--repo", ".", "--as", "Codex Path"],
+            cwd=path_repo,
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("Codex Path", stdout)
+        self.assertEqual(stderr, "")
+        self.assertEqual(len(list(self._ledger_dir(path_repo).glob("*.json"))), 1)
+
+    def test_name_form_rejects_nonrepo_without_touching_workspace_ledger(self):
+        workspace, repo = self._workspace_repo()
+        nonrepo = workspace / "repos" / "typo"
+        nonrepo.mkdir()
+        code, stdout, stderr = self._run(
+            ["delegation", "note", "--codex", "--repo", "typo", "--as", "Codex X"],
+            cwd=workspace,
+        )
+        self.assertEqual(code, 1)
+        self.assertEqual(stdout, "")
+        self.assertEqual(stderr, f"delegation: not a git repository: {nonrepo}\n")
+        self.assertFalse(self._ledger_dir(workspace).exists())
+        self.assertFalse(self._ledger_dir(repo).exists())
+
+    def test_name_form_commit_trailer_nonrepo_names_the_command(self):
+        workspace, _repo = self._workspace_repo()
+        nonrepo = workspace / "repos" / "typo"
+        nonrepo.mkdir()
+        code, stdout, stderr = self._run(
+            ["commit-trailer", "--repo", "typo"],
+            env=self._claude_committer_env(),
+            cwd=workspace,
+        )
+        self.assertEqual(code, 1)
+        self.assertEqual(stdout, "")
+        self.assertEqual(stderr, f"commit-trailer: not a git repository: {nonrepo}\n")
+        self.assertNotIn("delegation:", stderr)
+
+    def test_name_form_collision_names_both_repositories(self):
+        workspace, repo = self._workspace_repo()
+        cwd = workspace / "consumer"
+        collision = self._git_repo("workspace/consumer/alpha")
+        code, stdout, stderr = self._run(
+            ["delegation", "note", "--codex", "--repo", "alpha", "--as", "Codex X"],
+            cwd=cwd,
+        )
+        self.assertEqual(code, 1)
+        self.assertEqual(stdout, "")
+        self.assertIn("collision", stderr)
+        self.assertIn(str(repo), stderr)
+        self.assertIn(str(collision), stderr)
+        self.assertFalse(self._ledger_dir(repo).exists())
+        self.assertFalse(self._ledger_dir(collision).exists())
+        self.assertFalse(self._ledger_dir(workspace).exists())
+
     # --- delegation list / clear ---------------------------------------------
 
     def test_list_shows_age_and_source(self):
@@ -4554,6 +4658,25 @@ class DelegationLedgerTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("no ledger entry with id zzz", stderr)
 
+    def test_name_form_list_and_clear_target_workspace_repo(self):
+        workspace, repo = self._workspace_repo()
+        self._write_entry("a.json", self._codex_entry(id="a"), repo=repo)
+        code, stdout, stderr = self._run(
+            ["delegation", "list", "--repo", "alpha"], cwd=workspace
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("Codex gpt-5.5 (reasoning xhigh)", stdout)
+        self.assertEqual(stderr, "")
+
+        code, stdout, stderr = self._run(
+            ["delegation", "clear", "--repo", "alpha"], cwd=workspace
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("Cleared 1 delegation entry.", stdout)
+        self.assertEqual(stderr, "")
+        self.assertEqual(list(self._ledger_dir(repo).glob("*.json")), [])
+        self.assertFalse(self._ledger_dir(workspace).exists())
+
     # --- commit-trailer: ledger consumption -----------------------------------
 
     def _trailer(self, *extra) -> tuple[int, str, str]:
@@ -4569,6 +4692,44 @@ class DelegationLedgerTests(unittest.TestCase):
         self.assertEqual(stdout, f"{self.CODEX_TRAILER}\n{self.CLAUDE_REVIEWED}\n")
         self.assertIn("consumed by this trailer block", stderr)
         self.assertIn("zentaizo delegation clear", stderr)
+
+    def test_name_form_note_then_commit_trailer_consumes_same_ledger(self):
+        workspace, repo = self._workspace_repo()
+        code, stdout, stderr = self._run(
+            [
+                "delegation",
+                "note",
+                "--codex",
+                "--repo",
+                "alpha",
+                "--as",
+                "Codex gpt-5.5 (reasoning xhigh)",
+            ],
+            cwd=workspace,
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("Codex gpt-5.5 (reasoning xhigh)", stdout)
+        self.assertEqual(stderr, "")
+
+        code, stdout, stderr = self._run(
+            ["commit-trailer", "--repo", "alpha"],
+            env=self._claude_committer_env(),
+            cwd=workspace,
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(stdout, f"{self.CODEX_TRAILER}\n{self.CLAUDE_REVIEWED}\n")
+        self.assertIn("consumed by this trailer block", stderr)
+        self.assertEqual(len(list(self._ledger_dir(repo).glob("*.json"))), 1)
+        self.assertFalse(self._ledger_dir(workspace).exists())
+
+    def test_repo_help_uses_name_or_path(self):
+        for argv in (["commit-trailer", "--help"], ["delegation", "note", "--help"]):
+            with self.subTest(argv=argv):
+                stdout = io.StringIO()
+                with contextlib.redirect_stdout(stdout), self.assertRaises(SystemExit) as ctx:
+                    main(argv)
+                self.assertEqual(ctx.exception.code, 0)
+                self.assertIn("[--repo NAME_OR_PATH]", stdout.getvalue())
 
     def test_trailer_orders_implementors_by_noted_at(self):
         # File names sort opposite to noted_at to prove ordering is by note time.
@@ -5140,6 +5301,43 @@ class GraphTests(WorkspaceCliCase):
             self.assertIn("--backend", str(ctx.exception))
             with self.assertRaises(SystemExit):
                 main(["graph", str(workspace), "--backend", "ollama"])  # without --semantic
+
+    def test_semantic_source_text_matches_graph_input_set(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._graph_workspace(tmp)
+            config = json.loads((workspace / "zentaizo.atlas.json").read_text())
+            built_from, not_graphed = _graph_input_set(
+                workspace, config, self._lock(workspace), "semantic"
+            )
+            semantic_groups = list(
+                dict.fromkeys(
+                    key.split("/", 1)[0]
+                    for key in built_from
+                    if not key.startswith("repos/")
+                )
+            )
+            self.assertEqual(semantic_groups, ["papers", "notes"])
+            self.assertIn("docs/api-docs", not_graphed)
+            source_text = "/".join(semantic_groups)
+
+            help_out = io.StringIO()
+            with contextlib.redirect_stdout(help_out), self.assertRaises(SystemExit) as ctx:
+                main(["graph", "--help"])
+            self.assertEqual(ctx.exception.code, 0)
+            normalized_help = " ".join(help_out.getvalue().split())
+            self.assertIn(f"({source_text} via a model API)", normalized_help)
+
+            log = self._install_stub(tmp)
+            self.assertEqual(
+                self._run(
+                    ["graph", str(workspace), "--semantic", "--backend", "ollama"]
+                )[0],
+                0,
+            )
+            log.unlink()
+            code, out, _err = self._fetch_with_new_rev(workspace, "bbbb")
+            self.assertEqual(code, 0)
+            self.assertIn(f"if {source_text} content changed", out)
 
     # -- managed .graphifyignore ------------------------------------------
 

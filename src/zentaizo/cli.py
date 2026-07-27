@@ -1011,8 +1011,61 @@ def _resolve_delegation_identity(provider: str, max_age_hours: float) -> tuple[s
     return "", "", ""
 
 
+def _select_repo_dir(repo_arg: str | None, *, command: str) -> pathlib.Path:
+    """Select a repo from the lexical ``--repo NAME_OR_PATH`` form.
+
+    A bare name selects ``repos/<name>`` in the containing Zentaizo workspace.
+    An explicit path keeps its normal filesystem meaning. Name selection uses
+    exact-directory git resolution so a non-repo beneath the workspace cannot
+    resolve upward into the workspace's own git directory. ``command`` prefixes
+    the one command-specific error this shared selector emits.
+    """
+    raw = repo_arg or "."
+    path = pathlib.Path(raw).expanduser()
+    separators = tuple(separator for separator in (os.sep, os.altsep) if separator)
+    is_name = (
+        raw not in {".", ".."}
+        and not raw.startswith("~")
+        and not path.is_absolute()
+        and not any(separator in raw for separator in separators)
+    )
+    if not is_name:
+        return path
+
+    cwd = pathlib.Path.cwd()
+    workspace = workspace_root_for_cwd(cwd)
+    if workspace is None:
+        raise CliError(
+            f"--repo {raw!r} is a name, but no Zentaizo workspace contains {cwd}; "
+            "pass an explicit path",
+            code=1,
+        )
+
+    workspace_candidate = workspace / "repos" / raw
+    workspace_git_dir = _resolve_git_dir(workspace_candidate)
+    if workspace_git_dir is None:
+        raise CliError(
+            f"{command}: not a git repository: {workspace_candidate}",
+            code=1,
+        )
+
+    cwd_candidate = cwd / raw
+    cwd_git_dir = _resolve_git_dir(cwd_candidate)
+    if (
+        cwd_git_dir is not None
+        and cwd_git_dir.resolve() != workspace_git_dir.resolve()
+    ):
+        raise CliError(
+            f"--repo {raw!r} collision: workspace repo {workspace_candidate} "
+            f"and cwd repo {cwd_candidate} are different git repositories; "
+            "pass an explicit path",
+            code=1,
+        )
+    return workspace_candidate
+
+
 def _delegation_repo_dir(args: argparse.Namespace) -> pathlib.Path:
-    repo_dir = pathlib.Path(args.repo).expanduser()
+    repo_dir = _select_repo_dir(args.repo, command="delegation")
     if _discover_git_dir(repo_dir) is None:
         raise CliError(f"delegation: not a git repository: {repo_dir}", code=1)
     return repo_dir
@@ -1170,7 +1223,10 @@ def commit_trailer(args: argparse.Namespace) -> int:
             code=1,
         )
 
-    repo_dir = pathlib.Path(getattr(args, "repo", None) or ".").expanduser()
+    repo_dir = _select_repo_dir(
+        getattr(args, "repo", None),
+        command="commit-trailer",
+    )
     coauthors: list[str] = []
     credited: set[str] = set()  # per-role dedup: each identity at most once per role
     stale = False
@@ -3601,7 +3657,7 @@ def _auto_refresh_graph(workspace: pathlib.Path, config: dict, lock: dict) -> No
             print(
                 "graph: code nodes refreshed (AST-only); semantic extraction is "
                 "explicit — run 'zentaizo graph --semantic --backend …' if "
-                "docs/papers/notes content changed"
+                "papers/notes content changed"
             )
     except Exception as exc:
         print(f"graph: auto-refresh skipped ({exc}) — run 'zentaizo graph' manually")
@@ -5136,7 +5192,21 @@ def path_effort(args: argparse.Namespace) -> int:
 def path_slice(args: argparse.Namespace) -> int:
     workspace, label = _resolve_read_effort(args)
     if args.next:
-        print(f"{label}-{next_counter(workspace, label):04d}")
+        counter = next_counter(workspace, label)
+        next_id = f"{label}-{counter:04d}"
+        if args.json:
+            print(
+                json.dumps(
+                    {
+                        "kind": "slice",
+                        "label": label,
+                        "counter": counter,
+                        "next_id": next_id,
+                    }
+                )
+            )
+        else:
+            print(next_id)
         return 0
     if args.id is None:
         raise CliError("path slice requires <id> or --next", 1)
@@ -5676,8 +5746,9 @@ def build_parser() -> argparse.ArgumentParser:
     commit_trailer_cmd.add_argument(
         "--repo",
         default=".",
-        metavar="PATH",
-        help="git repo whose pending-authors ledger to consume (default: current directory)",
+        metavar="NAME_OR_PATH",
+        help="workspace repo name or git repo path whose pending-authors ledger "
+        "to consume (default: current directory)",
     )
     commit_trailer_cmd.add_argument(
         "--also-author",
@@ -5707,8 +5778,9 @@ def build_parser() -> argparse.ArgumentParser:
     note.add_argument(
         "--repo",
         default=".",
-        metavar="PATH",
-        help="git repo the delegation touched (default: current directory)",
+        metavar="NAME_OR_PATH",
+        help="workspace repo name or git repo path the delegation touched "
+        "(default: current directory)",
     )
     note.add_argument(
         "--as",
@@ -5731,7 +5803,10 @@ def build_parser() -> argparse.ArgumentParser:
         "list", help="show pending delegation entries with age + source"
     )
     delegation_list_cmd.add_argument(
-        "--repo", default=".", metavar="PATH", help="git repo (default: current directory)"
+        "--repo",
+        default=".",
+        metavar="NAME_OR_PATH",
+        help="workspace repo name or git repo path (default: current directory)",
     )
     delegation_list_cmd.set_defaults(func=delegation_list)
 
@@ -5739,7 +5814,10 @@ def build_parser() -> argparse.ArgumentParser:
         "clear", help="clear pending delegation entries after the commit lands"
     )
     delegation_clear_cmd.add_argument(
-        "--repo", default=".", metavar="PATH", help="git repo (default: current directory)"
+        "--repo",
+        default=".",
+        metavar="NAME_OR_PATH",
+        help="workspace repo name or git repo path (default: current directory)",
     )
     delegation_clear_cmd.add_argument(
         "--id", metavar="ID", help="clear only the entry with this id (see 'delegation list')"
@@ -5799,7 +5877,7 @@ def build_parser() -> argparse.ArgumentParser:
     graph.add_argument(
         "--semantic",
         action="store_true",
-        help="opt-in full-corpus extraction (docs/papers/notes via a model API); "
+        help="opt-in full-corpus extraction (papers/notes via a model API); "
         "the default build is code-only and fully offline",
     )
     graph.add_argument(
