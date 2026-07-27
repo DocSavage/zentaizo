@@ -1983,7 +1983,35 @@ def fetch_reference_repo(workspace: pathlib.Path, repo: dict) -> dict:
             )
         print(f"Fetching {name} (reference)...")
         run_git(["fetch", "--tags", "--prune"], cwd=dst)
-        run_git(["checkout", repo["ref"]], cwd=dst)
+        upstream_sha = resolve_upstream_sha(dst, repo["ref"])
+        upstream_branch_sha = try_run_git(
+            ["rev-parse", "--verify", "--quiet", f"origin/{repo['ref']}"],
+            cwd=dst,
+        )
+        if upstream_branch_sha:
+            run_git(["checkout", repo["ref"]], cwd=dst)
+            head_sha = run_git(["rev-parse", "HEAD"], cwd=dst)
+            if head_sha != upstream_sha:
+                if is_ancestor(dst, head_sha, upstream_sha):
+                    run_git(["merge", "--ff-only", upstream_sha], cwd=dst)
+                else:
+                    print(
+                        f"  WARNING: {name} (reference) cannot fast-forward to {repo['ref']}"
+                    )
+                    print(
+                        f"  local HEAD={head_sha[:12]}; upstream={upstream_sha[:12]}; "
+                        "checkout left unchanged"
+                    )
+                    print(
+                        f"  inspect: git -C {dst} log --oneline --left-right "
+                        f"HEAD...{upstream_sha}"
+                    )
+                    print(
+                        "  reconcile the checkout or change its atlas role to 'edit', "
+                        "then rerun `zentaizo fetch`"
+                    )
+        else:
+            run_git(["checkout", "--detach", upstream_sha], cwd=dst)
     else:
         print(f"Cloning {name} (reference)...")
         clone_repo(repo["url"], dst)

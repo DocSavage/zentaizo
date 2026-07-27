@@ -4,6 +4,12 @@ All notable changes to this project are documented here.
 
 This project uses the Keep a Changelog format. Versions 0.8.0 and earlier predate this changelog.
 
+## [0.15.1] - 2026-07-26
+
+### Fixed
+
+- `fetch` now advances a `reference` repo pinned to a moving ref. `fetch_reference_repo` fetched and then ran `git checkout <ref>`, which switches to the *existing local branch* and leaves it where the previous fetch left it, so `zentaizo.lock.json` recorded a stale commit while labelling it with a ref that had moved on — a reproducibility defect in the mechanism the atlas/lock split exists to provide. The ref is now resolved through `resolve_upstream_sha` and the checkout is fast-forwarded onto it. A local branch that has genuinely diverged is left untouched, warns with the local and upstream shas plus a `git log --left-right` command to inspect them, and has its true HEAD recorded in the lock — recording what is actually on disk beats both discarding commits silently and lying in the lock. The dirty-tree refusal is unchanged, an immutable `ref` (tag or sha) still lands detached at exactly that object, and `fetch_edit_repo` is untouched: edit repos still keep their HEAD so in-progress work survives.
+
 ## [0.15.0] - 2026-07-26
 
 Documentation style guide, its application across every doc, and the matching

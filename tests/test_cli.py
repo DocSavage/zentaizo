@@ -1895,6 +1895,322 @@ class WorkspaceCliCase(unittest.TestCase):
         return json.loads((workspace / "sessions" / "efforts.json").read_text())
 
 
+class ReferenceFetchTests(WorkspaceCliCase):
+    def _reference_workspace(
+        self, tmp: str, *, ref: str = "main"
+    ) -> tuple[Path, Path, Path]:
+        root = Path(tmp)
+        remote = root / "remote.git"
+        remote.mkdir()
+        _git(remote, "init", "-q", "--bare", "-b", "main")
+
+        upstream = root / "upstream"
+        upstream.mkdir()
+        _git(upstream, "init", "-q", "-b", "main")
+        _git(upstream, "config", "user.email", "t@example.com")
+        _git(upstream, "config", "user.name", "Test")
+        (upstream / "base.txt").write_text("base\n")
+        _git(upstream, "add", ".")
+        _git(upstream, "commit", "-q", "-m", "base")
+        _git(upstream, "remote", "add", "origin", str(remote))
+        _git(upstream, "push", "-q", "-u", "origin", "main")
+
+        workspace = self._make_workspace(tmp)
+        atlas = default_atlas("reference-fetch")
+        atlas["sources"]["repos"] = [
+            {
+                "name": "library",
+                "url": str(remote),
+                "ref": ref,
+                "role": "reference",
+                "description": "Local reference fixture.",
+            }
+        ]
+        (workspace / "zentaizo.atlas.json").write_text(json.dumps(atlas))
+        return workspace, upstream, remote
+
+    def test_fetch_reference_branch_advances_to_upstream(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace, upstream, _remote = self._reference_workspace(tmp)
+            self.assertEqual(self._run(["fetch", str(workspace), "--no-graph"])[0], 0)
+
+            (upstream / "upstream.txt").write_text("advanced\n")
+            _git(upstream, "add", ".")
+            _git(upstream, "commit", "-q", "-m", "advance")
+            _git(upstream, "push", "-q", "origin", "main")
+            upstream_sha = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=upstream,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+
+            code, _out, _err = self._run(["fetch", str(workspace), "--no-graph"])
+            self.assertEqual(code, 0)
+            checkout = workspace / "repos" / "library"
+            checkout_sha = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=checkout,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            lock = json.loads((workspace / "zentaizo.lock.json").read_text())
+            locked = lock["sources"]["repos"][0]
+            self.assertEqual(checkout_sha, upstream_sha)
+            self.assertEqual(locked["commit"], upstream_sha)
+
+    def test_fetch_reference_ref_switches_to_diverged_branch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace, upstream, _remote = self._reference_workspace(tmp)
+            self.assertEqual(self._run(["fetch", str(workspace), "--no-graph"])[0], 0)
+
+            _git(upstream, "checkout", "-q", "-b", "develop")
+            (upstream / "develop.txt").write_text("develop\n")
+            _git(upstream, "add", ".")
+            _git(upstream, "commit", "-q", "-m", "develop")
+            _git(upstream, "push", "-q", "-u", "origin", "develop")
+            develop_sha = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=upstream,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+
+            _git(upstream, "checkout", "-q", "main")
+            (upstream / "main.txt").write_text("main\n")
+            _git(upstream, "add", ".")
+            _git(upstream, "commit", "-q", "-m", "main")
+            _git(upstream, "push", "-q", "origin", "main")
+            self.assertEqual(self._run(["fetch", str(workspace), "--no-graph"])[0], 0)
+
+            checkout = workspace / "repos" / "library"
+            main_before = subprocess.run(
+                ["git", "rev-parse", "refs/heads/main"],
+                cwd=checkout,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            atlas_path = workspace / "zentaizo.atlas.json"
+            atlas = json.loads(atlas_path.read_text())
+            atlas["sources"]["repos"][0]["ref"] = "develop"
+            atlas_path.write_text(json.dumps(atlas))
+
+            code, out, _err = self._run(["fetch", str(workspace), "--no-graph"])
+            self.assertEqual(code, 0)
+            checkout_sha = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=checkout,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            branch = subprocess.run(
+                ["git", "branch", "--show-current"],
+                cwd=checkout,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            main_after = subprocess.run(
+                ["git", "rev-parse", "refs/heads/main"],
+                cwd=checkout,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            lock = json.loads((workspace / "zentaizo.lock.json").read_text())
+            locked = lock["sources"]["repos"][0]
+            self.assertEqual(branch, "develop")
+            self.assertEqual(checkout_sha, develop_sha)
+            self.assertEqual(locked["ref"], "develop")
+            self.assertEqual(locked["commit"], develop_sha)
+            self.assertEqual(main_after, main_before)
+            self.assertNotIn("WARNING", out)
+
+    def test_fetch_reference_ref_switches_to_ahead_branch_without_moving_old_branch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace, upstream, _remote = self._reference_workspace(tmp)
+            self.assertEqual(self._run(["fetch", str(workspace), "--no-graph"])[0], 0)
+            checkout = workspace / "repos" / "library"
+            main_before = subprocess.run(
+                ["git", "rev-parse", "refs/heads/main"],
+                cwd=checkout,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+
+            _git(upstream, "checkout", "-q", "-b", "develop")
+            (upstream / "develop.txt").write_text("develop\n")
+            _git(upstream, "add", ".")
+            _git(upstream, "commit", "-q", "-m", "develop")
+            _git(upstream, "push", "-q", "-u", "origin", "develop")
+            develop_sha = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=upstream,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+
+            atlas_path = workspace / "zentaizo.atlas.json"
+            atlas = json.loads(atlas_path.read_text())
+            atlas["sources"]["repos"][0]["ref"] = "develop"
+            atlas_path.write_text(json.dumps(atlas))
+
+            code, out, _err = self._run(["fetch", str(workspace), "--no-graph"])
+            self.assertEqual(code, 0)
+            checkout_sha = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=checkout,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            branch = subprocess.run(
+                ["git", "branch", "--show-current"],
+                cwd=checkout,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            main_after = subprocess.run(
+                ["git", "rev-parse", "refs/heads/main"],
+                cwd=checkout,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            lock = json.loads((workspace / "zentaizo.lock.json").read_text())
+            locked = lock["sources"]["repos"][0]
+            self.assertEqual(branch, "develop")
+            self.assertEqual(checkout_sha, develop_sha)
+            self.assertEqual(locked["ref"], "develop")
+            self.assertEqual(locked["commit"], develop_sha)
+            self.assertEqual(main_after, main_before)
+            self.assertNotIn("WARNING", out)
+
+    def test_fetch_reference_divergence_warns_and_preserves_checkout(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace, upstream, _remote = self._reference_workspace(tmp)
+            self.assertEqual(self._run(["fetch", str(workspace), "--no-graph"])[0], 0)
+            checkout = workspace / "repos" / "library"
+
+            _git(checkout, "config", "user.email", "t@example.com")
+            _git(checkout, "config", "user.name", "Test")
+            (checkout / "local.txt").write_text("local\n")
+            _git(checkout, "add", ".")
+            _git(checkout, "commit", "-q", "-m", "local")
+            local_sha = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=checkout,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+
+            (upstream / "upstream.txt").write_text("upstream\n")
+            _git(upstream, "add", ".")
+            _git(upstream, "commit", "-q", "-m", "upstream")
+            _git(upstream, "push", "-q", "origin", "main")
+            upstream_sha = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=upstream,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+
+            code, out, _err = self._run(["fetch", str(workspace), "--no-graph"])
+            self.assertEqual(code, 0)
+            warning = (
+                "  WARNING: library (reference) cannot fast-forward to main\n"
+                f"  local HEAD={local_sha[:12]}; upstream={upstream_sha[:12]}; "
+                "checkout left unchanged\n"
+                f"  inspect: git -C {checkout} log --oneline --left-right "
+                f"HEAD...{upstream_sha}\n"
+                "  reconcile the checkout or change its atlas role to 'edit', "
+                "then rerun `zentaizo fetch`\n"
+            )
+            self.assertIn(warning, out)
+            checkout_sha = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=checkout,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            branch = subprocess.run(
+                ["git", "branch", "--show-current"],
+                cwd=checkout,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            lock = json.loads((workspace / "zentaizo.lock.json").read_text())
+            self.assertEqual(checkout_sha, local_sha)
+            self.assertEqual(branch, "main")
+            self.assertEqual((checkout / "local.txt").read_text(), "local\n")
+            self.assertEqual(lock["sources"]["repos"][0]["commit"], local_sha)
+
+    def test_fetch_reference_dirty_tree_still_refuses(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace, _upstream, _remote = self._reference_workspace(tmp)
+            self.assertEqual(self._run(["fetch", str(workspace), "--no-graph"])[0], 0)
+            checkout = workspace / "repos" / "library"
+            (checkout / "base.txt").write_text("dirty\n")
+
+            with self.assertRaisesRegex(
+                SystemExit,
+                r"library \(reference\) has local changes; refusing to overwrite",
+            ):
+                main(["fetch", str(workspace), "--no-graph"])
+            self.assertEqual((checkout / "base.txt").read_text(), "dirty\n")
+
+    def test_fetch_reference_immutable_tag_stays_detached_at_object(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace, upstream, _remote = self._reference_workspace(tmp, ref="v1")
+            _git(upstream, "tag", "v1")
+            _git(upstream, "push", "-q", "origin", "v1")
+            tag_sha = subprocess.run(
+                ["git", "rev-parse", "v1"],
+                cwd=upstream,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+
+            self.assertEqual(self._run(["fetch", str(workspace), "--no-graph"])[0], 0)
+            (upstream / "later.txt").write_text("later\n")
+            _git(upstream, "add", ".")
+            _git(upstream, "commit", "-q", "-m", "later")
+            _git(upstream, "push", "-q", "origin", "main")
+            self.assertEqual(self._run(["fetch", str(workspace), "--no-graph"])[0], 0)
+
+            checkout = workspace / "repos" / "library"
+            checkout_sha = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=checkout,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            symbolic_ref = subprocess.run(
+                ["git", "symbolic-ref", "-q", "HEAD"],
+                cwd=checkout,
+                capture_output=True,
+                text=True,
+            )
+            lock = json.loads((workspace / "zentaizo.lock.json").read_text())
+            self.assertEqual(checkout_sha, tag_sha)
+            self.assertNotEqual(symbolic_ref.returncode, 0)
+            self.assertEqual(lock["sources"]["repos"][0]["commit"], tag_sha)
+
+
 class EffortTests(WorkspaceCliCase):
     def test_create_seeds_main_effort(self):
         with tempfile.TemporaryDirectory() as tmp:
