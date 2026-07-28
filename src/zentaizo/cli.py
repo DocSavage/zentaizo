@@ -37,6 +37,27 @@ class CliError(Exception):
         self.code = code
 
 
+@dataclass(frozen=True)
+class OperationResult:
+    """Structured outcome shared by composable workspace operations."""
+
+    status: str
+    code: int = 0
+    reason: str | None = None
+
+    @classmethod
+    def success(cls) -> OperationResult:
+        return cls("success")
+
+    @classmethod
+    def skipped(cls, reason: str) -> OperationResult:
+        return cls("skipped", reason=reason)
+
+    @classmethod
+    def failed(cls, reason: str, code: int = 1) -> OperationResult:
+        return cls("failed", code=code, reason=reason)
+
+
 ATLAS_NAME = "zentaizo.atlas.json"
 LEGACY_CONFIG_NAME = "zentaizo.config.json"
 LOCK_NAME = "zentaizo.lock.json"
@@ -62,7 +83,7 @@ VALID_DOC_KINDS = ("api-reference", "guide", "tutorial", "spec", "changelog")
 # generated workspace artifacts or session-file conventions — the same class
 # of change docs/design/versioning.md already calls MINOR. Behavior-only
 # releases leave it alone, so `zentaizo status` never over-reports staleness.
-CONVENTIONS_GENERATION = 5
+CONVENTIONS_GENERATION = 6
 
 # One concise entry per generation (machine/AI-read: `status` prints them as
 # "missed" lines and the upgrade-zentaizo skill scopes its reconciliation by
@@ -81,6 +102,8 @@ CONVENTIONS_DELTAS = {
     "the user explicitly authorizes them",
     5: "AGENTS.md/README.md/zentaizo.atlas.json, bundled skills, and provide-info: "
     "generated text adopts the canonical 'agent' and 'Zentaizo workspace' vocabulary",
+    6: "README.md and bundled skills: workspace bring-up uses one composed command, "
+    "and the upgrade inventory covers the generated README",
 }
 
 
@@ -276,33 +299,30 @@ $EDITOR {ATLAS_NAME}
 zentaizo validate
 ```
 
-### 3. Fetch source snapshots
+### 3. Bring up the workspace
+
+```bash
+zentaizo bring-up
+```
+
+This validates the atlas, fetches repos, snapshots declared docs, builds the knowledge graph when Graphify is available, and writes `summaries/summarize.prompt.md`. The command asks before fetching or writing; pass `--check` for a read-only forecast or `--yes` after you have explicitly approved the run. Hand the resulting prompt to your agent to populate `summaries/overview.md`, `summaries/sources/`, and `summaries/relationships.md`.
+
+#### Run individual stages
+
+Run one stage directly when you need isolated control:
 
 ```bash
 zentaizo fetch
-```
-
-Repos marked `role: "edit"` are cloned once and then left alone on subsequent fetches so you can branch and commit freely. Repos marked `role: "reference"` are kept on their pinned ref; the AI is instructed (via [`AGENTS.md`](AGENTS.md)) not to modify them.
-
-### 4. Build the knowledge graph
-
-```bash
+zentaizo fetch-docs
 zentaizo graph
-```
-
-This builds the structural counterpart to `summaries/` — a queryable cross-source knowledge graph (code-only and offline by default). Agents answer relationship questions with `graphify query` / `path` / `explain` instead of re-scanning sources, and the summarize prompt (next step) tells them to ground `summaries/relationships.md` claims in graph queries — which is why the graph comes first. Graphify ships with Zentaizo and is resolved from the active Python environment; source checkouts missing the dependency get a focused install hint while everything else keeps working.
-
-`graphify-out/` is derived output and deliberately not committed — `graph.json` can approach GitHub's 100 MiB per-file push limit on multi-repo workspaces. Instead, **each clone rebuilds the graph locally**: run `zentaizo graph` after `zentaizo fetch` (a fetch also auto-refreshes an existing graph when a graphed source changes). The build spends no LLM tokens (offline tree-sitter extraction) and typically costs about a minute of local compute even for workspaces with thousands of source files.
-
-### 5. Prepare hierarchical summaries
-
-```bash
 zentaizo summarize
 ```
 
-This writes a prompt under `summaries/`. Hand the prompt back to your AI to populate `summaries/overview.md`, `summaries/sources/`, and `summaries/relationships.md`. The command is **incremental**: each `summaries/sources/<name>.md` records the locked `source_rev` it was made from, so re-running only asks for sources that are new or changed and keeps the rest. Pass `--force` to regenerate everything, or `--focus "<text>"` to bias the prompt toward a specific concern.
+`zentaizo fetch` clones editable repos once and keeps reference repos on their pinned ref. `zentaizo fetch-docs` snapshots only declared `docs` sources through the safety pass. `zentaizo graph` builds the structural counterpart to `summaries/` with code-only, offline extraction by default. Graphify ships with Zentaizo and resolves from the active Python environment. `zentaizo summarize` writes an incremental prompt that asks only for new or changed sources unless you pass `--force`.
 
-### 6. Plan and implement changes
+`graphify-out/` is derived output and deliberately not committed — `graph.json` can approach GitHub's 100 MiB per-file push limit on multi-repo workspaces. Instead, each clone rebuilds it locally with `zentaizo bring-up` or `zentaizo graph`. The code-only build spends no LLM tokens and typically costs about a minute of local compute for workspaces with thousands of source files.
+
+### 4. Plan and implement changes
 
 For each multi-repo change, ask the AI to follow [`skills/plan-and-implement.md`](skills/plan-and-implement.md). Example prompt:
 
@@ -310,11 +330,11 @@ For each multi-repo change, ask the AI to follow [`skills/plan-and-implement.md`
 
 The skill handles the full lifecycle: read the atlas to find editable repos, group the work into an **effort** (`zentaizo effort new <word> --describe "…" --repo <name>=<branch>` — one effort can span several editable repos and scaffolds `sessions/efforts/NNNN-<label>.md` as the plan-of-record), then decompose it with `zentaizo next-change <slug>` (which fills the frontmatter) using [`skills/plan-template.md`](skills/plan-template.md), run with `status: planned` → `in-progress` → `done`, and append a `## Outcome` section on completion. Slice files are named `sessions/changes/<label>-NNNN-<slug>.md`; the CLI allocates the name, so you never derive it by hand (see [`AGENTS.md`](AGENTS.md) § Filename Convention).
 
-### 7. Capture Q&A and debugging as they happen
+### 5. Capture Q&A and debugging as they happen
 
 The CLI allocates session files when a scaffold is useful: `zentaizo next-brainstorming <slug>` for pre-decision planning input (`sessions/brainstorming/`), `zentaizo next-note <slug>` for a cross-repo Q&A (`sessions/questions/`), `zentaizo next-debugging <slug>` for a bug investigation (`sessions/debugging/`, sharing the effort's counter with `changes/`), `zentaizo next-handoff <id> [topic]` for a paste-ready execution prompt (`sessions/handoffs/`), and `zentaizo next-report <slug>` for a living evidence-backed synthesis (`sessions/reports/`). Ask the AI to write these as you work — future sessions will read them instead of re-deriving the same context. The conventions are in [`AGENTS.md`](AGENTS.md).
 
-### 8. (Optional) Share this context with another repo
+### 6. (Optional) Share this context with another repo
 
 ```bash
 zentaizo provide-info /path/to/repo-you-are-editing
@@ -1639,20 +1659,22 @@ def session_frontmatter_warnings(workspace: pathlib.Path) -> list[str]:
     return warnings
 
 
-def validate_workspace(args: argparse.Namespace) -> int:
-    workspace = pathlib.Path(args.workspace).resolve()
-    effort_errors = effort_doc_integrity_errors(workspace)
-    warnings = session_frontmatter_warnings(workspace)
-    atlas = find_atlas(workspace)
+def _validate_operation(*, workspace: str) -> OperationResult:
+    workspace_path = pathlib.Path(workspace).resolve()
+    effort_errors = effort_doc_integrity_errors(workspace_path)
+    warnings = session_frontmatter_warnings(workspace_path)
+    atlas = find_atlas(workspace_path)
     if atlas is None:
-        print(f"{workspace}: invalid")
+        print(f"{workspace_path}: invalid")
         print(f"- Missing source atlas: {ATLAS_NAME}")
         print(f"- First create {ATLAS_NAME} with AI assistance from this workspace.")
         for error in effort_errors:
             print(f"- {error}")
         for warning in warnings:
             print(warning)
-        return 1
+        return OperationResult.failed(
+            f"atlas validation failed: {workspace_path / ATLAS_NAME}"
+        )
 
     config = read_json(atlas)
     errors: list[str] = list(effort_errors)
@@ -1700,25 +1722,31 @@ def validate_workspace(args: argparse.Namespace) -> int:
             rel_path = item.get("path")
             if not rel_path:
                 continue
-            target = (workspace / rel_path).resolve()
+            target = (workspace_path / rel_path).resolve()
             if not target.exists():
                 name = item.get("name") or f"{group}[{index}]"
                 errors.append(f"{group} {name!r} path does not exist: {rel_path}")
 
     if errors:
-        print(f"{workspace}: invalid")
+        print(f"{workspace_path}: invalid")
         for error in errors:
             print(f"- {error}")
         for warning in warnings:
             print(warning)
-        return 1
+        return OperationResult.failed(
+            f"atlas validation failed: {workspace_path / ATLAS_NAME}"
+        )
 
-    print(f"{workspace}: valid")
+    print(f"{workspace_path}: valid")
     print(f"Atlas: {atlas.name}")
     print_counts(sources)
     for warning in warnings:
         print(warning)
-    return 0
+    return OperationResult.success()
+
+
+def validate_workspace(args: argparse.Namespace) -> int:
+    return _validate_operation(workspace=args.workspace).code
 
 
 def print_counts(sources: dict) -> None:
@@ -2150,24 +2178,23 @@ def fetch_edit_repo(workspace: pathlib.Path, repo: dict, do_rebase: bool) -> dic
     }
 
 
-def fetch_workspace(args: argparse.Namespace) -> int:
-    workspace, config = load_workspace(args.workspace)
+def _fetch_operation(*, workspace: str, rebase: bool, no_graph: bool) -> OperationResult:
+    workspace_path, config = load_workspace(workspace)
     sources = source_groups(config)
     repos = sources.get("repos", [])
     lock = (
-        read_json(workspace / LOCK_NAME)
-        if (workspace / LOCK_NAME).exists()
-        else initial_lock(config.get("name", workspace.name))
+        read_json(workspace_path / LOCK_NAME)
+        if (workspace_path / LOCK_NAME).exists()
+        else initial_lock(config.get("name", workspace_path.name))
     )
-    do_rebase = bool(getattr(args, "rebase", False))
     prior_repos = _locked_repo_index(lock)
     locked_repos: list[dict] = []
 
     for repo in repos:
         if repo_role(repo) == "edit":
-            locked_repos.append(fetch_edit_repo(workspace, repo, do_rebase))
+            locked_repos.append(fetch_edit_repo(workspace_path, repo, rebase))
         else:
-            locked_repos.append(fetch_reference_repo(workspace, repo))
+            locked_repos.append(fetch_reference_repo(workspace_path, repo))
 
     _preserve_unchanged_fetched_at(locked_repos, prior_repos, _repo_identity)
 
@@ -2176,17 +2203,25 @@ def fetch_workspace(args: argparse.Namespace) -> int:
     lock["sources"]["docs"] = sources.get("docs", [])
     lock["sources"]["papers"] = sources.get("papers", [])
     lock["sources"]["notes"] = sources.get("notes", [])
-    write_json(workspace / LOCK_NAME, lock)
+    write_json(workspace_path / LOCK_NAME, lock)
 
-    if not getattr(args, "no_graph", False):
-        _auto_refresh_graph(workspace, config, lock)
+    if not no_graph:
+        _auto_refresh_graph(workspace_path, config, lock)
 
     if sources.get("docs") or sources.get("papers"):
         print(
             "Docs and papers are recorded in the lock file; "
             "run `zentaizo fetch-docs` to snapshot doc sources."
         )
-    return 0
+    return OperationResult.success()
+
+
+def fetch_workspace(args: argparse.Namespace) -> int:
+    return _fetch_operation(
+        workspace=args.workspace,
+        rebase=bool(getattr(args, "rebase", False)),
+        no_graph=bool(getattr(args, "no_graph", False)),
+    ).code
 
 
 DOC_SNAPSHOTS_SUBDIR = ("docs", "snapshots")
@@ -2600,15 +2635,14 @@ def _deep_scan_message(state: str) -> str:
     return "Deep scan: off (install zentaizo[docs-scan] to enable)"
 
 
-def fetch_docs_workspace(args: argparse.Namespace) -> int:
-    workspace, config = load_workspace(args.workspace)
+def _fetch_docs_operation(*, workspace: str, no_deep_scan: bool) -> OperationResult:
+    workspace_path, config = load_workspace(workspace)
     docs = source_groups(config).get("docs", [])
     if not docs:
-        print("No docs in atlas; nothing to snapshot.")
-        return 0
+        return OperationResult.skipped("atlas declares no docs sources")
 
     deep_scan = None
-    if getattr(args, "no_deep_scan", False):
+    if no_deep_scan:
         deep_scanner_state = "disabled"
     else:
         deep_scan = safety.load_deep_scanner()
@@ -2616,9 +2650,9 @@ def fetch_docs_workspace(args: argparse.Namespace) -> int:
     print(_deep_scan_message(deep_scanner_state))
 
     lock = (
-        read_json(workspace / LOCK_NAME)
-        if (workspace / LOCK_NAME).exists()
-        else initial_lock(config.get("name", workspace.name))
+        read_json(workspace_path / LOCK_NAME)
+        if (workspace_path / LOCK_NAME).exists()
+        else initial_lock(config.get("name", workspace_path.name))
     )
 
     entries: list[dict] = []
@@ -2626,7 +2660,7 @@ def fetch_docs_workspace(args: argparse.Namespace) -> int:
         if doc_is_in_repo(doc):
             entries.append(
                 _snapshot_in_repo_doc(
-                    workspace,
+                    workspace_path,
                     doc,
                     deep_scan=deep_scan,
                     deep_scanner_state=deep_scanner_state,
@@ -2635,7 +2669,7 @@ def fetch_docs_workspace(args: argparse.Namespace) -> int:
         else:
             entries.append(
                 _fetch_external_doc(
-                    workspace,
+                    workspace_path,
                     doc,
                     deep_scan=deep_scan,
                     deep_scanner_state=deep_scanner_state,
@@ -2649,7 +2683,7 @@ def fetch_docs_workspace(args: argparse.Namespace) -> int:
 
     lock["updated_at"] = utc_now()
     lock["doc_snapshots"] = entries
-    write_json(workspace / LOCK_NAME, lock)
+    write_json(workspace_path / LOCK_NAME, lock)
 
     by_status: dict[str, int] = {}
     for entry in entries:
@@ -2676,7 +2710,17 @@ def fetch_docs_workspace(args: argparse.Namespace) -> int:
                 f"  NOTE {entry['name']!r}: unsupported binary format; recorded as "
                 "reference-only (no text snapshot)"
             )
-    return 0
+    return OperationResult.success()
+
+
+def fetch_docs_workspace(args: argparse.Namespace) -> int:
+    result = _fetch_docs_operation(
+        workspace=args.workspace,
+        no_deep_scan=bool(getattr(args, "no_deep_scan", False)),
+    )
+    if result.status == "skipped":
+        print("No docs in atlas; nothing to snapshot.")
+    return result.code
 
 
 _SCAN_NOISE_DIRS = {
@@ -2942,18 +2986,21 @@ def _summarize_focus_lines(
     return lines
 
 
-def summarize_workspace(args: argparse.Namespace) -> int:
-    workspace, config = load_workspace(args.workspace)
+def _summarize_operation(
+    *, workspace: str, force: bool, focus: str | None
+) -> OperationResult:
+    workspace_path, config = load_workspace(workspace)
     sources = source_groups(config)
-    summaries_dir = workspace / config.get("summaries", {}).get("output_dir", "summaries")
+    summaries_dir = workspace_path / config.get("summaries", {}).get(
+        "output_dir", "summaries"
+    )
     sources_dir = summaries_dir / "sources"
     summaries_dir.mkdir(parents=True, exist_ok=True)
     prompt_path = summaries_dir / "summarize.prompt.md"
 
-    lock_path = workspace / LOCK_NAME
+    lock_path = workspace_path / LOCK_NAME
     lock = read_json(lock_path) if lock_path.exists() else None
     locked_index = _locked_source_index(lock)
-    force = bool(getattr(args, "force", False))
 
     todo: list[dict] = []  # sources that need a (re)summary this run
     keep: list[dict] = []  # summaries still current for their locked state
@@ -3013,8 +3060,8 @@ def summarize_workspace(args: argparse.Namespace) -> int:
             else:
                 # Legacy summary (no source_rev): timestamp fallback. Stale only if
                 # the source's content changed after the summary was last written.
-                changed_at = _source_changed_at(workspace, group, name, locked)
-                written_at = _summary_written_at(workspace, summary_path)
+                changed_at = _source_changed_at(workspace_path, group, name, locked)
+                written_at = _summary_written_at(workspace_path, summary_path)
                 if changed_at and written_at and changed_at > written_at:
                     record["reason"] = "changed"
                     todo.append(record)
@@ -3082,7 +3129,7 @@ def summarize_workspace(args: argparse.Namespace) -> int:
         "",
         "## Workspace focus",
         "",
-        *_summarize_focus_lines(workspace, config, getattr(args, "focus", None)),
+        *_summarize_focus_lines(workspace_path, config, focus),
         "",
         "Weight each summary toward this focus, but keep it a faithful general description "
         "of the source — don't drop core structure just because it's off-focus.",
@@ -3168,7 +3215,7 @@ def summarize_workspace(args: argparse.Namespace) -> int:
         "- Ground all claims in source paths or locked document metadata.",
     ]
 
-    if (workspace / GRAPH_OUTPUT_DIR / "graph.json").exists():
+    if (workspace_path / GRAPH_OUTPUT_DIR / "graph.json").exists():
         lines.append(
             "- The workspace knowledge graph exists (`graphify-out/graph.json`): when "
             "writing `relationships.md`, ground cross-source claims with `graphify query` / "
@@ -3208,7 +3255,15 @@ def summarize_workspace(args: argparse.Namespace) -> int:
     if orphans:
         print(f"Note: {len(orphans)} orphaned summary file(s): {', '.join(orphans)}")
     print("Next: ask your agent to follow that prompt from this workspace.")
-    return 0
+    return OperationResult.success()
+
+
+def summarize_workspace(args: argparse.Namespace) -> int:
+    return _summarize_operation(
+        workspace=args.workspace,
+        force=bool(getattr(args, "force", False)),
+        focus=getattr(args, "focus", None),
+    ).code
 
 
 # ---------------------------------------------------------------------------
@@ -3504,11 +3559,16 @@ def _record_graph_build(
     return graph_block
 
 
-def graph_workspace(args: argparse.Namespace) -> int:
-    workspace, config = load_workspace(args.workspace)
-    semantic = bool(getattr(args, "semantic", False))
-    backend = getattr(args, "backend", None)
-    model = getattr(args, "model", None)
+def _graph_operation(
+    *,
+    workspace: str,
+    semantic: bool,
+    backend: str | None,
+    model: str | None,
+    no_deep_scan: bool,
+    force: bool,
+) -> OperationResult:
+    workspace_path, config = load_workspace(workspace)
     if semantic and not backend:
         raise SystemExit(
             "graph: --semantic requires an explicit --backend — where workspace "
@@ -3524,7 +3584,7 @@ def graph_workspace(args: argparse.Namespace) -> int:
         raise SystemExit(GRAPH_INSTALL_HINT)
 
     deep_scan = None
-    if getattr(args, "no_deep_scan", False):
+    if no_deep_scan:
         deep_scanner_state = "disabled"
     else:
         deep_scan = safety.load_deep_scanner()
@@ -3532,24 +3592,26 @@ def graph_workspace(args: argparse.Namespace) -> int:
     print(_deep_scan_message(deep_scanner_state))
 
     lock = (
-        read_json(workspace / LOCK_NAME)
-        if (workspace / LOCK_NAME).exists()
-        else initial_lock(config.get("name", workspace.name))
+        read_json(workspace_path / LOCK_NAME)
+        if (workspace_path / LOCK_NAME).exists()
+        else initial_lock(config.get("name", workspace_path.name))
     )
     mode = "semantic" if semantic else "code-only"
-    built_from, not_graphed = _graph_input_set(workspace, config, lock, mode)
+    built_from, not_graphed = _graph_input_set(workspace_path, config, lock, mode)
     for key, reason in sorted(not_graphed.items()):
         if reason == NOT_GRAPHED_FLAGGED:
             print(f"graph: excluding {key} ({reason})")
 
-    _write_managed_graphifyignore(workspace)
-    force = bool(getattr(args, "force", False))
+    _write_managed_graphifyignore(workspace_path)
+    # Graphify inherits stdout; flush the stage's own messages first so piped
+    # output preserves the same order a terminal user sees.
+    sys.stdout.flush()
 
     if semantic:
         extract_args = ["extract", ".", "--backend", backend]
         if model:
             extract_args += ["--model", model]
-        rc = _run_graphify(command, extract_args, workspace, force=force)
+        rc = _run_graphify(command, extract_args, workspace_path, force=force)
         if rc != 0:
             raise SystemExit(f"graph: `graphify extract` failed (exit {rc}); lock not updated")
         # Headless extract defers GRAPH_REPORT.md to cluster-only (community
@@ -3557,18 +3619,18 @@ def graph_workspace(args: argparse.Namespace) -> int:
         cluster_args = ["cluster-only", ".", f"--backend={backend}"]
         if model:
             cluster_args.append(f"--model={model}")
-        rc = _run_graphify(command, cluster_args, workspace)
+        rc = _run_graphify(command, cluster_args, workspace_path)
         if rc != 0:
             raise SystemExit(f"graph: `graphify cluster-only` failed (exit {rc}); lock not updated")
     else:
         update_args = ["update", "."]
         if force:
             update_args.append("--force")
-        rc = _run_graphify(command, update_args, workspace, force=force)
+        rc = _run_graphify(command, update_args, workspace_path, force=force)
         if rc != 0:
             raise SystemExit(f"graph: `graphify update` failed (exit {rc}); lock not updated")
 
-    report_status, quarantine = _scan_graph_report(workspace, deep_scan)
+    report_status, quarantine = _scan_graph_report(workspace_path, deep_scan)
 
     graph_block = _record_graph_build(
         lock,
@@ -3581,7 +3643,7 @@ def graph_workspace(args: argparse.Namespace) -> int:
         semantic_backend=backend if semantic else None,
         semantic_model=model if semantic else None,
     )
-    write_json(workspace / LOCK_NAME, lock)
+    write_json(workspace_path / LOCK_NAME, lock)
 
     print(
         f"graph: built ({mode}, graphify {graph_block['backend_version']}) — "
@@ -3598,6 +3660,222 @@ def graph_workspace(args: argparse.Namespace) -> int:
             "your agents (user-level, optional; workspace queries only need "
             "the binary)"
         )
+    return OperationResult.success()
+
+
+def graph_workspace(args: argparse.Namespace) -> int:
+    return _graph_operation(
+        workspace=args.workspace,
+        semantic=bool(getattr(args, "semantic", False)),
+        backend=getattr(args, "backend", None),
+        model=getattr(args, "model", None),
+        no_deep_scan=bool(getattr(args, "no_deep_scan", False)),
+        force=bool(getattr(args, "force", False)),
+    ).code
+
+
+def _bring_up_failure(
+    step: str,
+    detail: str,
+    completed: list[str],
+    *,
+    code: int,
+) -> CliError:
+    last = completed[-1] if completed else "none"
+    lines = [
+        f"bring-up: {step} failed: {detail}",
+        f"bring-up: last completed step: {last}",
+    ]
+    # Only claim preserved state when a step actually completed. Failing on the
+    # first step (or under --check, which stops at validate) changes nothing, so
+    # the non-transactional warning would describe work that never happened.
+    if completed:
+        lines.append(
+            "bring-up: the pipeline is not transactional; completed changes were preserved."
+        )
+    return CliError("\n".join(lines), code)
+
+
+def _system_exit_code(exc: SystemExit) -> int:
+    if isinstance(exc.code, int) and exc.code:
+        return exc.code
+    return 1
+
+
+def _run_bring_up_step(step: str, operation, completed: list[str]) -> OperationResult:
+    """Run one operation and normalize only its documented failure channels.
+
+    ``KeyboardInterrupt`` remains uncaught because this function catches
+    ``SystemExit`` and ``CliError`` explicitly rather than ``BaseException``.
+    """
+    print(f"bring-up: {step}", flush=True)
+    try:
+        result = operation()
+    except SystemExit as exc:
+        sys.stdout.flush()
+        detail = str(exc.code) if exc.code not in (None, "") else "exited without a message"
+        raise _bring_up_failure(
+            step,
+            detail,
+            completed,
+            code=_system_exit_code(exc),
+        ) from exc
+    except CliError as exc:
+        sys.stdout.flush()
+        raise _bring_up_failure(
+            step,
+            str(exc),
+            completed,
+            code=exc.code,
+        ) from exc
+    except OSError as exc:
+        sys.stdout.flush()
+        raise _bring_up_failure(
+            step,
+            str(exc),
+            completed,
+            code=1,
+        ) from exc
+
+    if result.code:
+        sys.stdout.flush()
+        raise _bring_up_failure(
+            step,
+            result.reason or f"operation returned exit {result.code}",
+            completed,
+            code=result.code,
+        )
+    if result.status == "skipped":
+        print(f"bring-up: {step} skipped — {result.reason}")
+        return result
+
+    completed.append(step)
+    print(f"bring-up: {step} complete")
+    return result
+
+
+def _bring_up_forecast(
+    *,
+    config: dict,
+    graphify_command: list[str] | None,
+) -> None:
+    docs = source_groups(config).get("docs", [])
+    print("bring-up: read-only forecast")
+    print("1. validate: passed")
+    print("2. fetch: would attempt repo fetches and a lock update")
+    if docs:
+        print("3. fetch-docs: would attempt snapshots for declared docs sources")
+    else:
+        print("3. fetch-docs: would skip because the atlas declares no docs sources")
+    if graphify_command is None:
+        print("4. graph: would skip because Graphify is unavailable")
+    else:
+        print("4. graph: would attempt a code-only Graphify update")
+    print("5. summarize: would attempt to write the incremental summary prompt")
+    print(
+        "bring-up: forecast only; network, repo cleanliness, and attempted "
+        "Graphify work were not checked for success."
+    )
+
+
+def bring_up_workspace(args: argparse.Namespace) -> int:
+    """Run the mechanical workspace pipeline after explicit consent."""
+    if args.check and args.yes:
+        raise SystemExit("bring-up: --check and --yes are mutually exclusive")
+
+    workspace_path = pathlib.Path(args.workspace).resolve()
+    workspace_arg = str(workspace_path)
+    completed: list[str] = []
+    _run_bring_up_step(
+        "validate",
+        lambda: _validate_operation(workspace=workspace_arg),
+        completed,
+    )
+
+    try:
+        _loaded_workspace, config = load_workspace(workspace_arg)
+    except SystemExit as exc:
+        detail = str(exc.code) if exc.code not in (None, "") else "exited without a message"
+        raise _bring_up_failure(
+            "validate",
+            detail,
+            [],
+            code=_system_exit_code(exc),
+        ) from exc
+    graphify_command = _graphify_command()
+
+    if args.check:
+        _bring_up_forecast(config=config, graphify_command=graphify_command)
+        return 0
+
+    sources = source_groups(config)
+    if not any(sources.get(group) for group in ("repos", "docs", "papers", "notes")):
+        print("bring-up: no sources in atlas; nothing to do.")
+        return 0
+
+    if not args.yes:
+        if not sys.stdin.isatty():
+            raise SystemExit(
+                "bring-up: non-interactive input is denied by default; ask the user, "
+                "then re-run with --yes after explicit authorization"
+            )
+        answer = input(
+            f"Run bring-up for {workspace_path}? This may fetch network sources and "
+            "write workspace artifacts. [y/N] "
+        )
+        if answer.strip().lower() not in {"y", "yes"}:
+            print("bring-up: declined")
+            return 0
+
+    _run_bring_up_step(
+        "fetch",
+        lambda: _fetch_operation(
+            workspace=workspace_arg,
+            rebase=False,
+            no_graph=True,
+        ),
+        completed,
+    )
+    _run_bring_up_step(
+        "fetch-docs",
+        lambda: _fetch_docs_operation(
+            workspace=workspace_arg,
+            no_deep_scan=False,
+        ),
+        completed,
+    )
+    if graphify_command is None:
+        _run_bring_up_step(
+            "graph",
+            lambda: OperationResult.skipped("Graphify is unavailable"),
+            completed,
+        )
+    else:
+        _run_bring_up_step(
+            "graph",
+            lambda: _graph_operation(
+                workspace=workspace_arg,
+                semantic=False,
+                backend=None,
+                model=None,
+                no_deep_scan=False,
+                force=False,
+            ),
+            completed,
+        )
+    _run_bring_up_step(
+        "summarize",
+        lambda: _summarize_operation(
+            workspace=workspace_arg,
+            force=False,
+            focus=None,
+        ),
+        completed,
+    )
+
+    output_dir = config.get("summaries", {}).get("output_dir", "summaries")
+    prompt_path = pathlib.Path(output_dir) / "summarize.prompt.md"
+    print(f"bring-up: complete — hand {prompt_path} to your agent.")
     return 0
 
 
@@ -5850,6 +6128,23 @@ def build_parser() -> argparse.ArgumentParser:
     validate = sub.add_parser("validate", help="validate a workspace atlas")
     validate.add_argument("workspace", nargs="?", default=".", help="workspace directory")
     validate.set_defaults(func=validate_workspace)
+
+    bring_up = sub.add_parser(
+        "bring-up",
+        help="run validate, fetch, fetch-docs, graph, and summarize in order",
+    )
+    bring_up.add_argument("workspace", nargs="?", default=".", help="workspace directory")
+    bring_up.add_argument(
+        "--check",
+        action="store_true",
+        help="print a read-only forecast without fetching or writing",
+    )
+    bring_up.add_argument(
+        "--yes",
+        action="store_true",
+        help="run without prompting after explicit user authorization",
+    )
+    bring_up.set_defaults(func=bring_up_workspace)
 
     status = sub.add_parser("status", help="show workspace source and lock status")
     status.add_argument("workspace", nargs="?", default=".", help="workspace directory")

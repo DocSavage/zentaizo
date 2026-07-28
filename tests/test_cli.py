@@ -5163,6 +5163,479 @@ exit 1
 """
 
 
+class BringUpTests(WorkspaceCliCase):
+    def _install_graphify(self, tmp: str, body: str = _STUB_GRAPHIFY) -> Path:
+        bindir = Path(tmp) / "bring-up-bin"
+        bindir.mkdir(exist_ok=True)
+        log = Path(tmp) / "bring-up-graphify.log"
+        script = bindir / "graphify"
+        script.write_text(body)
+        script.chmod(0o755)
+        path_patcher = mock.patch.dict(
+            os.environ,
+            {
+                "PATH": f"{bindir}{os.pathsep}{os.environ.get('PATH', '')}",
+                "STUB_LOG": str(log),
+            },
+        )
+        path_patcher.start()
+        self.addCleanup(path_patcher.stop)
+        module_patcher = mock.patch(
+            "zentaizo.cli._graphify_module_available",
+            return_value=False,
+        )
+        module_patcher.start()
+        self.addCleanup(module_patcher.stop)
+        return log
+
+    def _local_repo_workspace(
+        self,
+        tmp: str,
+        *,
+        docs: list[dict] | None = None,
+        papers: list[dict] | None = None,
+    ) -> tuple[Path, Path]:
+        root = Path(tmp)
+        remote = root / "bring-up-remote.git"
+        remote.mkdir()
+        _git(remote, "init", "-q", "--bare", "-b", "main")
+
+        upstream = root / "bring-up-upstream"
+        upstream.mkdir()
+        _git(upstream, "init", "-q", "-b", "main")
+        _git(upstream, "config", "user.email", "t@example.com")
+        _git(upstream, "config", "user.name", "Test")
+        (upstream / "README.md").write_text("# Local fixture\n")
+        _git(upstream, "add", ".")
+        _git(upstream, "commit", "-q", "-m", "base")
+        _git(upstream, "remote", "add", "origin", str(remote))
+        _git(upstream, "push", "-q", "-u", "origin", "main")
+
+        workspace = self._make_workspace(tmp)
+        atlas = {
+            "version": 1,
+            "name": "bring-up-fixture",
+            "sources": {
+                "repos": [
+                    {
+                        "name": "library",
+                        "url": str(remote),
+                        "ref": "main",
+                        "role": "reference",
+                        "description": "Local reference fixture.",
+                    }
+                ],
+                "docs": docs or [],
+                "papers": papers or [],
+                "notes": [],
+            },
+        }
+        (workspace / "zentaizo.atlas.json").write_text(json.dumps(atlas))
+        return workspace, upstream
+
+    def _empty_workspace(
+        self,
+        tmp: str,
+        *,
+        docs: list[dict] | None = None,
+        papers: list[dict] | None = None,
+        notes: list[dict] | None = None,
+    ) -> Path:
+        workspace = self._make_workspace(tmp)
+        atlas = {
+            "version": 1,
+            "name": "bring-up-empty",
+            "sources": {
+                "repos": [],
+                "docs": docs or [],
+                "papers": papers or [],
+                "notes": notes or [],
+            },
+        }
+        (workspace / "zentaizo.atlas.json").write_text(json.dumps(atlas))
+        return workspace
+
+    @staticmethod
+    def _tree_snapshot(workspace: Path) -> dict[str, tuple[str, bytes | str]]:
+        snapshot: dict[str, tuple[str, bytes | str]] = {}
+        for path in sorted(workspace.rglob("*")):
+            rel = str(path.relative_to(workspace))
+            if path.is_symlink():
+                snapshot[rel] = ("symlink", os.readlink(path))
+            elif path.is_file():
+                snapshot[rel] = ("file", path.read_bytes())
+            else:
+                snapshot[rel] = ("dir", "")
+        return snapshot
+
+    def test_bring_up_runs_real_steps_in_order_and_graphify_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace, upstream = self._local_repo_workspace(tmp)
+            log = self._install_graphify(tmp)
+
+            self.assertEqual(self._run(["fetch", str(workspace), "--no-graph"])[0], 0)
+            self.assertEqual(self._run(["graph", str(workspace)])[0], 0)
+            log.unlink()
+
+            (upstream / "next.txt").write_text("next\n")
+            _git(upstream, "add", ".")
+            _git(upstream, "commit", "-q", "-m", "advance")
+            _git(upstream, "push", "-q", "origin", "main")
+
+            code, out, err = self._run(["bring-up", str(workspace), "--yes"])
+
+            self.assertEqual((code, err), (0, ""))
+            headings = [
+                "bring-up: validate",
+                "bring-up: fetch",
+                "bring-up: fetch-docs",
+                "bring-up: graph",
+                "bring-up: summarize",
+            ]
+            self.assertEqual(headings, sorted(headings, key=out.index))
+            self.assertTrue((workspace / "summaries" / "summarize.prompt.md").is_file())
+            calls = log.read_text().splitlines()
+            self.assertEqual([call for call in calls if call.startswith("update .")], ["update ."])
+            self.assertTrue(
+                out.endswith(
+                    "bring-up: complete — hand summaries/summarize.prompt.md to your agent.\n"
+                )
+            )
+
+    def test_bring_up_invalid_atlas_return_code_stops_before_fetch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._empty_workspace(tmp)
+            atlas_path = workspace / "zentaizo.atlas.json"
+            atlas = json.loads(atlas_path.read_text())
+            atlas.pop("name")
+            atlas_path.write_text(json.dumps(atlas))
+
+            code, out, err = self._run(["bring-up", str(workspace), "--yes"])
+
+            self.assertEqual(code, 1)
+            self.assertIn(str(atlas_path), err)
+            self.assertIn("validate failed", err)
+            self.assertIn("Missing top-level name", out)
+            self.assertNotIn("bring-up: fetch\n", out)
+            # Nothing completed, so there is no preserved state to warn about.
+            self.assertIn("last completed step: none", err)
+            self.assertNotIn("completed changes were preserved", err)
+
+    def test_bring_up_normalizes_missing_and_invalid_json_atlases(self):
+        for case in ("missing", "invalid-json"):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
+                workspace = self._make_workspace(tmp)
+                atlas_path = workspace / "zentaizo.atlas.json"
+                if case == "invalid-json":
+                    atlas_path.write_text("{")
+
+                code, out, err = self._run(["bring-up", str(workspace), "--yes"])
+
+                self.assertEqual(code, 1)
+                self.assertIn(str(atlas_path), err)
+                self.assertIn("validate failed", err)
+                self.assertNotIn("Traceback", err)
+                self.assertNotIn("bring-up: fetch\n", out)
+                self.assertFalse((workspace / "summaries" / "summarize.prompt.md").exists())
+
+    def test_bring_up_dirty_reference_system_exit_stops_after_validate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace, _upstream = self._local_repo_workspace(tmp)
+            self.assertEqual(self._run(["fetch", str(workspace), "--no-graph"])[0], 0)
+            (workspace / "repos" / "library" / "dirty.txt").write_text("dirty\n")
+
+            code, out, err = self._run(["bring-up", str(workspace), "--yes"])
+
+            self.assertEqual(code, 1)
+            self.assertIn("bring-up: fetch failed", err)
+            self.assertIn("local changes", err)
+            self.assertIn("last completed step: validate", err)
+            self.assertNotIn("bring-up: graph\n", out)
+            self.assertFalse((workspace / "summaries" / "summarize.prompt.md").exists())
+
+    def test_bring_up_managed_file_cli_error_preserves_code_and_stops(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._empty_workspace(
+                tmp,
+                notes=[{"name": "note", "path": "notes/note.md"}],
+            )
+            (workspace / "notes" / "note.md").write_text("# Note\n")
+            self._install_graphify(tmp)
+            ignore = workspace / ".graphifyignore"
+            ignore.write_text("user rules\n")
+
+            code, out, err = self._run(["bring-up", str(workspace), "--yes"])
+
+            self.assertEqual(code, 1)
+            self.assertIn("bring-up: graph failed", err)
+            self.assertIn("not written by zentaizo", err)
+            self.assertEqual(ignore.read_text(), "user rules\n")
+            self.assertNotIn("bring-up: summarize\n", out)
+
+    def test_bring_up_document_fetch_failure_is_nonfatal(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._empty_workspace(
+                tmp,
+                docs=[
+                    {
+                        "name": "remote-doc",
+                        "kind": "guide",
+                        "url": "https://docs.invalid/guide",
+                    }
+                ],
+            )
+            self._install_graphify(tmp)
+            with mock.patch(
+                "zentaizo.cli._http_get",
+                side_effect=urllib.error.URLError("offline"),
+            ):
+                code, out, err = self._run(["bring-up", str(workspace), "--yes"])
+
+            self.assertEqual((code, err), (0, ""))
+            self.assertIn("WARNING 'remote-doc': fetch failed", out)
+            self.assertIn("bring-up: summarize", out)
+            lock = json.loads((workspace / "zentaizo.lock.json").read_text())
+            self.assertEqual(lock["doc_snapshots"][0]["status"], "reference-only")
+
+    def test_bring_up_skips_docs_for_empty_and_papers_only_atlases(self):
+        cases = (
+            ("no-docs", [], [{"name": "note", "path": "notes/note.md"}]),
+            ("papers-only", [{"name": "paper", "path": "papers/paper.pdf"}], []),
+        )
+        for label, papers, notes in cases:
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as tmp:
+                workspace = self._empty_workspace(tmp, papers=papers, notes=notes)
+                if papers:
+                    (workspace / "papers" / "paper.pdf").write_bytes(b"%PDF-1.0\n")
+                if notes:
+                    (workspace / "notes" / "note.md").write_text("# Note\n")
+                self._install_graphify(tmp)
+
+                code, out, err = self._run(["bring-up", str(workspace), "--yes"])
+
+                self.assertEqual((code, err), (0, ""))
+                self.assertIn(
+                    "bring-up: fetch-docs skipped — atlas declares no docs sources",
+                    out,
+                )
+                if papers:
+                    self.assertIn("run `zentaizo fetch-docs`", out)
+
+    def test_bring_up_skips_unresolvable_graphify_and_reaches_summarize(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._empty_workspace(
+                tmp,
+                notes=[{"name": "note", "path": "notes/note.md"}],
+            )
+            (workspace / "notes" / "note.md").write_text("# Note\n")
+            with mock.patch("zentaizo.cli._graphify_command", return_value=None):
+                code, out, err = self._run(["bring-up", str(workspace), "--yes"])
+
+            self.assertEqual((code, err), (0, ""))
+            self.assertIn("bring-up: graph skipped — Graphify is unavailable", out)
+            self.assertIn("bring-up: summarize", out)
+            self.assertTrue((workspace / "summaries" / "summarize.prompt.md").is_file())
+
+    def test_bring_up_resolved_failing_graphify_halts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._empty_workspace(
+                tmp,
+                notes=[{"name": "note", "path": "notes/note.md"}],
+            )
+            (workspace / "notes" / "note.md").write_text("# Note\n")
+            self._install_graphify(tmp, _STUB_GRAPHIFY_FAILING)
+
+            code, out, err = self._run(["bring-up", str(workspace), "--yes"])
+
+            self.assertEqual(code, 1)
+            self.assertIn("bring-up: graph failed", err)
+            self.assertIn("graphify update", err)
+            self.assertNotIn("bring-up: summarize\n", out)
+            self.assertFalse((workspace / "summaries" / "summarize.prompt.md").exists())
+
+    def test_bring_up_check_is_read_only_forecast_without_network(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace, _upstream = self._local_repo_workspace(
+                tmp,
+                docs=[
+                    {
+                        "name": "remote-doc",
+                        "kind": "guide",
+                        "url": "https://docs.invalid/guide",
+                    }
+                ],
+            )
+            before = self._tree_snapshot(workspace)
+            with (
+                mock.patch("zentaizo.cli.fetch_reference_repo") as fetch_repo,
+                mock.patch("zentaizo.cli._http_get") as http_get,
+                mock.patch("zentaizo.cli._run_graphify") as run_graphify,
+                mock.patch(
+                    "zentaizo.cli._graphify_command",
+                    return_value=["/usr/bin/graphify"],
+                ),
+            ):
+                code, out, err = self._run(["bring-up", str(workspace), "--check"])
+
+            self.assertEqual((code, err), (0, ""))
+            fetch_repo.assert_not_called()
+            http_get.assert_not_called()
+            run_graphify.assert_not_called()
+            self.assertEqual(before, self._tree_snapshot(workspace))
+            for index, step in enumerate(
+                ("validate", "fetch", "fetch-docs", "graph", "summarize"),
+                start=1,
+            ):
+                self.assertIn(f"{index}. {step}:", out)
+            self.assertIn("would attempt", out)
+            self.assertNotIn("will succeed", out)
+
+    def test_bring_up_consent_contract(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            empty = self._empty_workspace(tmp)
+            with mock.patch("sys.stdin.isatty") as isatty:
+                code, out, err = self._run(["bring-up", str(empty)])
+            self.assertEqual((code, err), (0, ""))
+            self.assertIn("no sources in atlas; nothing to do", out)
+            isatty.assert_not_called()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace, _upstream = self._local_repo_workspace(tmp)
+
+            with self.assertRaisesRegex(SystemExit, "--check and --yes"):
+                main(["bring-up", str(workspace), "--check", "--yes"])
+
+            with (
+                mock.patch("sys.stdin.isatty", return_value=False),
+                contextlib.redirect_stdout(io.StringIO()),
+                self.assertRaisesRegex(SystemExit, "non-interactive input"),
+            ):
+                main(["bring-up", str(workspace)])
+
+            with (
+                mock.patch("sys.stdin.isatty", return_value=True),
+                mock.patch("builtins.input", return_value="n") as prompt,
+            ):
+                code, out, err = self._run(["bring-up", str(workspace)])
+            self.assertEqual((code, err), (0, ""))
+            self.assertIn("bring-up: declined", out)
+            self.assertIn("Run bring-up", prompt.call_args.args[0])
+            self.assertFalse((workspace / "summaries" / "summarize.prompt.md").exists())
+
+    def test_bring_up_rerun_preserves_fetch_time_and_requests_only_changed_sources(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace, _upstream = self._local_repo_workspace(
+                tmp,
+                docs=[
+                    {
+                        "name": "library-readme",
+                        "kind": "guide",
+                        "repo": "library",
+                        "path": "README.md",
+                    }
+                ],
+            )
+            log = self._install_graphify(tmp)
+            self.assertEqual(self._run(["bring-up", str(workspace), "--yes"])[0], 0)
+            first_lock = json.loads((workspace / "zentaizo.lock.json").read_text())
+            fetched_at = first_lock["sources"]["repos"][0]["fetched_at"]
+
+            summaries = workspace / "summaries" / "sources"
+            summaries.mkdir(parents=True, exist_ok=True)
+            repo_rev = first_lock["sources"]["repos"][0]["commit"]
+            doc_rev = first_lock["doc_snapshots"][0]["content_hash"]
+            (summaries / "library.md").write_text(
+                f"---\nsource: library\nsource_rev: {repo_rev}\n---\n"
+            )
+            (summaries / "library-readme.md").write_text(
+                f"---\nsource: library-readme\nsource_rev: {doc_rev}\n---\n"
+            )
+            log.unlink()
+
+            code, out, err = self._run(["bring-up", str(workspace), "--yes"])
+
+            self.assertEqual((code, err), (0, ""))
+            self.assertIn("Fetching library (reference)", out)
+            self.assertNotIn("Cloning library", out)
+            second_lock = json.loads((workspace / "zentaizo.lock.json").read_text())
+            self.assertEqual(second_lock["sources"]["repos"][0]["fetched_at"], fetched_at)
+            self.assertEqual(log.read_text().splitlines().count("update ."), 1)
+            prompt = (workspace / "summaries" / "summarize.prompt.md").read_text()
+            self.assertIn("Nothing — every source summary is current", prompt)
+
+    def test_bring_up_uses_explicit_internal_operation_signatures(self):
+        import inspect
+
+        from zentaizo import cli
+
+        expected = {
+            "_validate_operation": ("workspace",),
+            "_fetch_operation": ("workspace", "rebase", "no_graph"),
+            "_fetch_docs_operation": ("workspace", "no_deep_scan"),
+            "_graph_operation": (
+                "workspace",
+                "semantic",
+                "backend",
+                "model",
+                "no_deep_scan",
+                "force",
+            ),
+            "_summarize_operation": ("workspace", "force", "focus"),
+        }
+        for name, parameters in expected.items():
+            with self.subTest(operation=name):
+                signature = inspect.signature(getattr(cli, name))
+                self.assertEqual(tuple(signature.parameters), parameters)
+                self.assertTrue(
+                    all(
+                        parameter.kind is inspect.Parameter.KEYWORD_ONLY
+                        for parameter in signature.parameters.values()
+                    )
+                )
+
+    def test_bring_up_generated_readme_docs_templates_and_generation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            readme = (workspace / "README.md").read_text()
+            self.assertIn("### 3. Bring up the workspace", readme)
+            self.assertIn("zentaizo bring-up", readme)
+            self.assertIn("zentaizo fetch-docs", readme)
+            self.assertIn("Run individual stages", readme)
+            self.assertNotIn("### 4. Build the knowledge graph", readme)
+
+        root = Path(__file__).resolve().parents[1]
+        skill = (
+            root / "src/zentaizo/templates/global-skills/zentaizo/SKILL.md"
+        ).read_text()
+        self.assertNotIn("degrades gracefully when the `graphify` binary is absent", skill)
+        self.assertIn("raises a focused install hint", skill)
+
+        upgrade = (
+            root / "src/zentaizo/templates/global-skills/zentaizo/upgrade-zentaizo.md"
+        ).read_text()
+        self.assertIn(
+            "`README.md` — generated from the `workspace_readme()` function",
+            upgrade,
+        )
+
+        cli_doc = (root / "docs/cli.md").read_text()
+        initial_commands = cli_doc.split("## Initial commands", 1)[1]
+        section = initial_commands.split("zentaizo bring-up", 1)[1].split("```", 2)[1]
+        for phrase in (
+            "not transactional",
+            "--check",
+            "--yes",
+            "no `docs` sources",
+            "Graphify is unavailable",
+        ):
+            self.assertIn(phrase, section)
+
+        from zentaizo.cli import CONVENTIONS_DELTAS, CONVENTIONS_GENERATION
+
+        self.assertEqual(CONVENTIONS_GENERATION, 6)
+        self.assertIn("README.md", CONVENTIONS_DELTAS[6])
+
+
 class GraphTests(WorkspaceCliCase):
     def _graph_workspace(self, tmp: str) -> Path:
         workspace = self._make_workspace(tmp)
@@ -5427,7 +5900,7 @@ class GraphTests(WorkspaceCliCase):
             # right after the structural-counterpart paragraph.
             self.assertLess(
                 readme.index("structural counterpart"),
-                readme.index("each clone rebuilds the graph locally"),
+                readme.index("each clone rebuilds it locally"),
             )
             self.assertNotIn("needs the `graphify` CLI on `PATH`", readme)
             self.assertIn("Graphify ships with Zentaizo", readme)
@@ -5437,13 +5910,22 @@ class GraphTests(WorkspaceCliCase):
             workspace = self._make_workspace(tmp)
             agents = (workspace / "AGENTS.md").read_text()
             readme = (workspace / "README.md").read_text()
-            # README: the graph is its own workflow step, before summarize,
-            # with no "optional" framing.
-            self.assertIn("### 4. Build the knowledge graph", readme)
+            # README: bring-up owns the mechanical flow while each individual
+            # command remains available for isolated use.
+            self.assertIn("### 3. Bring up the workspace", readme)
+            individual = readme.split("#### Run individual stages", 1)[1].split(
+                "### 4. Plan",
+                1,
+            )[0]
             self.assertLess(
-                readme.index("Build the knowledge graph"),
-                readme.index("Prepare hierarchical summaries"),
+                individual.index("zentaizo fetch-docs"),
+                individual.index("zentaizo graph"),
             )
+            self.assertLess(
+                individual.index("zentaizo graph"),
+                individual.index("zentaizo summarize"),
+            )
+            self.assertIn("#### Run individual stages", readme)
             self.assertNotIn("optional knowledge graph", readme)
             self.assertNotIn("Optionally, build", readme)
             # AGENTS.md: consultation order says build-if-missing, not

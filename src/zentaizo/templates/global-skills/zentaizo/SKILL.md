@@ -49,7 +49,7 @@ Call `zentaizo.atlas.json` the "context atlas" so the user understands its role 
    - Preserve human intent in the manifest. Let lock files record resolved commits, hashes, timestamps, and fetch metadata.
 
 5. Prepare committed markdown context.
-   - Build the workspace knowledge graph with `zentaizo graph` as a standard part of context prep (code-only and offline by default; it degrades gracefully when the `graphify` binary is absent). Answer structural and cross-repo questions with `graphify query` / `path` / `explain` instead of re-scanning sources; `graphify-out/` is derived output, rebuilt per clone with `zentaizo graph` after `zentaizo fetch`.
+   - Build the workspace knowledge graph with `zentaizo graph` as a standard part of context prep (code-only and offline by default; it raises a focused install hint when Graphify is unavailable). Answer structural and cross-repo questions with `graphify query` / `path` / `explain` instead of re-scanning sources; `graphify-out/` is derived output, rebuilt per clone with `zentaizo graph` after `zentaizo fetch`.
    - Write or update `summaries/overview.md` for the system map.
    - Write or update `summaries/relationships.md` for cross-source contracts and data flow, grounding claims in graph queries when the graph exists.
    - Write or update `summaries/open-questions.md` for gaps, assumptions, and follow-up discovery.

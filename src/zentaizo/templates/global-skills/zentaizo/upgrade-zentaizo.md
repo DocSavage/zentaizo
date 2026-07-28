@@ -78,6 +78,8 @@ files Zentaizo owns are:
 
 - `AGENTS.md` — generated from the `workspace_agents()` function in
   `src/zentaizo/cli.py`.
+- `README.md` — generated from the `workspace_readme()` function in
+  `src/zentaizo/cli.py`.
 - `CLAUDE.md` — `@AGENTS.md` (an import line; Claude reads `CLAUDE.md`, not
   `AGENTS.md`, and loads the import in full). Workspaces created before
   2026-06-09 have a prose pointer stub here instead and should be migrated to the

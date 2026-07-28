@@ -5,11 +5,7 @@ Zentaizo should feel like a normal tool:
 ```bash
 zentaizo setup
 zentaizo create my-system-atlas
-zentaizo fetch
-zentaizo discover-docs
-zentaizo fetch-docs
-zentaizo graph
-zentaizo summarize
+zentaizo bring-up
 zentaizo provide-info /path/to/repo
 ```
 
@@ -81,6 +77,36 @@ zentaizo validate [PATH]
 ```
 
 Checks that `zentaizo.atlas.json` exists and has the required shape. It also runs effort-doc integrity checks: missing effort docs, orphan effort docs, duplicate effort numbers, and legacy registry entries without a `number` are reported loudly. Missing or overlong `short_title` fields on open `changes/` and `debugging/` slices are warnings only. Legacy `zentaizo.config.json` workspaces are still readable.
+
+```bash
+zentaizo bring-up [PATH] [--check | --yes]
+```
+
+Runs the mechanical workspace pipeline in order: `validate`, `fetch`,
+`fetch-docs`, `graph`, then `summarize`. The command calls the internal
+`_validate_operation()`, `_fetch_operation()`, `_fetch_docs_operation()`,
+`_graph_operation()`, and `_summarize_operation()` functions
+(`src/zentaizo/cli.py`). It writes `summaries/summarize.prompt.md`; hand that
+prompt to your agent to produce the summaries.
+
+The pipeline skips `fetch-docs` when the atlas declares no `docs` sources,
+including when it declares papers but no docs. It skips `graph` only when
+Graphify is unavailable. A resolved Graphify failure or a managed-file refusal
+stops the run. An individual doc fetch failure remains nonfatal and is recorded
+as `reference-only`, matching `zentaizo fetch-docs`.
+
+The command is not transactional. A failed step leaves earlier fetches,
+snapshots, quarantined artifacts, graph output, and lock updates in place. The
+failure message names the failed step and the last completed step so you can
+fix the cause and rerun safely.
+
+The command asks before it fetches or writes. Non-interactive input fails
+closed unless you pass `--yes` after explicit authorization. The `--yes` flag
+does not permit overwriting user-owned managed files. The `--check` flag is
+read-only and prints an ordered forecast; it says which steps would be
+attempted or skipped without claiming network, repository, or Graphify
+success. The `--check` and `--yes` flags are mutually exclusive. These rules
+are implemented by `bring_up_workspace()` (`src/zentaizo/cli.py`).
 
 ```bash
 zentaizo status [PATH]
