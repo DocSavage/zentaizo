@@ -24,6 +24,7 @@ from zentaizo.cli import (
     _graphify_command,
     _graphify_version,
     _HttpResult,
+    _install_folder_skill,
     _preserve_unchanged_fetched_at,
     _read_codex_rollout_log,
     _repo_identity,
@@ -1690,12 +1691,20 @@ class SkillsCommandTests(unittest.TestCase):
         self.assertTrue(self._codex_dest().is_symlink())
         self.assertTrue((self._claude_dest() / "SKILL.md").exists())
         self.assertTrue((self._codex_dest() / "SKILL.md").exists())
+        for destination in (self._claude_dest(), self._codex_dest()):
+            self.assertTrue((destination / "render-report-pdf.md").exists())
+            self.assertTrue((destination / "report-pdf-engines.md").exists())
+            self.assertTrue((destination / "assets" / "report.css").exists())
+            self.assertTrue(
+                (destination / "scripts" / "render_report_pdf.py").exists()
+            )
 
         gemini = self._gemini_path()
         self.assertTrue(gemini.exists())
         body = gemini.read_text()
         self.assertIn("BEGIN zentaizo", body)
         self.assertIn("Zentaizo Global Skill", body)
+        self.assertIn("report PDF", body)
         self.assertIn("END zentaizo", body)
 
     def test_install_single_target(self):
@@ -1715,6 +1724,42 @@ class SkillsCommandTests(unittest.TestCase):
         self.assertTrue(dest.is_dir())
         self.assertFalse(dest.is_symlink())
         self.assertTrue((dest / "SKILL.md").exists())
+        self.assertTrue((dest / "render-report-pdf.md").exists())
+        self.assertTrue((dest / "report-pdf-engines.md").exists())
+        self.assertTrue((dest / "assets" / "report.css").exists())
+        self.assertTrue((dest / "scripts" / "render_report_pdf.py").exists())
+
+    def test_install_copy_mode_ignores_python_bytecode(self):
+        source = self.tmp / "source"
+        scripts = source / "scripts"
+        cache = scripts / "__pycache__"
+        cache.mkdir(parents=True)
+        (source / "SKILL.md").write_text("# Skill\n")
+        (scripts / "render.py").write_text("print('render')\n")
+        (cache / "render.cpython-314.pyc").write_bytes(b"compiled")
+
+        result = _install_folder_skill(source, self.tmp / "skills", copy=True)
+
+        destination = self.tmp / "skills" / "zentaizo"
+        self.assertIn("copied", result)
+        self.assertTrue((destination / "scripts" / "render.py").exists())
+        self.assertFalse((destination / "scripts" / "__pycache__").exists())
+
+    def test_report_pdf_procedure_is_lazy_loaded(self):
+        source = (
+            Path(__file__).resolve().parents[1]
+            / "src/zentaizo/templates/global-skills/zentaizo"
+        )
+        root_skill = (source / "SKILL.md").read_text()
+        procedure = (source / "render-report-pdf.md").read_text()
+
+        self.assertIn("render-report-pdf.md", root_skill)
+        self.assertIn("Do not read that file for unrelated", root_skill)
+        self.assertNotIn("pdftoppm", root_skill)
+        self.assertIn("pdftoppm", procedure)
+        self.assertIn("isolated pipx/uv tool environment", procedure)
+        self.assertIn("--engine auto|chrome|weasyprint", procedure)
+        self.assertNotIn("defaults to `Janelia FlyEM`", procedure)
 
     def test_install_is_idempotent_for_symlinks(self):
         with contextlib.redirect_stdout(io.StringIO()):

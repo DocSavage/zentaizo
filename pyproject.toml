@@ -21,6 +21,9 @@ docs-scan = [
   "llm-guard>=0.3.16",
 ]
 graph = []
+report-pdf = [
+  "markdown-it-py>=3,<5",
+]
 dev = [
   "ruff>=0.6",
   "pre-commit>=3.7",
@@ -39,6 +42,8 @@ zentaizo = [
   "templates/skills/*.md",
   "templates/global-skills/zentaizo/*.md",
   "templates/global-skills/zentaizo/agents/*.yaml",
+  "templates/global-skills/zentaizo/assets/*.css",
+  "templates/global-skills/zentaizo/scripts/*.py",
   "templates/hooks/*",
 ]
 

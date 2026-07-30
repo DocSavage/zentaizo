@@ -4212,7 +4212,11 @@ def _install_folder_skill(source: pathlib.Path, dest_root: pathlib.Path, copy: b
         except OSError as exc:
             print(f"  symlink unavailable ({exc}); falling back to copy")
 
-    shutil.copytree(source, dest)
+    shutil.copytree(
+        source,
+        dest,
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"),
+    )
     return f"copied {source} -> {dest}"
 
 
@@ -4236,7 +4240,8 @@ def _gemini_skill_block(source: pathlib.Path) -> str:
             "",
             "The `zentaizo` workflow builds curated multi-source Zentaizo workspaces.",
             f"Read the full skill definition at `{skill_path}` when the user mentions zentaizo,",
-            "context atlases, or multi-repo AI workspaces.",
+            "context atlases, multi-repo AI workspaces, or asks to render a Markdown",
+            "report PDF in a Zentaizo workspace.",
             END_MARKER,
             "",
         ]

@@ -1,6 +1,6 @@
 ---
 name: zentaizo
-description: Build and maintain Zentaizo workspaces for AI-assisted work across related repositories, docs, papers, notes, and generated markdown summaries. Use when creating or revising a Zentaizo workspace, deciding what belongs in the human-authored context atlas zentaizo.atlas.json, preparing markdown context to commit for future agent use, injecting Zentaizo context into another repo, or avoiding conflicts with Claude Memory, AGENTS.md, CLAUDE.md, ChatGPT Memory, Cursor rules, or other agent memory/instruction systems.
+description: Build and maintain Zentaizo workspaces for AI-assisted work across related repositories, docs, papers, notes, and generated markdown summaries. Use when creating or revising a Zentaizo workspace, deciding what belongs in the human-authored context atlas zentaizo.atlas.json, preparing markdown context to commit for future agent use, rendering a polished PDF from a Zentaizo Markdown report, injecting Zentaizo context into another repo, or avoiding conflicts with Claude Memory, AGENTS.md, CLAUDE.md, ChatGPT Memory, Cursor rules, or other agent memory/instruction systems.
 ---
 
 # Zentaizo
@@ -19,6 +19,14 @@ description: Build and maintain Zentaizo workspaces for AI-assisted work across 
 Use Zentaizo as a project-local context atlas, not as a replacement for an agent's memory system. Help the user identify sources that define a system's goals/architecture/implementation, and turn that real-world knowledge into committed markdown and, crucially, the human-curated context atlas (`zentaizo.atlas.json`).
 
 Call `zentaizo.atlas.json` the "context atlas" so the user understands its role as the curated engine of the workspace.
+
+## Optional report-PDF workflow
+
+When the user explicitly asks to create, rebuild, or restyle a PDF from a
+Markdown report, read the sibling `render-report-pdf.md` in full and follow it.
+Do not read that file for unrelated Zentaizo work; it is deliberately
+lazy-loaded to keep its publishing workflow and renderer out of the context
+window until needed.
 
 ## Workflow
 
