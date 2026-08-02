@@ -1615,7 +1615,7 @@ def doc_is_in_repo(doc: dict) -> bool:
 
 
 def validate_doc_entries(docs: list[dict], repo_names: set[str]) -> list[str]:
-    """Validate `kind` and the url-vs-(repo+path) discriminator on doc entries."""
+    """Validate `kind`, `snapshot`, and the url-vs-(repo+path) discriminator."""
     errors: list[str] = []
     for index, doc in enumerate(docs, start=1):
         label = doc.get("name") or f"docs[{index}]"
@@ -1624,6 +1624,14 @@ def validate_doc_entries(docs: list[dict], repo_names: set[str]) -> list[str]:
         if kind is not None and kind not in VALID_DOC_KINDS:
             allowed = ", ".join(repr(k) for k in VALID_DOC_KINDS)
             errors.append(f"docs {label!r} has invalid kind {kind!r}; expected one of {allowed}")
+
+        # A non-boolean (e.g. the string "false") would silently fail the
+        # `is False` opt-out check in fetch-docs, so reject it here.
+        snapshot = doc.get("snapshot")
+        if snapshot is not None and not isinstance(snapshot, bool):
+            errors.append(
+                f"docs {label!r} has invalid snapshot {snapshot!r}; expected true or false"
+            )
 
         if doc_is_in_repo(doc):
             repo_ref = doc["repo"]
@@ -2326,6 +2334,27 @@ def _new_doc_entry(doc: dict, source: dict) -> dict:
     }
 
 
+def _snapshot_opt_out_entry(workspace: pathlib.Path, doc: dict) -> dict:
+    """Honor `"snapshot": false`: never fetch, and retire any stale snapshot.
+
+    For a source whose fetch cannot capture the real content (e.g. a
+    login-gated page that answers with the site's generic index), the entry
+    keeps its canonical `url` (or `repo`+`path`) as a citable pointer.
+    Retiring existing variants matters as much as not fetching: a
+    previously-written misleading snapshot must not survive the opt-out.
+    """
+    source = (
+        {"repo": doc["repo"], "path": doc.get("path")}
+        if doc_is_in_repo(doc)
+        else {"url": doc.get("url")}
+    )
+    entry = _new_doc_entry(doc, source)
+    entry["status"] = "reference-only"
+    entry["reason"] = "snapshot-disabled"
+    _retire_snapshot_variants(workspace, entry["name"])
+    return entry
+
+
 def _retire_snapshot_variants(workspace: pathlib.Path, name: str) -> None:
     """Remove prior clean/quarantined text variants for one validated source."""
     if ".." in name or not SAFE_SOURCE_NAME.match(name):
@@ -2659,7 +2688,9 @@ def _fetch_docs_operation(*, workspace: str, no_deep_scan: bool) -> OperationRes
 
     entries: list[dict] = []
     for doc in docs:
-        if doc_is_in_repo(doc):
+        if doc.get("snapshot") is False:
+            entries.append(_snapshot_opt_out_entry(workspace_path, doc))
+        elif doc_is_in_repo(doc):
             entries.append(
                 _snapshot_in_repo_doc(
                     workspace_path,
@@ -2711,6 +2742,23 @@ def _fetch_docs_operation(*, workspace: str, no_deep_scan: bool) -> OperationRes
             print(
                 f"  NOTE {entry['name']!r}: unsupported binary format; recorded as "
                 "reference-only (no text snapshot)"
+            )
+
+    # Distinct URLs answering with identical content is a strong login-wall /
+    # redirect-to-index signal: the "snapshot" is the site's generic page, not
+    # either article. Warn so the user can opt those entries out.
+    by_hash: dict[str, list[str]] = {}
+    for entry in entries:
+        if entry["status"] == "ok" and (entry.get("source") or {}).get("url"):
+            by_hash.setdefault(entry["content_hash"], []).append(entry["name"])
+    for names in sorted(by_hash.values()):
+        if len(names) > 1:
+            joined = ", ".join(repr(name) for name in names)
+            print(
+                f"  WARNING identical snapshots for {joined}: different URLs "
+                "returned the same content — likely a login wall or a redirect "
+                'to an index page; consider setting "snapshot": false on those '
+                "atlas entries"
             )
     return OperationResult.success()
 

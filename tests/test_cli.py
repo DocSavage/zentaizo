@@ -1027,6 +1027,18 @@ class CliTests(unittest.TestCase):
             self.assertIn("unknown repo", text)
             self.assertIn("'ghost'", text)
 
+    def test_validate_rejects_non_boolean_snapshot(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "snapshot-atlas"
+            self._write_docs_atlas(
+                workspace,
+                [{"name": "gated", "url": "https://kb.example.com/doc", "snapshot": "false"}],
+            )
+            code, text = self._validate_text(workspace)
+            self.assertEqual(code, 1)
+            self.assertIn("invalid snapshot", text)
+            self.assertIn("expected true or false", text)
+
     def _docs_workspace(self, tmp: str, docs: list[dict]) -> Path:
         workspace = Path(tmp) / "docs-ws"
         with contextlib.redirect_stdout(io.StringIO()):
@@ -1546,6 +1558,72 @@ class CliTests(unittest.TestCase):
             entry = json.loads((workspace / "zentaizo.lock.json").read_text())["doc_snapshots"][0]
             self.assertEqual(entry["status"], "reference-only")
             self.assertEqual(entry["reason"], "no-source")
+
+    def test_fetch_docs_snapshot_false_skips_fetch_and_retires_stale_snapshot(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._docs_workspace(
+                tmp,
+                [{"name": "gated", "kind": "guide", "url": "https://kb.example.com/doc",
+                  "snapshot": False}],
+            )
+            stale = workspace / "docs" / "snapshots" / "gated.md"
+            stale.parent.mkdir(parents=True)
+            stale.write_text("# Misleading index page\n")
+
+            def boom(url):
+                raise AssertionError("network must not be touched for snapshot: false")
+
+            with (
+                mock.patch("zentaizo.cli._http_get", side_effect=boom),
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                self.assertEqual(main(["fetch-docs", str(workspace)]), 0)
+
+            self.assertFalse(stale.exists())
+            entry = json.loads((workspace / "zentaizo.lock.json").read_text())["doc_snapshots"][0]
+            self.assertEqual(entry["status"], "reference-only")
+            self.assertEqual(entry["reason"], "snapshot-disabled")
+            self.assertIsNone(entry["snapshot"])
+            self.assertEqual(entry["source"], {"url": "https://kb.example.com/doc"})
+
+    def test_fetch_docs_warns_on_identical_url_snapshots(self):
+        # Distinct URLs answering with the same content is the login-wall /
+        # redirect-to-index signature; a per-slug check would not catch it.
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._docs_workspace(
+                tmp,
+                [
+                    {"name": "projections", "url": "https://kb.example.com/projections"},
+                    {"name": "events", "url": "https://kb.example.com/events"},
+                ],
+            )
+            index_page = "# Knowledge base\n\nGeneric index of every article.\n"
+            output = self._run_fetch_docs_with_http(
+                workspace,
+                {"https://kb.example.com/llms-full.txt": ("text/plain", index_page)},
+            )
+            self.assertIn("WARNING identical snapshots", output)
+            self.assertIn("'projections'", output)
+            self.assertIn("'events'", output)
+            self.assertIn('"snapshot": false', output)
+
+    def test_fetch_docs_distinct_url_snapshots_do_not_warn(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._docs_workspace(
+                tmp,
+                [
+                    {"name": "alpha", "url": "https://a.example.com/docs"},
+                    {"name": "beta", "url": "https://b.example.com/docs"},
+                ],
+            )
+            output = self._run_fetch_docs_with_http(
+                workspace,
+                {
+                    "https://a.example.com/llms-full.txt": ("text/plain", "# Alpha docs\n"),
+                    "https://b.example.com/llms-full.txt": ("text/plain", "# Beta docs\n"),
+                },
+            )
+            self.assertNotIn("WARNING identical snapshots", output)
 
     def test_fetch_docs_with_no_docs(self):
         with tempfile.TemporaryDirectory() as tmp:

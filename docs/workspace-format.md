@@ -86,6 +86,8 @@ A doc entry names its source one of two ways, never both:
 - **External** — a `url` pointing at a documentation site (readthedocs/Sphinx/MkDocs, an `llms.txt`, an OpenAPI URL, etc.).
 - **In-repo** — a `repo` (the `name` of a repo source in this atlas) plus a `path` relative to that repo's fetched tree, for an API definition that already ships in the code (e.g. an `openapi.yaml`). `validate` checks that the referenced repo exists and that a `path` is given; the file itself is resolved under `repos/<repo>/<path>` after `zentaizo fetch`, so it is not required to exist at validation time.
 
+A doc entry may also declare `"snapshot": false` (boolean; `validate` rejects other types) when the source should stay a citable pointer with no snapshot attempted — typically a login-gated page whose fetch would capture the site's generic index instead of the article. `zentaizo fetch-docs` records such an entry as `reference-only` with reason `snapshot-disabled` and removes any previously-written snapshot variants.
+
 ### Repo `role`
 
 Each repo entry carries an optional `role` field. Two values are supported, with `reference` as the default when the field is omitted:
