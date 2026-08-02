@@ -103,7 +103,9 @@ CONVENTIONS_DELTAS = {
     5: "AGENTS.md/README.md/zentaizo.atlas.json, bundled skills, and provide-info: "
     "generated text adopts the canonical 'agent' and 'Zentaizo workspace' vocabulary",
     6: "README.md and bundled skills: workspace bring-up uses one composed command, "
-    "and the upgrade inventory covers the generated README",
+    "and the upgrade inventory covers the generated README; AGENTS.md and the "
+    "global skill file tool issues at DocSavage/zen-zentaizo (the tracker moved "
+    "from DocSavage/zentaizo)",
 }
 
 
@@ -493,10 +495,10 @@ When the user shares a design conversation, sketch, source inventory, or externa
 This workspace's format and CLI come from [Zentaizo](https://github.com/DocSavage/zentaizo). When you hit a bug, friction, or an improvement idea in the *tool or its workspace conventions* — as opposed to the system this workspace is about — do not silently work around it. The set procedure is a GitHub issue on the tool's tracker:
 
 ```bash
-gh issue create -R DocSavage/zentaizo --title "<concise summary>" --body "<details>"
+gh issue create -R DocSavage/zen-zentaizo --title "<concise summary>" --body "<details>"
 ```
 
-Include the workspace name, the exact command (with flags), what you expected, and what actually happened. Filing an issue posts publicly, so confirm with the user first; if `gh` is unavailable or the user prefers not to post, record the same details in `sessions/` (e.g. a brainstorming note) so it can be filed later.
+Include the workspace name, the exact command (with flags), what you expected, and what actually happened. Whether an issue is filed is the user's decision, so confirm with the user first; if `gh` is unavailable or the user prefers not to file, record the same details in `sessions/` (e.g. a brainstorming note) so it can be filed later.
 """
 
 

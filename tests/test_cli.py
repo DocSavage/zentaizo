@@ -107,9 +107,9 @@ class CliTests(unittest.TestCase):
             self.assertIn("status-frontmatter schema", agents)
             self.assertIn("skills/plan-template.md", agents)
             self.assertIn("skills/plan-and-implement.md", agents)
-            # Tool feedback goes upstream via GitHub issues (user-confirmed, public).
+            # Tool feedback goes upstream via GitHub issues (user-confirmed).
             self.assertIn("Reporting Zentaizo Tool Issues", agents)
-            self.assertIn("gh issue create -R DocSavage/zentaizo", agents)
+            self.assertIn("gh issue create -R DocSavage/zen-zentaizo", agents)
             self.assertIn("confirm with the user first", agents)
             self.assertIn("## Workspace Health", agents)
             self.assertIn("Once per session", agents)

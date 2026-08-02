@@ -366,15 +366,15 @@ workspace `AGENTS.md` gives AI agents — is a GitHub issue on the Zentaizo
 tracker:
 
 ```bash
-gh issue create -R DocSavage/zentaizo --title "<concise summary>" --body "<details>"
+gh issue create -R DocSavage/zen-zentaizo --title "<concise summary>" --body "<details>"
 ```
 
 Include the workspace name, the exact command (with flags), what you expected,
-and what actually happened. Filing an issue posts publicly, so an agent
-should confirm with the user first; if `gh` is unavailable or you'd rather not
-post, record the same details in the workspace's `sessions/` (e.g. a
-brainstorming note) so it can be filed later. Either way, feedback flows
-upstream instead of being silently worked around.
+and what actually happened. Whether an issue is filed is the user's decision,
+so an agent should confirm with the user first; if `gh` is unavailable or
+you'd rather not file, record the same details in the workspace's `sessions/`
+(e.g. a brainstorming note) so it can be filed later. Either way, feedback
+flows upstream instead of being silently worked around.
 
 ## Developing Zentaizo itself
 

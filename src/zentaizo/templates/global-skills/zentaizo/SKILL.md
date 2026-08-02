@@ -87,7 +87,7 @@ through a normal `sessions/changes/` plan, not a one-shot rewrite.
 
 ## Reporting Zentaizo Tool Issues
 
-When work in any Zentaizo workspace surfaces a bug, friction, or an improvement idea in the tool or its workspace conventions themselves, the set procedure is a GitHub issue on the tool's tracker: `gh issue create -R DocSavage/zentaizo`, citing the workspace, the exact command, expected vs. actual behavior. Confirm with the user before filing (it posts publicly); if `gh` is unavailable or the user prefers not to post, record the details in that workspace's `sessions/` (e.g. a brainstorming note) so it can be filed later. Do not silently work around tool problems.
+When work in any Zentaizo workspace surfaces a bug, friction, or an improvement idea in the tool or its workspace conventions themselves, the set procedure is a GitHub issue on the tool's tracker: `gh issue create -R DocSavage/zen-zentaizo`, citing the workspace, the exact command, expected vs. actual behavior. Confirm with the user before filing (whether an issue is filed is the user's decision); if `gh` is unavailable or the user prefers not to file, record the details in that workspace's `sessions/` (e.g. a brainstorming note) so it can be filed later. Do not silently work around tool problems.
 
 ## User Interview
 
