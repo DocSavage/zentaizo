@@ -5162,32 +5162,6 @@ def find_active_plan(workspace: pathlib.Path, label: str) -> pathlib.Path | None
     return best[1] if best else None
 
 
-def find_active_slice(workspace: pathlib.Path, label: str) -> pathlib.Path | None:
-    """Highest-counter open slice for ``label`` across changes/ and debugging/."""
-    candidates: list[tuple[int, str, pathlib.Path]] = []
-    for counter, path in scan_slice_files(workspace, label):
-        if read_frontmatter(path).get("status", "") in CLOSED_SLICE_STATUSES:
-            continue
-        candidates.append((counter, _rel(workspace, path), path))
-    if not candidates:
-        return None
-    candidates.sort()
-    return candidates[-1][2]
-
-
-def slice_slug(path: pathlib.Path, label: str) -> str | None:
-    match = _slice_pattern(label).match(path.name)
-    if not match:
-        return None
-    prefix = f"{label}-{match.group(1)}-"
-    if not path.name.startswith(prefix):
-        return None
-    slug = path.name[len(prefix) :]
-    if slug.endswith(path.suffix):
-        slug = slug[: -len(path.suffix)]
-    return slug or None
-
-
 def workspace_root_for_cwd(cwd: pathlib.Path) -> pathlib.Path | None:
     current = cwd.resolve()
     candidates = [current, *current.parents]
@@ -5198,25 +5172,24 @@ def workspace_root_for_cwd(cwd: pathlib.Path) -> pathlib.Path | None:
 
 
 def resolve_session_title(cwd: pathlib.Path) -> str:
+    """``<workspace>: <effort>`` — which workspace and which line of work.
+
+    Deliberately not slice-level: a slice names one step of an effort, and
+    under up-front planning the highest open slice is the one *furthest* from
+    being worked on. The workspace name (not ``cwd.name``) keeps the title
+    stable when a session launches from a vendored repo subdirectory, and
+    ``main`` is shown rather than suppressed so an absent suffix can't be
+    misread as a resolution failure.
+    """
     workspace = workspace_root_for_cwd(cwd)
     if workspace is None:
         return cwd.name
     try:
         data = load_efforts(workspace)
         label = data.get("current") or MAIN_EFFORT
-        active = find_active_slice(workspace, label)
-        if active is not None:
-            title = usable_short_title(read_frontmatter(active).get("short_title"))
-            if title is not None:
-                return title
-            slug = slice_slug(active, label)
-            if slug:
-                return slug
-        if label != MAIN_EFFORT:
-            return label
     except Exception:
-        return cwd.name
-    return workspace.name
+        return workspace.name
+    return f"{workspace.name}: {label}"
 
 
 def next_handoff_letter(workspace: pathlib.Path, label: str, padded: str) -> str:

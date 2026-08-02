@@ -2911,7 +2911,22 @@ class SessionTitleTests(WorkspaceCliCase):
             self.assertEqual(code, 0)
             self.assertEqual(out, "{}\n")
 
-    def test_title_uses_active_slice_short_title(self):
+    def test_title_is_workspace_and_current_effort(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._new_effort(workspace, "katana")
+            self.assertEqual(self._session_title(workspace), "ws: katana")
+
+    def test_title_defaults_to_main_effort(self):
+        # `main` is shown, not suppressed: a uniform shape reads positionally,
+        # and an absent suffix would be ambiguous with a resolution failure.
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self.assertEqual(self._session_title(workspace), "ws: main")
+
+    def test_title_ignores_slice_state(self):
+        # Up-front-planned efforts leave the highest-counter slice unstarted;
+        # the title must not track slices at all.
         with tempfile.TemporaryDirectory() as tmp:
             workspace = self._make_workspace(tmp)
             self._new_effort(workspace)
@@ -2921,40 +2936,6 @@ class SessionTitleTests(WorkspaceCliCase):
                     "token-rotation",
                     "--short-title",
                     "Token rotation",
-                    "-C",
-                    str(workspace),
-                ]
-            )
-            self.assertEqual(self._session_title(workspace), "Token rotation")
-
-    def test_title_falls_back_to_active_slice_slug(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            workspace = self._make_workspace(tmp)
-            self._new_effort(workspace)
-            self._out(["next-change", "token-rotation", "-C", str(workspace)])
-            self.assertEqual(self._session_title(workspace), "token-rotation")
-
-    def test_title_falls_back_to_current_non_main_effort(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            workspace = self._make_workspace(tmp)
-            self._new_effort(workspace, "katana")
-            self.assertEqual(self._session_title(workspace), "katana")
-
-    def test_title_falls_back_to_workspace_basename(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            workspace = self._make_workspace(tmp)
-            self.assertEqual(self._session_title(workspace), "ws")
-
-    def test_debugging_slice_can_win_over_older_change(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            workspace = self._make_workspace(tmp)
-            self._new_effort(workspace)
-            self._out(
-                [
-                    "next-change",
-                    "old-work",
-                    "--short-title",
-                    "Old change",
                     "-C",
                     str(workspace),
                 ]
@@ -2969,22 +2950,23 @@ class SessionTitleTests(WorkspaceCliCase):
                     str(workspace),
                 ]
             )
-            self.assertEqual(self._session_title(workspace), "Auth trace")
+            self.assertEqual(self._session_title(workspace), "ws: katana")
 
-    def test_missing_short_title_field_falls_back_without_error(self):
+    def test_title_from_subdirectory_names_the_workspace(self):
+        # A session launched from a vendored repo still belongs to the
+        # workspace; the title must not shift with the launch directory.
         with tempfile.TemporaryDirectory() as tmp:
             workspace = self._make_workspace(tmp)
-            self._new_effort(workspace)
-            rel = self._out(["next-change", "legacy-plan", "-C", str(workspace)])
-            path = workspace / rel
-            path.write_text(
-                "\n".join(
-                    line
-                    for line in path.read_text().split("\n")
-                    if not line.startswith("short_title:")
-                )
-            )
-            self.assertEqual(self._session_title(workspace), "legacy-plan")
+            self._new_effort(workspace, "katana")
+            subdir = workspace / "repos" / "vendored"
+            subdir.mkdir(parents=True)
+            self.assertEqual(self._session_title(subdir), "ws: katana")
+
+    def test_title_outside_workspace_uses_cwd_name(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            plain = Path(tmp) / "not-a-workspace"
+            plain.mkdir()
+            self.assertEqual(self._session_title(plain), "not-a-workspace")
 
 
 class ClaudeHooksTests(WorkspaceCliCase):

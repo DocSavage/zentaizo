@@ -221,7 +221,7 @@ Installs or refreshes the managed Claude `SessionStart` hook in `.claude/setting
 zentaizo session-title
 ```
 
-Claude hook command, not a normal user workflow command. It reads `SessionStart` JSON on stdin and emits a `sessionTitle` derived from the active slice `short_title`, active slice slug, current non-main effort label, or workspace directory name.
+Claude hook command, not a normal user workflow command. It reads `SessionStart` JSON on stdin and emits a `sessionTitle` of the form `<workspace>: <effort>` — the workspace directory name plus the current effort label (`main` included). Launching from a subdirectory (e.g. a vendored repo) still titles the session after the containing workspace; outside any workspace the title falls back to the directory name.
 
 ## Efforts and session files
 
