@@ -2240,11 +2240,12 @@ packages:
 - pypi: ./
   name: zentaizo
   version: 0.15.2
-  sha256: 883d65bd8b0f5cc9841989d5a54a99580b7ccf13c15ee14389b791849d481145
+  sha256: 10c29bc2722e53fb0803f5f96e0561a47578968eceb5d8bb0cb482c7e39219cc
   requires_dist:
   - graphifyy>=0.9.26,<0.10
   - trafilatura>=2.1
   - llm-guard>=0.3.16 ; extra == 'docs-scan'
+  - markdown-it-py>=3,<5 ; extra == 'report-pdf'
   - ruff>=0.6 ; extra == 'dev'
   - pre-commit>=3.7 ; extra == 'dev'
   - build>=1.2 ; extra == 'dev'
