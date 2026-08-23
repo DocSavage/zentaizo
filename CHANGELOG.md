@@ -4,6 +4,38 @@ All notable changes to this project are documented here.
 
 This project uses the Keep a Changelog format. Versions 0.8.0 and earlier predate this changelog.
 
+## [0.16.0] - 2026-08-22
+
+One release entry for the whole landing since 0.15.2, per the collapse rule:
+six slices' worth of trunk work shipped without a version, and MINOR is the
+highest increment among them. **Conventions generation: 6.**
+
+### Added
+
+- `zentaizo bring-up` runs the mechanical workspace pipeline (fetch → graph →
+  discover-docs → fetch-docs → summarize prompt) as one composed command; the
+  generated README's workflow steps now reference it.
+- Report PDF publishing workflow: the global skill gains
+  `render-report-pdf.md` / `report-pdf-engines.md` for rendering a polished
+  PDF from a Zentaizo Markdown report.
+- `fetch-docs` honors a per-source `"snapshot": false` opt-out — skips the
+  fetch, records `reference-only`/`snapshot-disabled`, and retires stale
+  variants (tracker issue #5: login-gated doc URLs produced large, misleading
+  snapshots that regenerated after deletion).
+
+### Changed
+
+- `session-title` derives the Claude session title from
+  `<workspace>: <effort>` instead of the active slice;
+  `find_active_slice()`/`slice_slug()` removed (tracker issue #3).
+- Generated AGENTS.md, the global skill, and the README file tool issues at
+  `DocSavage/zen-zentaizo` — the tracker moved from `DocSavage/zentaizo`
+  (tracker issue #4).
+
+### Fixed
+
+- `pixi.lock` records the report-pdf `markdown-it-py` dependency.
+
 ## [0.15.2] - 2026-07-27
 
 Three CLI-surface defects found by the main-0004 docs audit, where verifying a
