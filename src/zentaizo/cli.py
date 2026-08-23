@@ -9,6 +9,7 @@ import json
 import os
 import pathlib
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -1849,6 +1850,13 @@ def _print_repo_status(workspace: pathlib.Path, repo: dict, locked: dict | None)
     else:
         details.append("clean")
     print(f"  {role_tag}: " + ", ".join(details))
+    if locked_sha and head_sha != locked_sha:
+        workspace_arg = (
+            ""
+            if workspace == pathlib.Path.cwd().resolve()
+            else f" {shlex.quote(str(workspace))}"
+        )
+        print(f"      run: zentaizo fetch --repo {name}{workspace_arg}")
 
 
 def _print_conventions_status(lock: dict | None) -> None:
@@ -2188,37 +2196,80 @@ def fetch_edit_repo(workspace: pathlib.Path, repo: dict, do_rebase: bool) -> dic
     }
 
 
-def _fetch_operation(*, workspace: str, rebase: bool, no_graph: bool) -> OperationResult:
+def _fetch_operation(
+    *, workspace: str, rebase: bool, no_graph: bool, repo_names: list[str] | None
+) -> OperationResult:
     workspace_path, config = load_workspace(workspace)
     sources = source_groups(config)
     repos = sources.get("repos", [])
+    scoped = repo_names is not None
+    if scoped:
+        requested_names = list(dict.fromkeys(repo_names))
+        valid_names = [repo["name"] for repo in repos]
+        valid_name_set = set(valid_names)
+        unknown_names = [name for name in requested_names if name not in valid_name_set]
+        if unknown_names:
+            unknown = ", ".join(unknown_names)
+            valid = ", ".join(valid_names) if valid_names else "(none)"
+            raise CliError(
+                f"fetch: unknown repo name(s): {unknown}; valid repo names: {valid}",
+                2,
+            )
+        requested_name_set = set(requested_names)
+        repos_to_fetch = [repo for repo in repos if repo["name"] in requested_name_set]
+    else:
+        requested_name_set = None
+        repos_to_fetch = repos
     lock = (
         read_json(workspace_path / LOCK_NAME)
         if (workspace_path / LOCK_NAME).exists()
         else initial_lock(config.get("name", workspace_path.name))
     )
     prior_repos = _locked_repo_index(lock)
-    locked_repos: list[dict] = []
+    fetched_repos: list[dict] = []
 
-    for repo in repos:
+    for repo in repos_to_fetch:
         if repo_role(repo) == "edit":
-            locked_repos.append(fetch_edit_repo(workspace_path, repo, rebase))
+            fetched_repos.append(fetch_edit_repo(workspace_path, repo, rebase))
         else:
-            locked_repos.append(fetch_reference_repo(workspace_path, repo))
+            fetched_repos.append(fetch_reference_repo(workspace_path, repo))
 
-    _preserve_unchanged_fetched_at(locked_repos, prior_repos, _repo_identity)
+    _preserve_unchanged_fetched_at(fetched_repos, prior_repos, _repo_identity)
 
     lock["updated_at"] = utc_now()
-    lock.setdefault("sources", {})["repos"] = locked_repos
-    lock["sources"]["docs"] = sources.get("docs", [])
-    lock["sources"]["papers"] = sources.get("papers", [])
-    lock["sources"]["notes"] = sources.get("notes", [])
+    lock_sources = lock.setdefault("sources", {})
+    if scoped:
+        fetched_by_name = {entry["name"]: entry for entry in fetched_repos}
+        merged_repos = []
+        replaced_names: set[str] = set()
+        for entry in lock_sources.get("repos", []):
+            name = entry.get("name")
+            if name in fetched_by_name:
+                merged_repos.append(fetched_by_name[name])
+                replaced_names.add(name)
+            else:
+                merged_repos.append(entry)
+        for repo in repos_to_fetch:
+            name = repo["name"]
+            if name not in replaced_names:
+                merged_repos.append(fetched_by_name[name])
+        lock_sources["repos"] = merged_repos
+    else:
+        lock_sources["repos"] = fetched_repos
+        lock_sources["docs"] = sources.get("docs", [])
+        lock_sources["papers"] = sources.get("papers", [])
+        lock_sources["notes"] = sources.get("notes", [])
     write_json(workspace_path / LOCK_NAME, lock)
 
     if not no_graph:
-        _auto_refresh_graph(workspace_path, config, lock)
+        _auto_refresh_graph(
+            workspace_path,
+            config,
+            lock,
+            selected_repo_names=requested_name_set,
+        )
 
-    if sources.get("docs") or sources.get("papers"):
+    if not scoped and (sources.get("docs") or sources.get("papers")):
         print(
             "Docs and papers are recorded in the lock file; "
             "run `zentaizo fetch-docs` to snapshot doc sources."
@@ -2231,6 +2282,7 @@ def fetch_workspace(args: argparse.Namespace) -> int:
         workspace=args.workspace,
         rebase=bool(getattr(args, "rebase", False)),
         no_graph=bool(getattr(args, "no_graph", False)),
+        repo_names=getattr(args, "repo", None),
     ).code
 
 
@@ -3883,6 +3935,7 @@ def bring_up_workspace(args: argparse.Namespace) -> int:
             workspace=workspace_arg,
             rebase=False,
             no_graph=True,
+            repo_names=None,
         ),
         completed,
     )
@@ -3929,7 +3982,42 @@ def bring_up_workspace(args: argparse.Namespace) -> int:
     return 0
 
 
-def _auto_refresh_graph(workspace: pathlib.Path, config: dict, lock: dict) -> None:
+def _unselected_graphed_repo_drift(
+    workspace: pathlib.Path,
+    config: dict,
+    lock: dict,
+    selected_repo_names: set[str],
+) -> list[str]:
+    """Return graphed atlas repos whose checkout moved beyond the lock.
+
+    A scoped fetch updates only selected lock entries, but Graphify scans the
+    whole workspace. Refreshing while an unselected checkout has moved would
+    therefore record its stale lock identity for newly ingested content.
+    """
+    graph_built_from = (lock.get("graph") or {}).get("built_from") or {}
+    locked_repos = _locked_repo_index(lock)
+    drifted = []
+    for repo in source_groups(config).get("repos", []):
+        name = repo.get("name")
+        if not name or name in selected_repo_names or f"repos/{name}" not in graph_built_from:
+            continue
+        locked_rev = _repo_identity(locked_repos.get(name) or {})
+        if not locked_rev:
+            continue
+        checkout = workspace / "repos" / name
+        head = try_run_git(["rev-parse", "HEAD"], cwd=checkout) if checkout.is_dir() else None
+        if head is not None and head != locked_rev:
+            drifted.append(name)
+    return drifted
+
+
+def _auto_refresh_graph(
+    workspace: pathlib.Path,
+    config: dict,
+    lock: dict,
+    *,
+    selected_repo_names: set[str] | None = None,
+) -> None:
     """Best-effort code-only graph refresh after ``fetch``.
 
     Never fails the fetch (same contract as the commit-attribution hook
@@ -3943,6 +4031,23 @@ def _auto_refresh_graph(workspace: pathlib.Path, config: dict, lock: dict) -> No
         if state is None or not state["stale"]:
             return
         graph = state["graph"]
+        if selected_repo_names is not None:
+            drifted = _unselected_graphed_repo_drift(
+                workspace,
+                config,
+                lock,
+                selected_repo_names,
+            )
+            if drifted:
+                scoped_args = " ".join(f"--repo {name}" for name in drifted)
+                workspace_arg = shlex.quote(str(workspace))
+                print(
+                    "graph: auto-refresh skipped — unselected graphed repo checkout "
+                    f"drift: {', '.join(drifted)}"
+                )
+                print(f"  run: zentaizo fetch {scoped_args} {workspace_arg}")
+                print(f"  or run a full fetch: zentaizo fetch {workspace_arg}")
+                return
         command = _graphify_command()
         if command is None:
             print(
@@ -6189,6 +6294,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-graph",
         action="store_true",
         help="skip the best-effort code-only graph refresh after fetching",
+    )
+    fetch.add_argument(
+        "--repo",
+        action="append",
+        metavar="NAME",
+        help="fetch only this atlas repo; repeatable",
     )
     fetch.set_defaults(func=fetch_workspace)
 

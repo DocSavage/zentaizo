@@ -112,12 +112,12 @@ are implemented by `bring_up_workspace()` (`src/zentaizo/cli.py`).
 zentaizo status [PATH]
 ```
 
-Shows source counts (split by role: edit vs reference) and the lock status. For each repo it inspects the working tree: edit repos report the current branch and whether they are at the locked SHA or have diverged; reference repos flag drift between HEAD and the locked SHA. When an edit repo is clean and behind its upstream, `status` prints the rebase command. It reports quarantined doc snapshots with their paths and prints one knowledge-graph line (`graph: not built` / `current` / `stale` — see `zentaizo graph`). If the atlas is missing, shows the setup prompt instead of failing.
+Shows source counts (split by role: edit vs reference) and the lock status. For each repo it inspects the working tree: edit repos report the current branch and whether they are at the locked SHA or have diverged; reference repos flag drift between HEAD and the locked SHA. A reference-repo drift line includes the scoped remedy, `zentaizo fetch --repo NAME`; when `status` targets a non-current workspace, the command includes that workspace path. When an edit repo is clean and behind its upstream, `status` prints the rebase command. It reports quarantined doc snapshots with their paths and prints one knowledge-graph line (`graph: not built` / `current` / `stale` — see `zentaizo graph`). If the atlas is missing, shows the setup prompt instead of failing.
 
 It ends with a `Conventions:` section comparing the generation stamped in the lock's `conventions` block against the generation the installed zentaizo generates: `current` (they match), `behind` (each missed generation's `CONVENTIONS_DELTAS` line is printed, followed by the pointer to the `upgrade-zentaizo` skill), or `not tracked` (the workspace predates conventions tracking — same pointer, full reconciliation). A stamp *newer* than the installed Zentaizo CLI reports that CLI as outdated. This is the only command that reports conventions state; nothing else advises about it.
 
 ```bash
-zentaizo fetch [PATH] [--rebase] [--no-graph]
+zentaizo fetch [PATH] [--repo NAME]... [--rebase] [--no-graph]
 ```
 
 Fetches repositories listed in `zentaizo.atlas.json` and records resolved commits in `zentaizo.lock.json`. Behavior depends on each repo's `role`:
@@ -125,7 +125,9 @@ Fetches repositories listed in `zentaizo.atlas.json` and records resolved commit
 - `role: "reference"` — re-resolves the pin (`ref`), checks it out, refuses to overwrite a dirty working tree.
 - `role: "edit"` — clones and checks out `ref` on first fetch only; on subsequent fetches refreshes remotes (`git fetch --tags --prune`) but leaves HEAD and the working tree alone. If the tree is clean and HEAD is behind the freshly-resolved upstream, `fetch` prints the exact rebase command. `--rebase` runs the rebase for every clean+behind edit repo.
 
-When the lock records a graph (see `zentaizo graph`) and a graphed source's rev changed, `fetch` also refreshes the knowledge graph best-effort — code-only (AST, offline, no model API), never failing the fetch. `--no-graph` skips it; if `graphify` is missing the fallback is a printed stale hint.
+Repeat `--repo NAME` to fetch only named atlas repos; duplicate names are fetched once. A scoped fetch replaces those repos' lock entries in place, appends newly locked selections in atlas order, and preserves every unselected repo entry — including entries removed from the atlas — plus the lock's `docs`/`papers`/`notes` groups. An unknown name exits non-zero and lists the valid atlas repo names before any repo fetch starts. Without `--repo`, fetch keeps its full-refresh behavior: every atlas repo is fetched, the repo list is replaced wholesale, removed entries are pruned, and the other source groups are refreshed from the atlas.
+
+When the lock records a graph (see `zentaizo graph`) and a graphed source's rev changed, `fetch` also refreshes the knowledge graph best-effort — code-only (AST, offline, no model API), never failing the fetch. `--no-graph` skips it; if `graphify` is missing the fallback is a printed stale hint. Before a scoped auto-refresh, Zentaizo checks every unselected graphed repo's checkout against its locked identity. If one has drifted, it skips the whole-workspace refresh and names the drifted repo plus the `fetch --repo` or full-fetch remedy, preventing new graph content from being recorded under stale lock provenance.
 
 ```bash
 zentaizo fetch-docs [PATH] [--no-deep-scan]

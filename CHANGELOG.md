@@ -4,6 +4,28 @@ All notable changes to this project are documented here.
 
 This project uses the Keep a Changelog format. Versions 0.8.0 and earlier predate this changelog.
 
+## [0.17.0] - 2026-08-22
+
+### Added
+
+- `zentaizo fetch --repo NAME` scopes a fetch to repeatable atlas repo names,
+  deduplicates repeats, and merges only those entries into the existing lock.
+  Unselected and lock-only repo entries plus the lock's docs, papers, and notes
+  groups remain untouched; unknown names fail before any repo fetch and list
+  the valid choices.
+- Scoped graph auto-refreshes now stop when an unselected graphed checkout has
+  drifted from its locked identity, naming the repos and fetch remedy instead
+  of recording whole-workspace graph content under stale provenance.
+
+### Changed
+
+- Reference-repo drift reported by `zentaizo status` includes the corresponding
+  `fetch --repo` command and carries the workspace path when status targets a
+  non-current workspace.
+- The release policy reflects pixi.lock v7: local path-package entries no
+  longer carry a version field, so a package version bump does not itself
+  produce a lockfile diff.
+
 ## [0.16.0] - 2026-08-22
 
 One release entry for the whole landing since 0.15.2, per the collapse rule:

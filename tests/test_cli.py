@@ -2335,6 +2335,250 @@ class ReferenceFetchTests(WorkspaceCliCase):
             self.assertEqual(lock["sources"]["repos"][0]["commit"], tag_sha)
 
 
+class ScopedFetchTests(WorkspaceCliCase):
+    @staticmethod
+    def _repo(name: str) -> dict:
+        return {
+            "name": name,
+            "url": f"https://example.invalid/{name}.git",
+            "ref": "main",
+            "role": "reference",
+        }
+
+    @staticmethod
+    def _locked_repo(name: str, commit: str, fetched_at: str) -> dict:
+        return {
+            "name": name,
+            "url": f"https://example.invalid/{name}.git",
+            "ref": "main",
+            "role": "reference",
+            "commit": commit,
+            "path": f"repos/{name}",
+            "dirty": False,
+            "fetched_at": fetched_at,
+        }
+
+    def _scoped_workspace(
+        self, tmp: str, names: tuple[str, ...] = ("alpha", "beta")
+    ) -> Path:
+        workspace = self._make_workspace(tmp)
+        atlas = default_atlas("scoped-fetch")
+        atlas["sources"] = {
+            "repos": [self._repo(name) for name in names],
+            "docs": [],
+            "papers": [],
+            "notes": [],
+        }
+        (workspace / "zentaizo.atlas.json").write_text(json.dumps(atlas))
+        lock = json.loads((workspace / "zentaizo.lock.json").read_text())
+        lock["sources"] = {
+            "repos": [
+                self._locked_repo(name, f"{name}-old", f"{name}-time") for name in names
+            ],
+            "docs": [],
+            "papers": [],
+            "notes": [],
+        }
+        (workspace / "zentaizo.lock.json").write_text(json.dumps(lock))
+        return workspace
+
+    def test_scoped_fetch_updates_only_selected_and_preserves_noop_fetched_at(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._scoped_workspace(tmp)
+            before = json.loads((workspace / "zentaizo.lock.json").read_text())
+            beta_before = before["sources"]["repos"][1]
+            fetched = self._locked_repo("alpha", "alpha-new", "first-fetch")
+
+            with mock.patch(
+                "zentaizo.cli.fetch_reference_repo", return_value=fetched
+            ) as fetch_repo:
+                code, _out, err = self._run(
+                    ["fetch", "--repo", "alpha", "--no-graph", str(workspace)]
+                )
+
+            self.assertEqual((code, err), (0, ""))
+            fetch_repo.assert_called_once()
+            after = json.loads((workspace / "zentaizo.lock.json").read_text())
+            by_name = {entry["name"]: entry for entry in after["sources"]["repos"]}
+            self.assertEqual(by_name["alpha"]["commit"], "alpha-new")
+            self.assertEqual(by_name["alpha"]["fetched_at"], "first-fetch")
+            self.assertEqual(by_name["beta"], beta_before)
+
+            no_op = self._locked_repo("alpha", "alpha-new", "later-fetch")
+            with mock.patch("zentaizo.cli.fetch_reference_repo", return_value=no_op):
+                self.assertEqual(
+                    self._run(
+                        ["fetch", "--repo", "alpha", "--no-graph", str(workspace)]
+                    )[0],
+                    0,
+                )
+            final = json.loads((workspace / "zentaizo.lock.json").read_text())
+            final_alpha = {entry["name"]: entry for entry in final["sources"]["repos"]}[
+                "alpha"
+            ]
+            self.assertEqual(final_alpha["fetched_at"], "first-fetch")
+
+    def test_scoped_fetch_preserves_lock_only_entry_and_appends_in_atlas_order(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._scoped_workspace(tmp, ("alpha", "beta", "gamma", "delta"))
+            lock = json.loads((workspace / "zentaizo.lock.json").read_text())
+            legacy = self._locked_repo("legacy", "legacy-old", "legacy-time")
+            alpha = lock["sources"]["repos"][0]
+            lock["sources"]["repos"] = [legacy, alpha]
+            (workspace / "zentaizo.lock.json").write_text(json.dumps(lock))
+            calls: list[str] = []
+
+            def fetched(_workspace: Path, repo: dict) -> dict:
+                calls.append(repo["name"])
+                return self._locked_repo(repo["name"], f"{repo['name']}-new", "new-time")
+
+            with mock.patch("zentaizo.cli.fetch_reference_repo", side_effect=fetched):
+                code, _out, err = self._run(
+                    [
+                        "fetch",
+                        "--repo",
+                        "delta",
+                        "--repo",
+                        "gamma",
+                        "--no-graph",
+                        str(workspace),
+                    ]
+                )
+
+            self.assertEqual((code, err), (0, ""))
+            self.assertEqual(calls, ["gamma", "delta"])
+            after = json.loads((workspace / "zentaizo.lock.json").read_text())
+            entries = after["sources"]["repos"]
+            self.assertEqual(
+                [entry["name"] for entry in entries],
+                ["legacy", "alpha", "gamma", "delta"],
+            )
+            self.assertEqual(entries[0], legacy)
+            self.assertEqual(entries[1], alpha)
+
+    def test_scoped_fetch_preserves_other_groups_while_full_fetch_replaces_them(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._scoped_workspace(tmp, ("alpha",))
+            atlas_path = workspace / "zentaizo.atlas.json"
+            atlas = json.loads(atlas_path.read_text())
+            atlas["sources"]["docs"] = [{"name": "atlas-doc", "url": "https://x.invalid"}]
+            atlas["sources"]["papers"] = [{"name": "atlas-paper", "path": "papers/p.md"}]
+            atlas["sources"]["notes"] = [{"name": "atlas-note", "path": "notes/n.md"}]
+            atlas_path.write_text(json.dumps(atlas))
+            lock_path = workspace / "zentaizo.lock.json"
+            lock = json.loads(lock_path.read_text())
+            sentinels = {
+                "docs": [{"name": "sentinel-doc"}],
+                "papers": [{"name": "sentinel-paper"}],
+                "notes": [{"name": "sentinel-note"}],
+            }
+            lock["sources"].update(sentinels)
+            lock_path.write_text(json.dumps(lock))
+            fetched = self._locked_repo("alpha", "alpha-new", "new-time")
+
+            with mock.patch("zentaizo.cli.fetch_reference_repo", return_value=fetched):
+                code, out, err = self._run(
+                    ["fetch", "--repo", "alpha", "--no-graph", str(workspace)]
+                )
+            self.assertEqual((code, err), (0, ""))
+            self.assertNotIn("Docs and papers are recorded", out)
+            scoped = json.loads(lock_path.read_text())
+            for group, sentinel in sentinels.items():
+                self.assertEqual(scoped["sources"][group], sentinel)
+
+            with mock.patch("zentaizo.cli.fetch_reference_repo", return_value=fetched):
+                code, out, err = self._run(["fetch", "--no-graph", str(workspace)])
+            self.assertEqual((code, err), (0, ""))
+            self.assertIn("Docs and papers are recorded", out)
+            full = json.loads(lock_path.read_text())
+            for group in ("docs", "papers", "notes"):
+                self.assertEqual(full["sources"][group], atlas["sources"][group])
+
+    def test_scoped_fetch_rejects_unknown_name_before_fetching(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._scoped_workspace(tmp)
+            lock_path = workspace / "zentaizo.lock.json"
+            before = lock_path.read_bytes()
+            with (
+                mock.patch("zentaizo.cli.fetch_edit_repo") as fetch_edit,
+                mock.patch("zentaizo.cli.fetch_reference_repo") as fetch_reference,
+            ):
+                code, out, err = self._run(
+                    ["fetch", "--repo", "missing", "--no-graph", str(workspace)]
+                )
+
+            self.assertNotEqual(code, 0)
+            self.assertEqual(out, "")
+            self.assertIn("missing", err)
+            self.assertIn("alpha", err)
+            self.assertIn("beta", err)
+            fetch_edit.assert_not_called()
+            fetch_reference.assert_not_called()
+            self.assertEqual(lock_path.read_bytes(), before)
+
+    def test_scoped_fetch_deduplicates_repeated_names(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._scoped_workspace(tmp)
+            calls: list[str] = []
+
+            def fetched(_workspace: Path, repo: dict) -> dict:
+                calls.append(repo["name"])
+                return self._locked_repo(repo["name"], f"{repo['name']}-new", "new-time")
+
+            with mock.patch("zentaizo.cli.fetch_reference_repo", side_effect=fetched):
+                code, _out, err = self._run(
+                    [
+                        "fetch",
+                        "--repo",
+                        "alpha",
+                        "--repo",
+                        "beta",
+                        "--repo",
+                        "alpha",
+                        "--no-graph",
+                        str(workspace),
+                    ]
+                )
+
+            self.assertEqual((code, err), (0, ""))
+            self.assertEqual(calls, ["alpha", "beta"])
+
+    def test_status_drift_hint_uses_repo_scope_and_non_cwd_workspace_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._scoped_workspace(tmp, ("alpha",))
+            checkout = workspace / "repos" / "alpha"
+            checkout.mkdir(parents=True)
+            _git(checkout, "init", "-q", "-b", "main")
+            _git(checkout, "config", "user.email", "t@example.com")
+            _git(checkout, "config", "user.name", "Test")
+            (checkout / "base.txt").write_text("base\n")
+            _git(checkout, "add", ".")
+            _git(checkout, "commit", "-q", "-m", "base")
+            head = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=checkout,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            lock_path = workspace / "zentaizo.lock.json"
+            lock = json.loads(lock_path.read_text())
+            lock["sources"]["repos"] = [self._locked_repo("alpha", "0" * 40, "old")]
+            lock_path.write_text(json.dumps(lock))
+            self.assertNotEqual(head, "0" * 40)
+
+            code, out, err = self._run(["status", str(workspace)])
+            self.assertEqual((code, err), (0, ""))
+            self.assertIn("DRIFT:", out)
+            self.assertIn(f"run: zentaizo fetch --repo alpha {workspace}", out)
+
+            with contextlib.chdir(workspace):
+                code, out, err = self._run(["status"])
+            self.assertEqual((code, err), (0, ""))
+            hint = next(line for line in out.splitlines() if "run: zentaizo fetch" in line)
+            self.assertEqual(hint.strip(), "run: zentaizo fetch --repo alpha")
+
+
 class EffortTests(WorkspaceCliCase):
     def test_create_seeds_main_effort(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -5675,7 +5919,7 @@ class BringUpTests(WorkspaceCliCase):
 
         expected = {
             "_validate_operation": ("workspace",),
-            "_fetch_operation": ("workspace", "rebase", "no_graph"),
+            "_fetch_operation": ("workspace", "rebase", "no_graph", "repo_names"),
             "_fetch_docs_operation": ("workspace", "no_deep_scan"),
             "_graph_operation": (
                 "workspace",
@@ -5823,6 +6067,54 @@ class GraphTests(WorkspaceCliCase):
 
     def _lock(self, workspace: Path) -> dict:
         return json.loads((workspace / "zentaizo.lock.json").read_text())
+
+    @staticmethod
+    def _commit_checkout(checkout: Path, filename: str, body: str) -> str:
+        if not (checkout / ".git").exists():
+            checkout.mkdir(parents=True, exist_ok=True)
+            _git(checkout, "init", "-q", "-b", "main")
+            _git(checkout, "config", "user.email", "t@example.com")
+            _git(checkout, "config", "user.name", "Test")
+        (checkout / filename).write_text(body)
+        _git(checkout, "add", filename)
+        _git(checkout, "commit", "-q", "-m", filename)
+        return subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=checkout,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+    def _two_repo_graph_workspace(self, tmp: str) -> tuple[Path, dict[str, str]]:
+        workspace = self._graph_workspace(tmp)
+        alpha = workspace / "repos" / "alpha"
+        shutil.rmtree(alpha)
+        shas = {
+            "alpha": self._commit_checkout(alpha, "base.txt", "alpha base\n"),
+            "beta": self._commit_checkout(
+                workspace / "repos" / "beta", "base.txt", "beta base\n"
+            ),
+        }
+        atlas_path = workspace / "zentaizo.atlas.json"
+        atlas = json.loads(atlas_path.read_text())
+        atlas["sources"]["repos"] = [
+            {
+                "name": name,
+                "url": f"https://example.invalid/{name}.git",
+                "ref": "main",
+                "role": "reference",
+            }
+            for name in ("alpha", "beta")
+        ]
+        atlas_path.write_text(json.dumps(atlas))
+        lock_path = workspace / "zentaizo.lock.json"
+        lock = json.loads(lock_path.read_text())
+        lock["sources"]["repos"] = [
+            {"name": name, "commit": shas[name]} for name in ("alpha", "beta")
+        ]
+        lock_path.write_text(json.dumps(lock))
+        return workspace, shas
 
     # -- binary gate ------------------------------------------------------
 
@@ -6243,6 +6535,69 @@ class GraphTests(WorkspaceCliCase):
             self.assertIn("update .", self._stub_calls(log))
             graph = self._lock(workspace)["graph"]
             self.assertEqual(graph["built_from"]["repos/alpha"], "bbbb")
+
+    def test_scoped_fetch_graph_guard_skips_on_unselected_checkout_drift(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace, _shas = self._two_repo_graph_workspace(tmp)
+            log = self._install_stub(tmp)
+            self.assertEqual(self._run(["graph", str(workspace)])[0], 0)
+            log.unlink()
+            alpha_sha = self._commit_checkout(
+                workspace / "repos" / "alpha", "selected.txt", "selected update\n"
+            )
+            self._commit_checkout(
+                workspace / "repos" / "beta", "raw-pull.txt", "unselected drift\n"
+            )
+            fetched = {
+                "name": "alpha",
+                "url": "https://example.invalid/alpha.git",
+                "ref": "main",
+                "role": "reference",
+                "commit": alpha_sha,
+                "fetched_at": "2026-06-12T01:00:00+00:00",
+            }
+
+            with mock.patch("zentaizo.cli.fetch_reference_repo", return_value=fetched):
+                code, out, err = self._run(
+                    ["fetch", "--repo", "alpha", str(workspace)]
+                )
+
+            self.assertEqual((code, err), (0, ""))
+            self.assertIn("auto-refresh skipped", out)
+            self.assertIn("beta", out)
+            self.assertIn("zentaizo fetch --repo beta", out)
+            self.assertEqual(self._stub_calls(log), [])
+            graph = self._lock(workspace)["graph"]
+            self.assertNotEqual(graph["built_from"]["repos/alpha"], alpha_sha)
+
+    def test_scoped_fetch_graph_refreshes_without_unselected_checkout_drift(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace, _shas = self._two_repo_graph_workspace(tmp)
+            log = self._install_stub(tmp)
+            self.assertEqual(self._run(["graph", str(workspace)])[0], 0)
+            log.unlink()
+            alpha_sha = self._commit_checkout(
+                workspace / "repos" / "alpha", "selected.txt", "selected update\n"
+            )
+            fetched = {
+                "name": "alpha",
+                "url": "https://example.invalid/alpha.git",
+                "ref": "main",
+                "role": "reference",
+                "commit": alpha_sha,
+                "fetched_at": "2026-06-12T01:00:00+00:00",
+            }
+
+            with mock.patch("zentaizo.cli.fetch_reference_repo", return_value=fetched):
+                code, out, err = self._run(
+                    ["fetch", "--repo", "alpha", str(workspace)]
+                )
+
+            self.assertEqual((code, err), (0, ""))
+            self.assertIn("graph: refreshed", out)
+            self.assertIn("update .", self._stub_calls(log))
+            graph = self._lock(workspace)["graph"]
+            self.assertEqual(graph["built_from"]["repos/alpha"], alpha_sha)
 
     def test_fetch_no_op_and_no_graph_flag_skip_refresh(self):
         with tempfile.TemporaryDirectory() as tmp:
