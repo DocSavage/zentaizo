@@ -4,7 +4,7 @@ All notable changes to this project are documented here.
 
 This project uses the Keep a Changelog format. Versions 0.8.0 and earlier predate this changelog.
 
-## [Unreleased]
+## [0.18.0] - 2026-10-11
 
 ### Added
 
