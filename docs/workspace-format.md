@@ -97,6 +97,8 @@ Each repo entry carries an optional `role` field. Two values are supported, with
 
 The split lets one workspace hold related repos the way a monorepo does, and it doubles as the access policy `zentaizo sandbox` renders: editable repos writable, reference repos denied to the agent's file tools. See `docs/design/sandboxing.md` for what that does and does not enforce.
 
+`zentaizo fetch` also mirrors the roles into the workspace root `AGENTS.md`, as a CLI-managed block between `<!-- BEGIN zentaizo repo-roles -->` and `<!-- END zentaizo repo-roles -->` markers (see `zentaizo fetch` in `docs/cli.md`). The atlas stays the source of truth, so change roles there and re-run `fetch`, never edit the block. The block exists for readers that load `AGENTS.md` but never see tool output, such as harness permission layers. Content outside the markers is the workspace's own and is never touched.
+
 Use branches or tags while exploring. Use commits when you need a fully reproducible snapshot.
 
 ## `zentaizo.lock.json`

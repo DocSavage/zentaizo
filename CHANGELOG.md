@@ -4,6 +4,21 @@ All notable changes to this project are documented here.
 
 This project uses the Keep a Changelog format. Versions 0.8.0 and earlier predate this changelog.
 
+## [Unreleased]
+
+### Added
+
+- `zentaizo fetch` writes a CLI-managed repo-roles block into the workspace
+  root `AGENTS.md` (`<!-- BEGIN zentaizo repo-roles -->` … `<!-- END zentaizo
+  repo-roles -->`), listing every atlas repo as editable or reference. Tools
+  that load `AGENTS.md` but never see command output, such as Claude Code's
+  auto-mode classifier, can now tell edit repos from reference repos. The
+  block always reflects the whole atlas, including on scoped fetches. It is
+  replaced in place, rewritten only when it changes, and never written over
+  unpaired markers. `zentaizo status` reports it as current, stale, missing,
+  or malformed. Existing workspaces pick it up on their next fetch; the
+  conventions generation is unchanged.
+
 ## [0.17.0] - 2026-08-22
 
 ### Added

@@ -219,6 +219,12 @@ executing-the-plan procedure exactly. Specifically:
 This skill is new. Things that are likely to bite and that should refine the
 procedure over time:
 
+- **The repo-roles block in `AGENTS.md` is CLI-managed.** The section between
+  `<!-- BEGIN zentaizo repo-roles -->` and `<!-- END zentaizo repo-roles -->` is
+  written by `zentaizo fetch` from the atlas. It is not a workspace-local
+  addition and not template text: keep it verbatim, with its markers, wherever
+  the reconciled `AGENTS.md` places it, and never merge it by hand. If it is
+  stale or missing, `zentaizo fetch` fixes it.
 - **Section-level merging in `AGENTS.md` is approximate.** Diffing whole files
   works for unchanged-or-completely-replaced sections. For sections that have
   been edited on both sides, asking the user is currently the only safe answer.

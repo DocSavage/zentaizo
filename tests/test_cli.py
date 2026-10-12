@@ -15,8 +15,13 @@ from pathlib import Path
 from unittest import mock
 
 from zentaizo.cli import (
+    BEGIN_MARKER,
     CONVENTIONS_GENERATION,
+    END_MARKER,
     HOOK_MARKER,
+    ROLES_BEGIN_MARKER,
+    ROLES_END_MARKER,
+    ROLES_SECTION_HEADING,
     CliError,
     _apply_safety_and_write,
     _codex_editor_identity,
@@ -30,9 +35,11 @@ from zentaizo.cli import (
     _repo_identity,
     _stamp_edited_by,
     agent_editor_identity,
+    build_repo_roles_block,
     compute_policy,
     default_atlas,
     git_style_now,
+    inject_block,
     install_commit_attribution_hook,
     main,
 )
@@ -2577,6 +2584,212 @@ class ScopedFetchTests(WorkspaceCliCase):
             self.assertEqual((code, err), (0, ""))
             hint = next(line for line in out.splitlines() if "run: zentaizo fetch" in line)
             self.assertEqual(hint.strip(), "run: zentaizo fetch --repo alpha")
+
+
+class RepoRolesBlockTests(WorkspaceCliCase):
+    """The CLI-managed repo-roles block in the workspace root AGENTS.md."""
+
+    @staticmethod
+    def _repo(name: str, role: str | None) -> dict:
+        repo = {"name": name, "url": f"https://example.invalid/{name}.git", "ref": "main"}
+        if role is not None:
+            repo["role"] = role
+        return repo
+
+    def _write_atlas(self, workspace: Path, roles: dict[str, str | None]) -> None:
+        atlas = default_atlas("roles")
+        atlas["sources"] = {
+            "repos": [self._repo(name, role) for name, role in roles.items()],
+            "docs": [],
+            "papers": [],
+            "notes": [],
+        }
+        (workspace / "zentaizo.atlas.json").write_text(json.dumps(atlas))
+
+    def _workspace(self, tmp: str) -> Path:
+        workspace = self._make_workspace(tmp)
+        self._write_atlas(workspace, {"alpha": "edit", "beta": "reference", "gamma": None})
+        return workspace
+
+    @staticmethod
+    def _fake_fetch(_workspace: Path, repo: dict, *_args) -> dict:
+        return {
+            "name": repo["name"],
+            "url": repo["url"],
+            "ref": repo["ref"],
+            "role": repo.get("role", "reference"),
+            "commit": f"{repo['name']}-sha",
+            "path": f"repos/{repo['name']}",
+            "dirty": False,
+            "fetched_at": "fetch-time",
+        }
+
+    def _fetch(self, workspace: Path, *extra: str) -> tuple[int, str, str]:
+        with (
+            mock.patch("zentaizo.cli.fetch_reference_repo", side_effect=self._fake_fetch),
+            mock.patch("zentaizo.cli.fetch_edit_repo", side_effect=self._fake_fetch),
+        ):
+            return self._run(["fetch", "--no-graph", *extra, str(workspace)])
+
+    @staticmethod
+    def _agents(workspace: Path) -> str:
+        return (workspace / "AGENTS.md").read_text()
+
+    @staticmethod
+    def _block(text: str) -> str:
+        begin = text.index(ROLES_BEGIN_MARKER)
+        return text[begin : text.index(ROLES_END_MARKER) + len(ROLES_END_MARKER)]
+
+    def _status_line(self, workspace: Path) -> str:
+        code, out, err = self._run(["status", str(workspace)])
+        self.assertEqual((code, err), (0, ""))
+        return next(line for line in out.splitlines() if line.startswith("Repo roles:"))
+
+    def test_fetch_inserts_block_at_end_of_roles_section(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._workspace(tmp)
+            original = self._agents(workspace)
+            self.assertNotIn(ROLES_BEGIN_MARKER, original)
+
+            code, out, err = self._fetch(workspace)
+
+            self.assertEqual((code, err), (0, ""))
+            self.assertIn("Updated the repo-roles block in AGENTS.md.", out)
+            text = self._agents(workspace)
+            self.assertEqual(text.count(ROLES_BEGIN_MARKER), 1)
+            block = self._block(text)
+            self.assertIn('- Editable (`role: "edit"`): `alpha`', block)
+            # A repo with no role is listed as reference, matching DEFAULT_ROLE.
+            self.assertIn('- Reference (`role: "reference"`, read-only): `beta`, `gamma`', block)
+            heading_end = text.index(ROLES_SECTION_HEADING) + len(ROLES_SECTION_HEADING)
+            self.assertNotIn("\n## ", text[heading_end : text.index(ROLES_BEGIN_MARKER)])
+            after = text[text.index(ROLES_END_MARKER) + len(ROLES_END_MARKER) :]
+            self.assertTrue(after.startswith("\n\n## "))
+            # Nothing outside the block changed.
+            self.assertEqual(text.replace(block + "\n\n", "", 1), original)
+
+    def test_refetch_with_unchanged_atlas_is_byte_identical(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._workspace(tmp)
+            self._fetch(workspace)
+            first = self._agents(workspace)
+
+            code, out, err = self._fetch(workspace)
+
+            self.assertEqual((code, err), (0, ""))
+            self.assertNotIn("repo-roles", out)
+            self.assertEqual(self._agents(workspace), first)
+
+    def test_role_change_updates_block_in_place_and_keeps_custom_content(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._workspace(tmp)
+            self._fetch(workspace)
+            agents = workspace / "AGENTS.md"
+            agents.write_text(agents.read_text() + "\n## Privileged Actions\n\nSite-local rule.\n")
+            self._write_atlas(workspace, {"alpha": "reference", "beta": "edit", "gamma": None})
+            before = self._agents(workspace)
+
+            code, _out, err = self._fetch(workspace)
+
+            self.assertEqual((code, err), (0, ""))
+            text = self._agents(workspace)
+            self.assertEqual(text.count(ROLES_BEGIN_MARKER), 1)
+            block = self._block(text)
+            self.assertIn('- Editable (`role: "edit"`): `beta`', block)
+            self.assertIn("read-only): `alpha`, `gamma`", block)
+            self.assertIn("## Privileged Actions\n\nSite-local rule.\n", text)
+            self.assertEqual(
+                text.replace(block, "<block>", 1),
+                before.replace(self._block(before), "<block>", 1),
+            )
+
+    def test_scoped_fetch_lists_every_atlas_repo(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._workspace(tmp)
+
+            code, _out, err = self._fetch(workspace, "--repo", "alpha")
+
+            self.assertEqual((code, err), (0, ""))
+            block = self._block(self._agents(workspace))
+            self.assertIn("`alpha`", block)
+            self.assertIn("`beta`, `gamma`", block)
+
+    def test_block_is_appended_when_roles_section_is_absent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._workspace(tmp)
+            custom = "# Custom Instructions\n\nWorkspace-specific text.\n"
+            (workspace / "AGENTS.md").write_text(custom)
+
+            self.assertEqual(self._fetch(workspace)[0], 0)
+
+            text = self._agents(workspace)
+            self.assertTrue(text.startswith(custom))
+            self.assertTrue(text.endswith(ROLES_END_MARKER + "\n"))
+
+    def test_malformed_markers_leave_agents_untouched(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._workspace(tmp)
+            agents = workspace / "AGENTS.md"
+            for broken in (
+                agents.read_text() + "\n" + ROLES_BEGIN_MARKER + "\n",
+                agents.read_text() + "\n" + ROLES_END_MARKER + "\n" + ROLES_BEGIN_MARKER + "\n",
+            ):
+                agents.write_text(broken)
+
+                code, _out, err = self._fetch(workspace)
+
+                self.assertEqual(code, 0)
+                self.assertIn("WARNING AGENTS.md", err)
+                self.assertEqual(self._agents(workspace), broken)
+                self.assertIn("MALFORMED", self._status_line(workspace))
+
+    def test_missing_agents_is_skipped_not_created(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._workspace(tmp)
+            (workspace / "AGENTS.md").unlink()
+
+            code, _out, err = self._fetch(workspace)
+
+            self.assertEqual((code, err), (0, ""))
+            self.assertFalse((workspace / "AGENTS.md").exists())
+            self.assertEqual(
+                self._status_line(workspace), "Repo roles: no AGENTS.md in this workspace"
+            )
+
+    def test_status_reports_missing_current_and_stale_without_writing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._workspace(tmp)
+            self.assertIn("missing from AGENTS.md", self._status_line(workspace))
+            self._fetch(workspace)
+            self.assertEqual(self._status_line(workspace), "Repo roles: current in AGENTS.md")
+            self._write_atlas(workspace, {"alpha": "reference"})
+            before = self._agents(workspace)
+
+            self.assertIn("STALE", self._status_line(workspace))
+            self.assertEqual(self._agents(workspace), before)
+
+    def test_provide_info_block_and_roles_block_do_not_interfere(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._workspace(tmp)
+            agents = workspace / "AGENTS.md"
+            provide = f"{BEGIN_MARKER}\n## Zentaizo Context\n\nold pointer\n{END_MARKER}\n"
+            inject_block(agents, provide)
+            self._fetch(workspace)
+            roles_block = self._block(self._agents(workspace))
+
+            inject_block(agents, provide.replace("old pointer", "new pointer"))
+
+            text = self._agents(workspace)
+            self.assertIn("new pointer", text)
+            self.assertNotIn("old pointer", text)
+            self.assertEqual(self._block(text), roles_block)
+
+    def test_empty_atlas_renders_explicit_no_repos_line(self):
+        block = build_repo_roles_block({"name": "empty", "sources": {"repos": []}})
+        self.assertTrue(block.startswith(ROLES_BEGIN_MARKER))
+        self.assertTrue(block.endswith(ROLES_END_MARKER))
+        self.assertIn("No repos are declared", block)
+        self.assertNotIn(BEGIN_MARKER, block)
 
 
 class EffortTests(WorkspaceCliCase):
