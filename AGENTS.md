@@ -55,6 +55,12 @@ Conventions:
 - Capture new design work in the workspace `sessions/` trail (brainstorming →
   effort/slice plans), not as docs in this repo; promote the settled result here
   as a distilled `docs/design/` doc.
+- Zentaizo is published for anyone to install, so it must be self-contained:
+  anything it needs at runtime ships in this repo (a subcommand, template, or
+  bundled script), never a helper from one user's machine or dotfiles. That is
+  why commit attribution's cache producer is `zentaizo cache-commit-trailer`,
+  which a statusline merely calls, and why the bundled hook needs only the
+  Python standard library.
 - Dev loop: `pixi install`, then `pixi run zentaizo --help` and `pixi run check`
   (ruff lint + tests). `pixi run hooks-install` enables the pre-commit
   attribution hook.
