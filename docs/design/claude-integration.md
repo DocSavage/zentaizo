@@ -137,8 +137,9 @@ process) is a feature that lets it run in any repo where it was installed.
 Drift is prevented by a format-lock test asserting the hook's output is
 byte-identical to `commit-trailer`'s, rather than by sharing code. The generated
 workspace `AGENTS.md` § Commits (`workspace_agents`) tells the agent to run
-`commit-trailer` and paste the line, noting the hook remains a best-effort
-backstop.
+`commit-trailer` and paste the line. The workspace skill
+`skills/plan-and-implement.md` § Commit attribution notes that the hook remains
+a best-effort backstop, and it gives the delegation steps.
 
 ### Which agent is committing (nested runs)
 
@@ -268,6 +269,8 @@ filenames name a specific harness.
   `delegation_note`/`delegation_list`/`delegation_clear` commands and the
   pending-authors helpers; the `CLAUDE_IMPORT_MD` / `WORKSPACE_POINTER_MD`
   constants and the `workspace_agents` § Commits text.
+- `src/zentaizo/templates/skills/plan-and-implement.md` — § Commit attribution,
+  the delegation steps that the workspace `AGENTS.md` points to.
 - `src/zentaizo/templates/hooks/prepare-commit-msg` — the bundled, self-contained
   attribution hook.
 - `docs/cli.md` — `session-title`, `claude-hooks`, `commit-trailer`,

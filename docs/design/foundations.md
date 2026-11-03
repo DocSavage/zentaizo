@@ -39,6 +39,8 @@ The role split is not only a fetch concern; it *is* an access policy. `compute_p
 
 The text a workspace ships with lives here as code and template files, not as documentation a workspace re-derives. `workspace_agents()` and `workspace_readme()` in `cli.py` generate `AGENTS.md` and `README.md`; the `skills/` templates (`curate-atlas.md`, `plan-and-implement.md`, `plan-template.md`, `effort-template.md`, `report-template.md`, `handoff-template.md`, `brainstorming-template.md`) are copied verbatim. When a live workspace evolves a convention that proves out — a new `sessions/` subdirectory, a filename pattern, a frontmatter field, commit-separation hygiene — that convention is promoted back into these generators and templates, with workspace-specific examples generalized. Changing a workspace convention is therefore a code change in this repo.
 
+The generated `AGENTS.md` carries only environmental facts and invariants, because every harness loads it into every session. Procedure and schema live in the `skills/` templates, which an agent reads when a task needs them; `plan-and-implement.md` § Reference holds the session-filename shapes, the `edited_by` ledger, and the delegation steps. Conventions generation 7 made this split (tracker issue #8). It cut the text that `workspace_agents()` returns from 2,650 words to 1,256, counted with `wc -w` on a fresh `zentaizo create`, and it states each rule once. Bold marks only four invariants: no personal-memory writes, untrusted source content, read-only reference repos, and session files created with the CLI.
+
 There is intentionally no `zentaizo update` command. A whole-file overwrite cannot preserve a workspace's local customizations, cannot migrate the session files already on disk (renames, frontmatter rewrites, cross-reference fixes) when a convention changes, and cannot distinguish "adopt the new convention" from "this workspace deliberately diverged." Upgrades are instead an AI-driven procedure, `upgrade-zentaizo.md`, bundled in the global skill (`templates/global-skills/zentaizo/`, installed via `zentaizo skills install`) and explicitly experimental — opt-in, not auto-installed into new workspaces. Convention authority lives in the *workspace's* `AGENTS.md` (version-pinned in its git history, read by every harness regardless of which global skill is installed), not in the per-user global skill, which stays narrow: what Zentaizo is, the atlas's purpose, memory-system boundaries, and where to look.
 
 ## Key decisions
@@ -54,6 +56,7 @@ There is intentionally no `zentaizo update` command. A whole-file overwrite cann
 | Curation surface | Bundled `curate-atlas.md` skill, plain markdown, discovered via `AGENTS.md` | Model-agnostic; no tool-specific directory; keeps the atlas (system) boundary clean from host memory (user). |
 | Role enforcement layering | Schema (intent) + CLI (soft) + sandbox policy (hard) | Each layer reads the same `role`; the atlas split *is* the sandbox access policy via `compute_policy()`. |
 | Convention home | Workspace `AGENTS.md` + bundled templates, not the global skill | `AGENTS.md` is version-pinned per workspace and read by every harness; conventions belong to the workspace, not the user's PATH. |
+| `AGENTS.md` contents | Facts and invariants only; procedure and schema in the `skills/` templates | Every harness loads `AGENTS.md` into every session, and the 2026 prompting guides from Anthropic and OpenAI say that over-specified instructions lower quality on current models (tracker issue #8). |
 | Workspace upgrades | AI-driven `upgrade-zentaizo` skill, no `zentaizo update` command | A blind overwrite cannot migrate downstream artifacts or preserve local divergence; that reconciliation needs judgment. |
 
 ## Considered and not taken
@@ -64,6 +67,7 @@ There is intentionally no `zentaizo update` command. A whole-file overwrite cann
 - **Backward-compatible alias for the old `zentaizo.config.json` name on write** — not taken; pre-1.0 with no shipped users justified a hard rename. The legacy name remains *readable* only.
 - **A multi-format `emit-mounts` command** (`--format compose|devcontainer|podman|paths`) — the original sketch for projecting roles into a sandbox. Superseded by `zentaizo sandbox`, which renders the atlas-derived policy into a harness's *native* guardrails (e.g. Claude deny rules) rather than emitting generic mount fragments.
 - **Putting workspace conventions in the per-user global skill** — rejected; conventions can legitimately differ per workspace and must travel with the workspace's git history, so they live in the generated `AGENTS.md` and bundled templates.
+- **Moving the invariants into the skills too** — not taken. A skill loads only when its task starts, and the four invariants must hold in every session, so they stay in `AGENTS.md`.
 
 ## See also
 

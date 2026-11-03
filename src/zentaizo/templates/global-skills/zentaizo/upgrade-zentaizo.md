@@ -270,6 +270,23 @@ results. Take these steps in this order:
    add each repo as an embedded repository. `zentaizo status` in that clone
    reports `Search: exclude missing`.
 
+### Generation 7: a trimmed `AGENTS.md`
+
+Generation 7 also trims the generated `AGENTS.md` to facts and invariants.
+Its session-filename table, its `edited_by` details and its delegation steps
+move to § Reference in `skills/plan-and-implement.md`. The `AGENTS.md`
+subsections "Editor attribution" and "Filename Convention" and the section
+"From Brainstorming to Plan" are gone. The diff phase shows the new text;
+these two steps need care:
+
+1. Adopt the new `AGENTS.md` text section by section. Keep each
+   workspace-specific section, and keep the repo-roles block as § Known sharp
+   edges says. When the workspace and the template both changed a section,
+   ask the user.
+2. Search the workspace-specific text that stays for references to the three
+   removed sections, such as "§ Filename Convention". Point each one at the
+   matching subsection of § Reference in `skills/plan-and-implement.md`.
+
 ## Boundaries — what this procedure does NOT do
 
 - It does not silently rewrite the workspace. Every change is staged through

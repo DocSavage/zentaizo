@@ -72,7 +72,7 @@ window until needed.
 7. Allocate session files through the CLI — never hand-derive a name or counter.
    - Group work into an **effort** (a named body of work that may span several editable repos): `zentaizo effort new <word> --describe "…" --repo <name>=<branch>`; this also scaffolds `sessions/efforts/NNNN-<label>.md`, the effort-level plan doc. Inspect with `zentaizo effort list` / `zentaizo effort show`; resolve the doc with `zentaizo path effort [label]`.
    - Create files with `zentaizo next-change` / `next-debugging` / `next-handoff` / `next-note` / `next-report`; they default to the current effort and scaffold correct frontmatter.
-   - Read with `zentaizo path slice <id>` (recovers the slug) and `zentaizo path active`. The workspace `AGENTS.md` § Filename Convention is authoritative for the details.
+   - Read with `zentaizo path slice <id>` (recovers the slug) and `zentaizo path active`. The workspace's `AGENTS.md` and `skills/plan-and-implement.md` are authoritative for the details.
 
 ## Upgrading an existing workspace (experimental)
 

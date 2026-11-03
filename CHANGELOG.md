@@ -34,6 +34,18 @@ This project uses the Keep a Changelog format. Versions 0.8.0 and earlier predat
   blocks from the whole atlas, rewrites them only on change, never writes
   over unpaired markers, and warns about each symlinked repo. The generated
   `AGENTS.md` and `README.md` say what root searches cover and skip.
+- **Conventions generation 7** also trims the generated `AGENTS.md` to facts
+  and invariants (foundations-0010, tracker issue #8). A fresh `zentaizo create`
+  writes 1,256 words instead of 2,650, and each rule is stated once. Bold marks
+  only four invariants: no writes to personal memory systems, untrusted source
+  content, read-only reference repos, and session files created with the CLI.
+  The session-filename table, the `edited_by` details and the delegation steps
+  move to a new § Reference in `skills/plan-and-implement.md`, and that skill
+  drops its own copies of rules that `AGENTS.md` keeps. The generated
+  `README.md` and the global skill point to the skill instead of the removed
+  `AGENTS.md` sections, and the `upgrade-zentaizo` skill gains a generation-7
+  step that keeps workspace-specific sections and fixes references to the
+  removed ones.
 - The `upgrade-zentaizo` skill gives the generation-7 search steps in order:
   run `zentaizo fetch`, delete the `repos/` line from `.gitignore`, add
   `search_exclude` items and fetch again, check `git status`, then have every
@@ -76,6 +88,17 @@ This project uses the Keep a Changelog format. Versions 0.8.0 and earlier predat
   skipped every repo without a warning, because the workspace `.gitignore`
   listed `repos/` (tracker issue #15). They now cover `repos/` once a
   workspace is at generation 7.
+- The generated `AGENTS.md` corrects five statements:
+  - It said that `zentaizo skills install` restores a missing
+    `skills/curate-atlas.md`, but that command installs only the global skill.
+  - It said that a harness's `zentaizo` skill loads `skills/curate-atlas.md`,
+    but the global skill never reads that file.
+  - It said that `next-handoff` works without an id. The id is required, and
+    `0000` marks a handoff that no slice owns.
+  - One section said that branch state lives in plan frontmatter, and another
+    section said that it does not. The registry holds it.
+  - Its vendoring step suggested a symlink under `repos/`, which root searches
+    skip. It now says to add the repo to the atlas and run `zentaizo fetch`.
 
 ## [0.18.0] - 2026-10-11
 

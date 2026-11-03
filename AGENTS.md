@@ -69,7 +69,9 @@ Conventions:
   (`zentaizo.atlas.json`) versus a machine-resolved lock; work grouped into
   *efforts* that decompose into *slice* plans under `sessions/`; the CLI
   allocates every session filename. The authoritative descriptions are
-  `docs/workspace-format.md` and the `workspace_agents()` string in `cli.py`.
+  `docs/workspace-format.md`, the `workspace_agents()` string in `cli.py`, and
+  `templates/skills/plan-and-implement.md`, which holds the session-file details
+  that the generated `AGENTS.md` leaves out.
 
 ## Commands
 
