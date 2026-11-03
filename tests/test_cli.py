@@ -6997,6 +6997,17 @@ class AgentsTrimTests(WorkspaceCliCase):
         ):
             self.assertIn(phrase, reference)
 
+    def test_scaffold_comments_say_whether_to_keep_them(self):
+        def comment(name: str) -> str:
+            text = (self.TEMPLATES / "skills" / f"{name}-template.md").read_text()
+            return " ".join(text.split("<!--", 1)[1].split("-->", 1)[0].split())
+
+        for name in ("plan", "effort", "report", "brainstorming"):
+            with self.subTest(template=name):
+                self.assertIn("Keep this comment in the finished file.", comment(name))
+        # A handoff is the implementing agent's prompt, so its author deletes it.
+        self.assertIn("delete this comment once written", comment("handoff"))
+
     def test_skill_leaves_the_invariants_to_agents_md(self):
         skill = self._skill()
         for restated in ("Claude Memory", "never written to", "do not write to them", "by hand"):

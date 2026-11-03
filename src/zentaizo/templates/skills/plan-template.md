@@ -19,7 +19,8 @@ edited_by:
   plan, and when); the latest entry is the effective last-modified time. Never
   hand-write the model name. The effort's broader plan lives in
   `sessions/efforts/`; its per-repo branch and base sha live in the registry
-  (`sessions/efforts.json`), not here.
+  (`sessions/efforts.json`), not here. Keep this comment in the finished file.
+  It guides later edits.
 -->
 
 # <Concise plan title>

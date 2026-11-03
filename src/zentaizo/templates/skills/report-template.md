@@ -15,7 +15,8 @@ edited_by:
   their line, and the frontmatter as the very first thing in the file. There is
   no `updated:` field — run `zentaizo edited <this file>` after each substantive
   revision to extend the `edited_by:` ledger (its latest entry is the effective
-  last-modified time); never hand-write the model name.
+  last-modified time); never hand-write the model name. Keep this comment in
+  the finished file. It guides later edits.
 -->
 
 # <Report title>

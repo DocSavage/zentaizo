@@ -11,7 +11,8 @@ edited_by:
   setting `created` and stamping the first `edited_by:` entry. Keep
   brainstorming permissive: this template is for provenance and reviewability,
   not a required schema for every file in `sessions/brainstorming/`. The
-  relationship fields are advisory and intentionally unvalidated.
+  relationship fields are advisory and intentionally unvalidated. Keep this
+  comment in the finished file. It guides later edits.
 -->
 
 # <Planning topic>

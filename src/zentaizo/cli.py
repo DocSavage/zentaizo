@@ -138,7 +138,8 @@ CONVENTIONS_DELTAS = {
     "other clone right after pulling); AGENTS.md is trimmed to facts and invariants, "
     "and its session-filename, `edited_by` and commit-attribution details move to "
     "skills/plan-and-implement.md, which README.md and the global skill now cite "
-    "(keep workspace-specific AGENTS.md sections)",
+    "(keep workspace-specific AGENTS.md sections); the plan, effort, report and "
+    "brainstorming templates ask agents to keep their opening comment",
 }
 
 

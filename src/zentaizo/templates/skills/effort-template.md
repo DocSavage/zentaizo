@@ -9,7 +9,8 @@ edited_by:
   framing line below. Keep frontmatter minimal. The effort number, label,
   open/closed status, and per-repo branch/base map live in
   `sessions/efforts.json`, not here. After substantive edits, run
-  `zentaizo edited <this file>` to refresh the edited_by ledger.
+  `zentaizo edited <this file>` to refresh the edited_by ledger. Keep this
+  comment in the finished file. It guides later edits.
 -->
 
 # Effort plan

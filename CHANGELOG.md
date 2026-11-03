@@ -46,6 +46,9 @@ This project uses the Keep a Changelog format. Versions 0.8.0 and earlier predat
   `AGENTS.md` sections, and the `upgrade-zentaizo` skill gains a generation-7
   step that keeps workspace-specific sections and fixes references to the
   removed ones.
+- The plan, effort, report and brainstorming templates ask agents to keep
+  their opening comment in the finished file, because it guides later edits.
+  Agents that rewrote a whole file used to drop the comment.
 - The `upgrade-zentaizo` skill gives the generation-7 search steps in order:
   run `zentaizo fetch`, delete the `repos/` line from `.gitignore`, add
   `search_exclude` items and fetch again, check `git status`, then have every
