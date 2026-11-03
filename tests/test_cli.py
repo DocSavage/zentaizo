@@ -7086,6 +7086,16 @@ class ConventionsTests(WorkspaceCliCase):
             list(range(1, CONVENTIONS_GENERATION + 1)),
         )
 
+    def test_upgrade_skill_lists_every_installed_skill(self):
+        templates = Path(__file__).resolve().parents[1] / "src/zentaizo/templates"
+        upgrade = (templates / "global-skills/zentaizo/upgrade-zentaizo.md").read_text()
+        owned = upgrade.split("### 1. Diff the templates against the workspace", 1)[1]
+        owned = owned.split("\n### ", 1)[0]
+        installed = sorted(path.name for path in (templates / "skills").glob("*.md"))
+        self.assertTrue(installed)
+        for name in installed:
+            self.assertIn(f"`skills/{name}`", owned)
+
     def test_upgraded_restamps_existing_lock(self):
         from zentaizo import __version__
         from zentaizo.cli import CONVENTIONS_GENERATION

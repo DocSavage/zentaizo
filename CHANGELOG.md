@@ -99,6 +99,10 @@ This project uses the Keep a Changelog format. Versions 0.8.0 and earlier predat
     section said that it does not. The registry holds it.
   - Its vendoring step suggested a symlink under `repos/`, which root searches
     skip. It now says to add the repo to the atlas and run `zentaizo fetch`.
+- The `upgrade-zentaizo` skill's list of the files that Zentaizo owns now
+  includes `skills/handoff-template.md` and `skills/brainstorming-template.md`,
+  which `zentaizo create` installs. The skill's opening paragraph points to
+  that list instead of giving a shorter one.
 
 ## [0.18.0] - 2026-10-11
 

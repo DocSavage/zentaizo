@@ -8,9 +8,7 @@
 
 ## When to run this
 
-Run it when a workspace's bundled files (`AGENTS.md`, `skills/curate-atlas.md`,
-`skills/plan-and-implement.md`, `skills/plan-template.md`, `CLAUDE.md`,
-`GEMINI.md`, the `.gitignore`, and the `sessions/` subdirectories) have fallen
+Run it when a workspace's bundled files, which phase 1 below lists, have fallen
 behind Zentaizo's current conventions and the user wants to reconcile.
 
 The deterministic trigger is `zentaizo status`: its `Conventions:` line
@@ -89,7 +87,9 @@ files Zentaizo owns are:
 - `.ignore` — created by `zentaizo create` (generation 7 and later). Its
   search block is CLI-managed; see § Known sharp edges.
 - `skills/curate-atlas.md`, `skills/plan-and-implement.md`,
-  `skills/effort-template.md`, `skills/plan-template.md`, `skills/report-template.md` — copied verbatim from
+  `skills/plan-template.md`, `skills/effort-template.md`,
+  `skills/report-template.md`, `skills/handoff-template.md` and
+  `skills/brainstorming-template.md` — copied verbatim from
   `src/zentaizo/templates/skills/`.
 - The seven `sessions/` subdirectory shells: `efforts/`, `brainstorming/`,
   `changes/`, `questions/`, `debugging/`, `handoffs/`, `reports/`.
