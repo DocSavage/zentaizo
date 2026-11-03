@@ -6,6 +6,13 @@ This project uses the Keep a Changelog format. Versions 0.8.0 and earlier predat
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-11-03
+
+One entry for three slices that land together: integrations-0006 removes the
+knowledge-graph layer, foundations-0013 lets root searches see `repos/`, and
+foundations-0010 trims the generated `AGENTS.md`. Existing workspaces reach the
+new generation through an `upgrade-zentaizo` pass. **Conventions generation: 7.**
+
 ### Added
 
 - A repo entry in the atlas can carry a `search_exclude` list: paths, relative
