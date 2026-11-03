@@ -117,9 +117,9 @@ check against the code.
 ## Claims
 
 - **C1.** Replace a performance adjective with a measured value and the conditions it
-  holds under. `docs/workspace-format.md` gives a cold graph build as "about a minute
-  of local compute" alongside the extraction mode it measures; "fast" would say
-  nothing.
+  holds under. `docs/design/integrations.md` gives the retired graph layer's disk cost
+  as "97 MB to 2.3 GB" per workspace, with the machine, the workspace count and the
+  survey date; "heavy" would say nothing.
 - **C2.** Name the baseline, the workload, and the environment for every comparison. A
   comparative with no named baseline — "more token-efficient", "faster than scanning
   the repo" — is a defect, not a summary.
@@ -159,7 +159,6 @@ column lists the wordings that lose, so that drift is greppable.
 | One atlas entry: a repo, doc, paper, or note | **source** | input, asset |
 | The `edit`/`reference` field on a repo entry | **role**; in prose, an **editable repo** and a **reference repo** | read-write repo, writable repo, read-only repo, upstream repo |
 | A generated markdown condensation under `summaries/` | **summary** | digest, abstract, synopsis |
-| The Graphify-built store under `graphify-out/` | **graph** (*knowledge graph* at first mention on a page) | index, code graph, graph database, KG |
 
 *read-only* and *writable* stay reserved for describing sandbox permissions, where they
 name an access mode rather than a category of repo.
@@ -205,7 +204,7 @@ entry *is* the last-modified record; `created:` is the stable creation timestamp
 | The host program the agent runs in (Claude Code, Codex CLI, Gemini CLI, Aider) | **harness** | host tool, client, IDE (unless an IDE is literally meant) |
 | A specific model identity, as recorded in attribution | **model** (as in `edited_by`, and in *model-agnostic*) | model-neutral, AI-agnostic, vendor-neutral |
 | This project | **Zentaizo** for the project, **the Zentaizo CLI** (or `zentaizo`) where the command-line program specifically is meant | *the tool*, zen (the `zen-` prefix names a workspace, not the project) |
-| A derived artifact behind the inputs it was built from | **stale** (summaries, the graph) | out of date, rotted, expired |
+| A derived artifact behind the inputs it was built from | **stale** (summaries, the repo-roles block) | out of date, rotted, expired |
 | A record that has diverged from what it describes | **drift** (a rendered sandbox config against the atlas; docs against code) | skew, desync |
 | The integer in the lock's `conventions` block | **conventions generation** | convention version, format version, schema version, workspace version |
 

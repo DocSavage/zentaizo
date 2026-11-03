@@ -14,9 +14,9 @@ these docs are the settled distillate that ships with the repo.
   slice statuses, the handoff/restart loop, and the editor ledger.
 - [claude-integration.md](claude-integration.md) — AI coding-harness glue: the
   session-title hook, the `AGENTS.md` import, and commit attribution.
-- [integrations.md](integrations.md) — external knowledge integrations: the built
-  `zentaizo graph` layer over Graphify (and the proposed, unimplemented Context
-  Hub tier).
+- [integrations.md](integrations.md) — external knowledge integrations: why the
+  Graphify layer was removed in 0.19.0, and the proposed, unimplemented Context
+  Hub tier.
 - [sandboxing.md](sandboxing.md) — sandboxed agentic execution: deriving a
   least-privilege policy from repo roles and rendering it into a harness's native
   config.

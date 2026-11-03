@@ -61,8 +61,8 @@ closed unless `--yes` is supplied after the user has explicitly authorized the
 changes. Existing user-owned destinations are preserved or refused under the
 same rules as `zentaizo skills install`; reruns are idempotent.
 
-`--check` is read-only. It reports harness/skill state, Graphify resolution,
-`git`/`gh` availability, and whether the optional `docs-scan` distribution is
+`--check` is read-only. It reports harness/skill state, `git`/`gh`
+availability, and whether the optional `docs-scan` distribution is
 installed. The docs-scan probe reads package metadata only and never loads its
 model.
 
@@ -83,41 +83,40 @@ zentaizo bring-up [PATH] [--check | --yes]
 ```
 
 Runs the mechanical workspace pipeline in order: `validate`, `fetch`,
-`fetch-docs`, `graph`, then `summarize`. The command calls the internal
-`_validate_operation()`, `_fetch_operation()`, `_fetch_docs_operation()`,
-`_graph_operation()`, and `_summarize_operation()` functions
-(`src/zentaizo/cli.py`). It writes `summaries/summarize.prompt.md`; hand that
-prompt to your agent to produce the summaries.
+`fetch-docs`, then `summarize`. The command calls the internal
+`_validate_operation()`, `_fetch_operation()`, `_fetch_docs_operation()`, and
+`_summarize_operation()` functions (`src/zentaizo/cli.py`). It writes
+`summaries/summarize.prompt.md`; hand that prompt to your agent to produce the
+summaries.
 
 The pipeline skips `fetch-docs` when the atlas declares no `docs` sources,
-including when it declares papers but no docs. It skips `graph` only when
-Graphify is unavailable. A resolved Graphify failure or a managed-file refusal
-stops the run. An individual doc fetch failure remains nonfatal and is recorded
-as `reference-only`, matching `zentaizo fetch-docs`.
+including when it declares papers but no docs. An individual doc fetch failure
+remains nonfatal and is recorded as `reference-only`, matching
+`zentaizo fetch-docs`.
 
 The command is not transactional. A failed step leaves earlier fetches,
-snapshots, quarantined artifacts, graph output, and lock updates in place. The
-failure message names the failed step and the last completed step so you can
-fix the cause and rerun safely.
+snapshots, quarantined artifacts, and lock updates in place. The failure
+message names the failed step and the last completed step so you can fix the
+cause and rerun safely.
 
 The command asks before it fetches or writes. Non-interactive input fails
 closed unless you pass `--yes` after explicit authorization. The `--yes` flag
 does not permit overwriting user-owned managed files. The `--check` flag is
 read-only and prints an ordered forecast; it says which steps would be
-attempted or skipped without claiming network, repository, or Graphify
-success. The `--check` and `--yes` flags are mutually exclusive. These rules
+attempted or skipped without claiming network or repository success. The
+`--check` and `--yes` flags are mutually exclusive. These rules
 are implemented by `bring_up_workspace()` (`src/zentaizo/cli.py`).
 
 ```bash
 zentaizo status [PATH]
 ```
 
-Shows source counts (split by role: edit vs reference) and the lock status. For each repo it inspects the working tree: edit repos report the current branch and whether they are at the locked SHA or have diverged; reference repos flag drift between HEAD and the locked SHA. A reference-repo drift line includes the scoped remedy, `zentaizo fetch --repo NAME`; when `status` targets a non-current workspace, the command includes that workspace path. When an edit repo is clean and behind its upstream, `status` prints the rebase command. It prints one `Repo roles:` line for the `AGENTS.md` repo-roles block (`current`, `STALE` or `missing` with the `zentaizo fetch` remedy, or `MALFORMED` markers), without writing it. It reports quarantined doc snapshots with their paths and prints one knowledge-graph line (`graph: not built` / `current` / `stale` — see `zentaizo graph`). If the atlas is missing, shows the setup prompt instead of failing.
+Shows source counts (split by role: edit vs reference) and the lock status. For each repo it inspects the working tree: edit repos report the current branch and whether they are at the locked SHA or have diverged; reference repos flag drift between HEAD and the locked SHA. A reference-repo drift line includes the scoped remedy, `zentaizo fetch --repo NAME`; when `status` targets a non-current workspace, the command includes that workspace path. When an edit repo is clean and behind its upstream, `status` prints the rebase command. It prints one `Repo roles:` line for the `AGENTS.md` repo-roles block (`current`, `STALE` or `missing` with the `zentaizo fetch` remedy, or `MALFORMED` markers), without writing it. It reports quarantined doc snapshots with their paths. If the atlas is missing, shows the setup prompt instead of failing.
 
 It ends with a `Conventions:` section comparing the generation stamped in the lock's `conventions` block against the generation the installed zentaizo generates: `current` (they match), `behind` (each missed generation's `CONVENTIONS_DELTAS` line is printed, followed by the pointer to the `upgrade-zentaizo` skill), or `not tracked` (the workspace predates conventions tracking — same pointer, full reconciliation). A stamp *newer* than the installed Zentaizo CLI reports that CLI as outdated. This is the only command that reports conventions state; nothing else advises about it.
 
 ```bash
-zentaizo fetch [PATH] [--repo NAME]... [--rebase] [--no-graph]
+zentaizo fetch [PATH] [--repo NAME]... [--rebase]
 ```
 
 Fetches repositories listed in `zentaizo.atlas.json` and records resolved commits in `zentaizo.lock.json`. Behavior depends on each repo's `role`:
@@ -129,7 +128,7 @@ Repeat `--repo NAME` to fetch only named atlas repos; duplicate names are fetche
 
 After writing the lock, every fetch (scoped or not) refreshes the repo-roles block in the workspace root `AGENTS.md`: a CLI-managed section between `<!-- BEGIN zentaizo repo-roles -->` and `<!-- END zentaizo repo-roles -->` that lists each atlas repo as editable or reference. It always reflects the whole atlas. Harness permission layers that read `AGENTS.md` but not tool output (such as Claude Code's auto-mode classifier, through the `CLAUDE.md` import) can only see roles this way. An existing marker pair is replaced in place; a workspace without one gets the block at the end of its "Editable vs Reference Repos" section, or at the end of the file if that section is gone. The write is skipped when nothing changed. Unpaired or misordered markers are never rewritten: `fetch` warns and leaves the file alone, and a workspace with no `AGENTS.md` is skipped.
 
-When the lock records a graph (see `zentaizo graph`) and a graphed source's rev changed, `fetch` also refreshes the knowledge graph best-effort — code-only (AST, offline, no model API), never failing the fetch. `--no-graph` skips it; if `graphify` is missing the fallback is a printed stale hint. Before a scoped auto-refresh, Zentaizo checks every unselected graphed repo's checkout against its locked identity. If one has drifted, it skips the whole-workspace refresh and names the drifted repo plus the `fetch --repo` or full-fetch remedy, preventing new graph content from being recorded under stale lock provenance.
+`--no-graph` is a deprecated no-op, kept for one release so old handoffs still run: it prints a notice to stderr, and `fetch` runs as usual.
 
 ```bash
 zentaizo fetch-docs [PATH] [--no-deep-scan]
@@ -164,20 +163,7 @@ zentaizo summarize [PATH] [--force|--all] [--focus TEXT]
 
 Writes a prompt for hierarchical summarization. **Incremental:** each `summaries/sources/<name>.md` carries a `source_rev` frontmatter line pinning it to the source's locked identity (repo `commit`/`head`, doc `content_hash`); the command diffs that against `zentaizo.lock.json` and asks only for sources that are new or changed, keeping the rest. Legacy summaries without `source_rev` fall back to a timestamp check (source `fetched_at` vs the summary's git/mtime). Flagged doc snapshots are surfaced for review rather than summarized. `--force`/`--all` regenerates everything; `--focus TEXT` adds a per-run framing emphasis. A later version can run a configured LLM directly.
 
-```bash
-zentaizo graph [PATH] [--semantic --backend NAME [--model NAME]] [--force] [--no-deep-scan]
-```
-
-Builds (or incrementally refreshes) a workspace-wide knowledge graph with [Graphify](https://github.com/safishamsi/graphify) — the structural counterpart to `summaries/`: one graph over `repos/`, `papers/`, and `notes/` whose cross-repo and code↔doc edges no per-repo run can see. Graphify is a core dependency: resolution prefers the active environment's bundled module (`python -m graphify`), which works under pipx, then falls back to an external `graphify` on `PATH` for source environments missing dependencies. Graphify's query surface (`graphify query` / `path` / `explain`, MCP) remains native and is never wrapped.
-
-Two modes:
-
-- **Default — code-only, fully offline.** AST extraction (`graphify update`): no key, no network. Markdown gets shallow structural nodes (file + headings) on the same pass.
-- **`--semantic` — opt-in full-corpus extraction** of papers and notes through a model API. Requires an explicit `--backend` (`ollama` is fully local, `claude-cli` uses the local Claude Code CLI with no key; remote backends are your explicit call) — `--semantic` without `--backend` is an error, never key auto-detection. The backend (and `--model`, if given) is recorded in the lock.
-
-Mechanics: the command writes a managed `.graphifyignore` at the workspace root (marker comment, regenerated per build; a user-owned file without the marker is refused) that scopes Graphify to the source trees. Graphify 0.9.x overlays it on `.gitignore`, so the managed file explicitly re-includes the gitignored `repos/` tree and then applies Zentaizo's exclusions. Output lands in upstream-fixed `graphify-out/`, which is derived output and not committed (the scaffolded `.gitignore` ignores the whole directory — `graph.json` alone can sit near GitHub's 100 MiB per-file limit); each clone rebuilds it locally with `zentaizo graph` after `zentaizo fetch`. `GRAPH_REPORT.md` goes through the same safety pass as fetched docs; a flagged report is moved aside to `GRAPH_REPORT.flagged.md` (nothing left in place) and recorded as `report_status: flagged`. The lock gains a `graph` block — mode, exact backend version, and a mode-scoped `built_from` (each graphed source's locked identity) plus `not_graphed` (excluded sources mapped to reasons). The tested compatibility range is Graphify 0.9.26 through the 0.9 series. Graphify 0.9.x can traverse ordinary `snapshots` directories, so Zentaizo explicitly excludes `docs/snapshots/` to keep doc-summary and graph staleness as separate layers.
-
-`zentaizo status` reports the graph line (`not built` / `current` / `stale: N source(s) changed`), counting `not_graphed` sources and surfacing a flagged report; staleness is a pure lock diff scoped to the recorded mode, so a doc hash change never stales a code-only graph. `--force` passes Graphify's own `--force` (from-scratch rebuild; covers a shrinking graph).
+`zentaizo graph` was removed in 0.19.0, with the rest of the knowledge-graph layer; `docs/design/integrations.md` says why and how to run Graphify by hand. For one release it stays as a stub: it accepts its old options, prints a removal notice, and exits 2.
 
 ```bash
 zentaizo provide-info TARGET [PATH]
@@ -215,7 +201,7 @@ Records that the current editor touched a frontmatter-bearing session file, appe
 zentaizo upgraded [PATH]
 ```
 
-Records that an `upgrade-zentaizo` pass brought the workspace to the installed conventions generation, re-stamping the lock's `conventions` block (`generation` is the comparison key `zentaizo status` reads; `tool_version` and `stamped_at` are provenance). It mirrors `zentaizo edited`: the stamp is CLI-written, never hand-written — the `upgrade-zentaizo` skill runs it as its final step, and `zentaizo create` writes the initial stamp for fresh workspaces. If the lock is missing it is recreated from scratch and stamped (the atlas must exist, so an arbitrary directory is never stamped). Prints a one-line confirmation naming the generation.
+Records that an `upgrade-zentaizo` pass brought the workspace to the installed conventions generation, re-stamping the lock's `conventions` block (`generation` is the comparison key `zentaizo status` reads; `tool_version` and `stamped_at` are provenance). It mirrors `zentaizo edited`: the stamp is CLI-written, never hand-written — the `upgrade-zentaizo` skill runs it as its final step, and `zentaizo create` writes the initial stamp for fresh workspaces. If the lock is missing it is recreated from scratch and stamped (the atlas must exist, so an arbitrary directory is never stamped). It also deletes the `graph` block that a workspace from before generation 7 still carries, and it is the only command that touches that block. Prints a one-line confirmation naming the generation, plus a line when it deletes the block.
 
 ```bash
 zentaizo claude-hooks [PATH]

@@ -164,11 +164,9 @@ per-run only and does not mutate the atlas.
 
 ### Dependency posture and `docs/snapshots/` layout
 
-Runtime carries two core dependencies (`pyproject.toml`): `graphifyy` for the
-knowledge graph and `trafilatura` for HTML main-content extraction, both bundled so a
-plain install can build a graph and snapshot a doc site. `[docs-scan]` (LLM Guard) is
-the only extra that adds packages; `[graph]` remains as an empty compatibility alias
-for installs that named it before the runtime was bundled.
+Runtime carries one core dependency (`pyproject.toml`): `trafilatura` for HTML
+main-content extraction, bundled so a plain install can snapshot a doc site. The
+optional `[docs-scan]` extra adds LLM Guard for the deeper scan.
 Snapshots are single files under `docs/snapshots/`; flagged files
 (`*.flagged.*`) are gitignored by the generated workspace `.gitignore`.
 

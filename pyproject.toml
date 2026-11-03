@@ -12,7 +12,6 @@ authors = [
   { name = "Zentaizo contributors" }
 ]
 dependencies = [
-  "graphifyy>=0.9.26,<0.10",
   "trafilatura>=2.1",
 ]
 
@@ -20,7 +19,6 @@ dependencies = [
 docs-scan = [
   "llm-guard>=0.3.16",
 ]
-graph = []
 report-pdf = [
   "markdown-it-py>=3,<5",
 ]

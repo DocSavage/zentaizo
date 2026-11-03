@@ -35,8 +35,7 @@ The goals the workspace format serves. The **Mechanisms** below each note which 
 How the workspace realizes those ideas; each tag points back to the Core Idea(s) it serves.
 
 - **Curated atlas** (`zentaizo.atlas.json`) — human-authored intent: the curated knowledge context, distinct from the machine-resolved lock state (`zentaizo.lock.json`). *(1, 2)*
-- **Hierarchical knowledge base** — summaries at different scales, from system overview to APIs to source, drilling down only when needed; the queryable knowledge graph below is its structural counterpart. *(1, 4)*
-- **Queryable knowledge graph** (`zentaizo graph`) — a cross-source graph of code↔code and code↔doc edges built with bundled [Graphify](https://github.com/safishamsi/graphify), surfacing structural relationships no single per-source summary can see. Deterministic Python-native baseline integrations ship with Zentaizo; heavy or model-backed integrations stay opt-in. *(1, 4)*
+- **Hierarchical knowledge base** — summaries at different scales, from system overview to APIs to source, drilling down only when needed. *(1, 4)*
 - **Heterogeneous sources** — repos, docs, papers, notes, issue reports, and generated analysis in one place. *(1)*
 - **Multi-repo sandbox** — all associated repos available locally for agentic work, like a monorepo for coherent cross-system development; each repo marked read-only (`role: "reference"`) or editable (`role: "edit"`). It brings the full picture of code to bear (1), provides that code as persistent, version-pinned context (2), and removes failable web searches against drifting versions by making the exact source local (3); and that same read-only/editable marking *is* the access policy `zentaizo sandbox` renders, which today denies the Claude file tools on reference repos rather than enforcing a boundary (6). *(1, 2, 3, 6)*
 - **Pinned sources** — repos and document snapshots resolve to exact commits and content hashes (`zentaizo.lock.json`). *(2, 3)*
@@ -74,7 +73,7 @@ zentaizo setup
 If you don't have `pipx`: `pixi global install pipx` (or `brew install pipx`,
 `apt install pipx`).
 
-Runtime support for Graphify and HTML main-content extraction is bundled.
+Runtime support for HTML main-content extraction is bundled.
 `zentaizo setup` prompts before changing each detected Claude, Codex, or Gemini
 configuration; `zentaizo setup --check` reports setup and tool health without
 writing anything.
@@ -94,7 +93,6 @@ zen-link-shortener/
   papers/                   # PDFs and specs
   notes/                    # issue reports, traces, design notes
   summaries/                # generated hierarchical summaries
-  graphify-out/             # knowledge graph (written by `zentaizo graph`; rebuilt per clone)
   skills/                   # model-agnostic procedures and session templates
   sessions/
     efforts.json            # effort registry: labels, numbers, current pointer, repo/branch map
@@ -119,8 +117,7 @@ flowchart TD
         direction TB
         C["<b>1 · zentaizo create</b>"] --> A["<b>2 · author the atlas</b><br/><i>zentaizo.atlas.json</i>"]
         A --> F["<b>3 · zentaizo fetch</b><br/><i>pins repos and docs</i>"]
-        F --> G["<b>4 · zentaizo graph</b><br/><i>queryable cross-source<br/>knowledge graph</i>"]
-        G --> S["<b>5 · zentaizo summarize</b><br/><i>stale-aware, focused<br/>summary prompt</i>"]
+        F --> S["<b>4 · zentaizo summarize</b><br/><i>stale-aware, focused<br/>summary prompt</i>"]
     end
     subgraph work ["Phase 2 — work in efforts"]
         direction TB
@@ -138,9 +135,9 @@ Three ownership rules make the layout predictable:
   human-authored atlas of what the system is and which repos are editable.
 - **The CLI owns the other JSON.** `zentaizo.lock.json` is written only by the
   commands that resolve state — `create` seeds it, `fetch` and `fetch-docs` record
-  what they resolved, `graph` records the build, and `upgraded` re-stamps the
-  conventions block — and `sessions/efforts.json` only through `zentaizo
-  effort …` commands — they validate repo names, compute pins and merge bases,
+  what they resolved, and `upgraded` re-stamps the conventions block — and
+  `sessions/efforts.json` only through `zentaizo effort …` commands — they
+  validate repo names, compute pins and merge bases,
   and keep timestamps, so hand-editing these files is never needed (or safe).
 - **Markdown is shared:** the CLI allocates every session file (path, counter,
   and — for the frontmatter-bearing kinds — its frontmatter), then you and the
@@ -166,7 +163,7 @@ generated `AGENTS.md` says exactly that.
 
 `zentaizo.atlas.json` is the human-authored statement of intent: which repos,
 docs, papers, and notes matter; which repos are *editable* versus *reference*;
-and a description of what you are building (step 5 feeds that description into
+and a description of what you are building (step 4 feeds that description into
 every summary). You don't write it alone — open an AI session in the workspace
 and ask:
 
@@ -188,29 +185,7 @@ records the resolution in `zentaizo.lock.json`. The atlas stays declarative
 ("track `main`"); the lock records what you actually have, so the context
 behind an answer is reproducible.
 
-### 4 · Build the knowledge graph
-
-```bash
-zentaizo graph
-```
-
-This builds the structural counterpart to `summaries/` with
-[Graphify](https://github.com/safishamsi/graphify): one queryable graph over
-`repos/`, `papers/`, and `notes/`, carrying the cross-repo and code↔doc edges
-no per-repo summary can see. The default build is code-only and fully offline —
-AST extraction, no API key, no network, about a minute of local compute even
-for thousands of source files. Once built, `zentaizo fetch` refreshes it
-automatically when a graphed source changes, and `zentaizo status` reports the
-graph line (`current` / `stale`). Opt in to `--semantic --backend ollama` to
-also read the full text of papers and notes via a model (`ollama` and
-`claude-cli` run locally; remote backends are your explicit call).
-
-Output lands in `graphify-out/` — derived and gitignored, so each clone
-rebuilds it locally rather than pulling it from git. Agents (and you) query it
-with Graphify directly: `graphify query` / `path` / `explain`, or its MCP
-server. See `docs/cli.md` for modes, backends, and staleness mechanics.
-
-### 5 · Summarize
+### 4 · Summarize
 
 ```bash
 zentaizo summarize                             # incremental
@@ -236,12 +211,9 @@ than "summarize these repos":
 The agent then writes one summary per source plus three cross-cutting files —
 `overview.md` (system map), `relationships.md` (how the sources interact), and
 `open-questions.md` (gaps and assumptions) — which future sessions read
-*before* any source code. When the knowledge graph exists (step 4), the prompt
-also tells the agent to ground `relationships.md` claims in `graphify query`
-results with file:line citations instead of re-scanning whole repos — which is
-why the graph comes first.
+*before* any source code.
 
-### 6 · Work — in the workspace or from a target repo
+### 5 · Work — in the workspace or from a target repo
 
 The built context can be used two ways. Work *inside* the workspace, grouped
 into efforts (next section) — the multi-repo sandbox makes coherent cross-repo

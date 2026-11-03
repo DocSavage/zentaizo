@@ -168,6 +168,10 @@ For every **convention rename** identified above, walk the existing
   atlas needs a corresponding migration. Surface this explicitly; atlas changes
   are higher-risk than session-file changes because they cascade through
   `zentaizo.lock.json` and `zentaizo fetch`.
+- **Generation-specific steps.** If the pass crosses a generation listed under
+  § Generation-specific steps below, add that generation's steps to the plan.
+  They cover artifacts that a template diff does not show, such as files to
+  delete.
 
 Bundle the full migration list into a `sessions/changes/` plan. If the effort
 registry already exists and is already numbered, allocate the plan with
@@ -197,8 +201,36 @@ executing-the-plan procedure exactly. Specifically:
 - **Final step — always: run `zentaizo upgraded` in the workspace.** It
   re-stamps the lock's `conventions` block to the installed generation so
   the pass is durably recorded and `zentaizo status` reports the workspace
-  as current. Like `zentaizo edited`, the stamp is CLI-written — never edit
+  as current. It also deletes the lock's retired `graph` block, if one is
+  left. Like `zentaizo edited`, the stamp is CLI-written — never edit
   the block by hand.
+
+## Generation-specific steps
+
+Most deltas are template text, and the diff phase finds them. Some generations
+also retire or move artifacts that no template produces, so a diff never shows
+them. When the pass crosses one of these generations, add its steps to the
+migration plan.
+
+### Generation 7: retired knowledge-graph artifacts
+
+Generation 7 removed the knowledge-graph layer (`zentaizo graph`). Delete
+these artifacts:
+
+- `graphify-out/` — untracked derived output. Delete the directory. A
+  workspace from before 0.10.3 may have committed parts of it: remove
+  whatever `git ls-files graphify-out` lists with `git rm -r`.
+- The root `.graphifyignore` — committed, and it carries the marker
+  ``# Managed by `zentaizo graph`.``. Delete it with `git rm .graphifyignore`.
+  A root `.graphifyignore` without the marker was written by the user, so ask
+  before deleting it.
+- `repos/.graphifyignore`, if a user wrote one — untracked, like everything
+  under `repos/`. Before deleting it, move its vendored-path lines into the
+  `search_exclude` list of the matching repo entry in `zentaizo.atlas.json`,
+  written relative to that repo's root.
+
+Also delete the `graphify-out/` line from `.gitignore`. Leave the lock's
+`graph` block alone: the final `zentaizo upgraded` deletes it.
 
 ## Boundaries — what this procedure does NOT do
 
@@ -208,11 +240,12 @@ executing-the-plan procedure exactly. Specifically:
   workspace shell — `AGENTS.md`, `skills/`, `sessions/`, the atlas. The
   editable repos themselves are out of scope.
 - It does not commit on the user's behalf unless they authorize it.
-- It does not rewrite `zentaizo.lock.json`'s resolved sources. The one lock
-  change it makes is the `conventions` re-stamp written by `zentaizo
-  upgraded` at the end. If a fetch refresh is needed after the migration
-  (e.g. because a repo URL or ref shape changed), run `zentaizo fetch`
-  separately under the user's supervision.
+- It does not rewrite `zentaizo.lock.json`'s resolved sources. Its only lock
+  changes are the two that `zentaizo upgraded` makes at the end: the
+  `conventions` re-stamp and, for a workspace from before generation 7, the
+  deletion of the retired `graph` block. If a fetch refresh is needed after
+  the migration (e.g. because a repo URL or ref shape changed), run
+  `zentaizo fetch` separately under the user's supervision.
 
 ## Known sharp edges
 

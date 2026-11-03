@@ -12,7 +12,7 @@ The whole subsystem lives in `src/zentaizo/cli.py` (the sandbox section near `co
 
 **`compute_policy(workspace, mode="implement")`** is one pure function over the atlas. It returns `{version, mode, workspace (absolute), writable[], readonly[], deny_outside}`, with every path list workspace-relative POSIX and sorted (so output is stable). Construction:
 
-- Always-writable workspace dirs come from `SANDBOX_ALWAYS_WRITABLE` = `sessions`, `summaries`, `tmp`, the graph output dir (`graphify-out`), and `.graphifyignore` — the durable trail, local scratch, and the derived graph layer an implementing agent may rebuild mid-task.
+- Always-writable workspace dirs come from `SANDBOX_ALWAYS_WRITABLE` = `sessions`, `summaries`, `tmp` — the durable trail and local scratch.
 - Each atlas repo is added to `writable` if its `repo_role(repo)` is `edit`, otherwise to `readonly` (reference is the default).
 - The workspace's own owned files (`SANDBOX_OWNED_META` = the atlas, the lock, `skills`, `AGENTS.md`, `README.md`, `CLAUDE.md`, `GEMINI.md`) are read-only under `mode="implement"` and writable under `mode="curate"`. The two modes are listed in `SANDBOX_MODES`; an unknown mode is a hard error.
 - `deny_outside` is always `True` — the workspace root is the outer boundary in every policy.

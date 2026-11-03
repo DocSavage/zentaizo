@@ -4,6 +4,42 @@ All notable changes to this project are documented here.
 
 This project uses the Keep a Changelog format. Versions 0.8.0 and earlier predate this changelog.
 
+## [Unreleased]
+
+### Changed
+
+- `zentaizo upgraded` deletes the lock's retired `graph` block when it
+  re-stamps the conventions. No other command touches the block.
+- The `upgrade-zentaizo` skill lists the artifacts that a generation-7 pass
+  deletes: `graphify-out/`, the managed root `.graphifyignore` (with
+  `git rm`), and any user-written `repos/.graphifyignore`, whose vendored-path
+  lines move into the atlas `search_exclude` field first. The pass also
+  deletes the `graphify-out/` line from `.gitignore`.
+
+### Deprecated
+
+- `zentaizo fetch --no-graph` does nothing and prints a deprecation notice to
+  stderr. `zentaizo graph` is a stub that accepts its old options, prints a
+  removal notice, and exits 2. Both stay for one release, so workspaces that
+  predate generation 7 and old handoffs get a clear message; a later MINOR
+  release removes them.
+
+### Removed
+
+- **Conventions generation 7** (integrations-0006, tracker issue #16): the
+  knowledge-graph layer is gone. Measured use showed that agents gained
+  nothing from the graph that text search did not already give them;
+  `docs/design/integrations.md` gives the numbers and a recipe for running
+  Graphify by hand. Removed: the `zentaizo graph` build, its report scan and
+  its staleness tracking; the graph refresh in `fetch`, the graph step in
+  `bring-up` (now validate, fetch, fetch-docs, summarize), the graph line in
+  `status`, and the `graphify:` line in `setup --check`; the graph text in the
+  generated `AGENTS.md` (Source Consultation now has five steps), `README.md`,
+  `.gitignore`, `provide-info` block and `summarize` prompt, and in the global
+  skill; the graph paths in the sandbox policy; and the `graphifyy`
+  dependency and the empty `graph` extra. `pixi.lock` drops graphifyy,
+  tree-sitter and its grammars, networkx, numpy and rapidfuzz.
+
 ## [0.18.0] - 2026-10-11
 
 ### Added
