@@ -72,11 +72,13 @@ zentaizo create PATH [--name NAME] [--no-skills] [--no-git] [--no-commit-hook] [
 
 Creates a Zentaizo workspace shell with source directories, summaries directory, and agent instructions. It does not create `zentaizo.atlas.json`; the first AI-assisted setup step is to identify the source material and create that human-authored atlas. It does seed `zentaizo.lock.json` with a `conventions` stamp — the generation of workspace conventions this build scaffolds (see `zentaizo upgraded`); `zentaizo fetch` fills in the resolved sources later. By default it also installs the managed Claude `SessionStart` hook when a current `zentaizo session-title` command is available on `PATH`; pass `--no-claude-hooks` to skip that. If no managed global skill is detectable, the closeout points to `zentaizo setup`. `--name` sets the workspace display name; `--no-skills` skips copying the bundled `skills/` markdown; `--no-git` skips `git init` (and implies `--no-commit-hook`); `--no-commit-hook` git-inits but leaves the commit-attribution hook out.
 
+The `.gitignore` that `create` writes does not list `repos/`, so that searches from the workspace root cover the repos. After `git init`, `create` adds `/repos/` to `.git/info/exclude`, which hides `repos/` from git, and it writes a `.ignore` whose search block shows `repos/` to `rg`. `docs/workspace-format.md` ("How git and root searches see `repos/`") explains the three files.
+
 ```bash
 zentaizo validate [PATH]
 ```
 
-Checks that `zentaizo.atlas.json` exists and has the required shape. It also runs effort-doc integrity checks: missing effort docs, orphan effort docs, duplicate effort numbers, and legacy registry entries without a `number` are reported loudly. Missing or overlong `short_title` fields on open `changes/` and `debugging/` slices are warnings only. Legacy `zentaizo.config.json` workspaces are still readable.
+Checks that `zentaizo.atlas.json` exists and has the required shape. A repo's optional `search_exclude` must be a list of paths relative to the repo root; `validate` rejects an item that is empty, that starts with `/`, `!` or `#`, or that contains a `..` segment, a backslash or a newline. It also runs effort-doc integrity checks: missing effort docs, orphan effort docs, duplicate effort numbers, and legacy registry entries without a `number` are reported loudly. Missing or overlong `short_title` fields on open `changes/` and `debugging/` slices are warnings only. Legacy `zentaizo.config.json` workspaces are still readable.
 
 ```bash
 zentaizo bring-up [PATH] [--check | --yes]
@@ -111,7 +113,14 @@ are implemented by `bring_up_workspace()` (`src/zentaizo/cli.py`).
 zentaizo status [PATH]
 ```
 
-Shows source counts (split by role: edit vs reference) and the lock status. For each repo it inspects the working tree: edit repos report the current branch and whether they are at the locked SHA or have diverged; reference repos flag drift between HEAD and the locked SHA. A reference-repo drift line includes the scoped remedy, `zentaizo fetch --repo NAME`; when `status` targets a non-current workspace, the command includes that workspace path. When an edit repo is clean and behind its upstream, `status` prints the rebase command. It prints one `Repo roles:` line for the `AGENTS.md` repo-roles block (`current`, `STALE` or `missing` with the `zentaizo fetch` remedy, or `MALFORMED` markers), without writing it. It reports quarantined doc snapshots with their paths. If the atlas is missing, shows the setup prompt instead of failing.
+Shows source counts (split by role: edit vs reference) and the lock status. For each repo it inspects the working tree: edit repos report the current branch and whether they are at the locked SHA or have diverged; reference repos flag drift between HEAD and the locked SHA. A reference-repo drift line includes the scoped remedy, `zentaizo fetch --repo NAME`; when `status` targets a non-current workspace, the command includes that workspace path. When an edit repo is clean and behind its upstream, `status` prints the rebase command. It prints one `Repo roles:` line for the `AGENTS.md` repo-roles block (`current`, `STALE` or `missing` with the `zentaizo fetch` remedy, or `MALFORMED` markers), without writing it. It then prints one `Search:` line, also without writing anything. The states, most urgent first:
+
+- `old layout`: `.gitignore` still lists `repos/`, so root searches miss the repos. Run the `upgrade-zentaizo` skill.
+- `exclude missing`: `.git/info/exclude` does not hide `repos/`, so `git status` lists the repos as untracked. Run `zentaizo fetch` before any `git add`.
+- `MALFORMED` markers, a `missing` block or a `STALE` block in `.ignore` or `.gitignore`: run `zentaizo fetch`, or fix unpaired markers by hand first.
+- `current`: root `grep` and `rg` see `repos/`. The line counts the vendored paths that `search_exclude` hides.
+
+When an atlas repo is a symlink under `repos/`, a second line names it, because root searches skip it. It reports quarantined doc snapshots with their paths. If the atlas is missing, shows the setup prompt instead of failing.
 
 It ends with a `Conventions:` section comparing the generation stamped in the lock's `conventions` block against the generation the installed zentaizo generates: `current` (they match), `behind` (each missed generation's `CONVENTIONS_DELTAS` line is printed, followed by the pointer to the `upgrade-zentaizo` skill), or `not tracked` (the workspace predates conventions tracking — same pointer, full reconciliation). A stamp *newer* than the installed Zentaizo CLI reports that CLI as outdated. This is the only command that reports conventions state; nothing else advises about it.
 
@@ -127,6 +136,14 @@ Fetches repositories listed in `zentaizo.atlas.json` and records resolved commit
 Repeat `--repo NAME` to fetch only named atlas repos; duplicate names are fetched once. A scoped fetch replaces those repos' lock entries in place, appends newly locked selections in atlas order, and preserves every unselected repo entry — including entries removed from the atlas — plus the lock's `docs`/`papers`/`notes` groups. An unknown name exits non-zero and lists the valid atlas repo names before any repo fetch starts. Without `--repo`, fetch keeps its full-refresh behavior: every atlas repo is fetched, the repo list is replaced wholesale, removed entries are pruned, and the other source groups are refreshed from the atlas.
 
 After writing the lock, every fetch (scoped or not) refreshes the repo-roles block in the workspace root `AGENTS.md`: a CLI-managed section between `<!-- BEGIN zentaizo repo-roles -->` and `<!-- END zentaizo repo-roles -->` that lists each atlas repo as editable or reference. It always reflects the whole atlas. Harness permission layers that read `AGENTS.md` but not tool output (such as Claude Code's auto-mode classifier, through the `CLAUDE.md` import) can only see roles this way. An existing marker pair is replaced in place; a workspace without one gets the block at the end of its "Editable vs Reference Repos" section, or at the end of the file if that section is gone. The write is skipped when nothing changed. Unpaired or misordered markers are never rewritten: `fetch` warns and leaves the file alone, and a workspace with no `AGENTS.md` is skipped.
+
+`fetch` also keeps root searches able to see `repos/` (see "How git and root searches see `repos/`" in `docs/workspace-format.md`):
+
+- Before it clones anything, it adds `/repos/` to the clone's `.git/info/exclude`, unless a line there already hides `repos/`. It keeps every other line, and it writes nothing when the workspace is not the top level of its own git repo.
+- After the repo-roles block, it refreshes the search blocks between `# BEGIN zentaizo search` and `# END zentaizo search` in `.ignore` and `.gitignore`. The blocks follow the same rules as the repo-roles block: they come from the whole atlas, also on a scoped fetch; a file is rewritten only when its block changed; and unpaired markers are never rewritten. The `.ignore` block always carries `!/repos/` and each repo's `search_exclude` paths. The `.gitignore` block carries the same paths, and `fetch` removes it when no repo has any.
+- It warns once about each atlas repo that is a symlink under `repos/`, because root searches skip it. It also warns about each invalid `search_exclude` item, which it leaves out of the blocks.
+
+`fetch` does all of this in a workspace from before conventions generation 7 as well. It never removes the `repos/` line from `.gitignore`; the `upgrade-zentaizo` skill does that.
 
 `--no-graph` is a deprecated no-op, kept for one release so old handoffs still run: it prints a notice to stderr, and `fetch` runs as usual.
 

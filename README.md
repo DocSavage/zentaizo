@@ -105,6 +105,12 @@ zen-link-shortener/
     reports/                # living evidence-backed syntheses (must-read deliverables)
 ```
 
+Git ignores `repos/` through each clone's `.git/info/exclude`, which
+`zentaizo fetch` writes, so searches from the workspace root with `rg` or
+Claude Code's `grep` still cover the repos. A repo's `search_exclude` list in
+the atlas keeps vendored code out of those results; see
+[docs/workspace-format.md](docs/workspace-format.md).
+
 ## The workflow
 
 A workspace has two phases: **build the context** (once, then refreshed as

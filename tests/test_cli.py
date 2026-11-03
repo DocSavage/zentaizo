@@ -19,10 +19,14 @@ from zentaizo.cli import (
     BEGIN_MARKER,
     CONVENTIONS_GENERATION,
     END_MARKER,
+    GITIGNORE_REPOS_NOTE,
     HOOK_MARKER,
     ROLES_BEGIN_MARKER,
     ROLES_END_MARKER,
     ROLES_SECTION_HEADING,
+    SEARCH_BEGIN_MARKER,
+    SEARCH_BLOCK_NOTE,
+    SEARCH_END_MARKER,
     CliError,
     _apply_safety_and_write,
     _codex_editor_identity,
@@ -34,6 +38,7 @@ from zentaizo.cli import (
     _stamp_edited_by,
     agent_editor_identity,
     build_repo_roles_block,
+    build_search_block,
     compute_policy,
     default_atlas,
     git_style_now,
@@ -2777,6 +2782,629 @@ class RepoRolesBlockTests(WorkspaceCliCase):
         self.assertTrue(block.endswith(ROLES_END_MARKER))
         self.assertIn("No repos are declared", block)
         self.assertNotIn(BEGIN_MARKER, block)
+
+
+class SearchLayoutTests(WorkspaceCliCase):
+    """Root searches see repos/ (#15). Git ignores repos/ through each clone's
+    .git/info/exclude, a managed .ignore block shows it to rg, and the atlas
+    `search_exclude` field keeps vendored paths out of rg and ugrep results.
+    tests/test_search_layout.py runs the real tools on this layout."""
+
+    EXCLUDE_TAIL = "# zentaizo: hide repos/ from git; .ignore shows it to rg\n/repos/\n"
+    GEN6_GITIGNORE = "repos/\n.zentaizo/\ntmp/\ngraphify-out/\ndocs/snapshots/*.flagged.*\n"
+    VENDORED = ["/repos/alpha/vendor/", "/repos/alpha/third_party/*.min.js", "/repos/gamma/build/"]
+
+    @staticmethod
+    def _repo(name: str, role: str = "reference", search_exclude=None) -> dict:
+        repo = {
+            "name": name,
+            "url": f"https://example.invalid/{name}.git",
+            "ref": "main",
+            "role": role,
+        }
+        if search_exclude is not None:
+            repo["search_exclude"] = search_exclude
+        return repo
+
+    @staticmethod
+    def _write_atlas(workspace: Path, repos: list[dict]) -> None:
+        atlas = default_atlas("search")
+        atlas["sources"] = {"repos": repos, "docs": [], "papers": [], "notes": []}
+        (workspace / "zentaizo.atlas.json").write_text(json.dumps(atlas))
+
+    def _vendored_atlas(self, workspace: Path) -> None:
+        self._write_atlas(
+            workspace,
+            [
+                self._repo("alpha", "edit", ["vendor/", "third_party/*.min.js"]),
+                self._repo("beta"),
+                self._repo("gamma", search_exclude=["build/"]),
+            ],
+        )
+
+    @staticmethod
+    def _fake_fetch(_workspace: Path, repo: dict, *_args) -> dict:
+        return {
+            "name": repo["name"],
+            "url": repo["url"],
+            "ref": repo["ref"],
+            "role": repo["role"],
+            "commit": f"{repo['name']}-sha",
+            "path": f"repos/{repo['name']}",
+            "dirty": False,
+            "fetched_at": "fetch-time",
+        }
+
+    def _fetch(self, workspace: Path, *extra: str) -> tuple[int, str, str]:
+        with (
+            mock.patch("zentaizo.cli.fetch_reference_repo", side_effect=self._fake_fetch),
+            mock.patch("zentaizo.cli.fetch_edit_repo", side_effect=self._fake_fetch),
+        ):
+            return self._run(["fetch", *extra, str(workspace)])
+
+    @staticmethod
+    def _exclude(workspace: Path) -> Path:
+        return workspace / ".git" / "info" / "exclude"
+
+    def _snapshot(self, workspace: Path) -> dict[str, bytes | None]:
+        paths = {
+            ".ignore": workspace / ".ignore",
+            ".gitignore": workspace / ".gitignore",
+            "exclude": self._exclude(workspace),
+        }
+        return {key: path.read_bytes() if path.exists() else None for key, path in paths.items()}
+
+    @staticmethod
+    def _block_lines(text: str) -> list[str]:
+        lines = text.splitlines()
+        return lines[lines.index(SEARCH_BEGIN_MARKER) : lines.index(SEARCH_END_MARKER) + 1]
+
+    def _search_lines(self, workspace: Path) -> list[str]:
+        """The status `Search:` line, plus the symlinked-repos line if any."""
+        code, out, err = self._run(["status", str(workspace)])
+        self.assertEqual((code, err), (0, ""))
+        lines = out.splitlines()
+        index = next(i for i, line in enumerate(lines) if line.startswith("Search:"))
+        following = lines[index + 1 : index + 2]
+        return [lines[index], *(line for line in following if "Symlinked repos:" in line)]
+
+    @staticmethod
+    def _git_status(workspace: Path) -> list[str]:
+        return subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=all"],
+            cwd=workspace,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.splitlines()
+
+    def test_create_hides_repos_with_the_exclude_not_the_gitignore(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+
+            gitignore = (workspace / ".gitignore").read_text().splitlines()
+            self.assertFalse({"repos/", "/repos/", "repos", "/repos"} & set(gitignore))
+            self.assertEqual(gitignore[-1], GITIGNORE_REPOS_NOTE)
+            self.assertNotIn(SEARCH_BEGIN_MARKER, gitignore)
+            self.assertEqual(
+                (workspace / ".ignore").read_text().splitlines(),
+                [SEARCH_BEGIN_MARKER, SEARCH_BLOCK_NOTE, "!/repos/", SEARCH_END_MARKER],
+            )
+            exclude = self._exclude(workspace).read_text()
+            self.assertTrue(exclude.endswith(self.EXCLUDE_TAIL))
+            self.assertEqual(exclude.splitlines().count("/repos/"), 1)
+
+            # A repo that lands in repos/ stays out of git status.
+            (workspace / "repos" / "alpha").mkdir()
+            (workspace / "repos" / "alpha" / "code.py").write_text("x = 1\n")
+            status = self._git_status(workspace)
+            self.assertIn("?? .ignore", status)
+            self.assertEqual([line for line in status if "repos/" in line], [])
+
+    def test_create_without_git_writes_the_ignore_files_but_no_exclude(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "ws"
+            code, _out, _err = self._run(
+                ["create", str(workspace), "--no-git", "--no-claude-hooks"]
+            )
+            self.assertEqual(code, 0)
+            self.assertFalse((workspace / ".git").exists())
+            self.assertIn(GITIGNORE_REPOS_NOTE, (workspace / ".gitignore").read_text())
+            self.assertIn("!/repos/", (workspace / ".ignore").read_text().splitlines())
+
+            self._write_atlas(workspace, [self._repo("alpha")])
+            code, out, err = self._fetch(workspace)
+
+            self.assertEqual((code, err), (0, ""))
+            self.assertNotIn("Added /repos/", out)
+            self.assertFalse((workspace / ".git").exists())
+            self.assertEqual(
+                self._search_lines(workspace),
+                ["Search: current — root grep and rg see repos/; no vendored paths excluded"],
+            )
+
+    def test_workspace_inside_another_repo_leaves_that_repos_exclude_alone(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            outer = Path(tmp) / "outer"
+            outer.mkdir()
+            _git(outer, "init", "-q")
+            outer_exclude = outer / ".git" / "info" / "exclude"
+            before = outer_exclude.read_bytes() if outer_exclude.exists() else None
+            workspace = outer / "tmp" / "ws"
+            self.assertEqual(self._run(["create", str(workspace), "--no-claude-hooks"])[0], 0)
+            self._write_atlas(workspace, [self._repo("alpha", search_exclude=["vendor/"])])
+
+            code, out, err = self._fetch(workspace)
+
+            self.assertEqual((code, err), (0, ""))
+            self.assertNotIn("Added /repos/", out)
+            after = outer_exclude.read_bytes() if outer_exclude.exists() else None
+            self.assertEqual(after, before)
+            self.assertFalse((workspace / ".git").exists())
+            self.assertIn("/repos/alpha/vendor/", (workspace / ".ignore").read_text().splitlines())
+            self.assertEqual(
+                self._search_lines(workspace),
+                ["Search: current — root grep and rg see repos/; 1 vendored path excluded"],
+            )
+
+    def test_fetch_writes_the_exclude_before_cloning_and_keeps_other_lines(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._write_atlas(workspace, [self._repo("alpha", "edit")])
+            exclude = self._exclude(workspace)
+            custom = b"# local rules\n**/.claude/worktrees/\n**/.claude/checkpoints/"
+            exclude.write_bytes(custom)  # no final newline
+            seen: list[bytes] = []
+
+            def clone(fetch_workspace: Path, repo: dict, *_args) -> dict:
+                seen.append(exclude.read_bytes())
+                return self._fake_fetch(fetch_workspace, repo)
+
+            with mock.patch("zentaizo.cli.fetch_edit_repo", side_effect=clone):
+                code, out, err = self._run(["fetch", str(workspace)])
+
+            self.assertEqual((code, err), (0, ""))
+            expected = custom + b"\n" + self.EXCLUDE_TAIL.encode()
+            self.assertEqual(seen, [expected])
+            self.assertEqual(exclude.read_bytes(), expected)
+            self.assertIn("Added /repos/ to .git/info/exclude, so git keeps hiding repos/.", out)
+
+            code, out, _err = self._fetch(workspace)
+            self.assertEqual(code, 0)
+            self.assertNotIn("Added /repos/", out)
+            self.assertEqual(exclude.read_bytes(), expected)
+
+    def test_any_line_that_hides_all_of_repos_counts_as_the_exclude(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._write_atlas(workspace, [self._repo("alpha")])
+            exclude = self._exclude(workspace)
+            for form in ("repos/", "/repos/", "repos", "/repos", "repos/  "):
+                with self.subTest(form=form):
+                    content = f"# mine\n{form}\n*.swp\n".encode()
+                    exclude.write_bytes(content)
+                    code, out, _err = self._fetch(workspace)
+                    self.assertEqual(code, 0)
+                    self.assertNotIn("Added /repos/", out)
+                    self.assertEqual(exclude.read_bytes(), content)
+
+            # A narrower or negated line does not hide repos/, so fetch appends.
+            exclude.write_bytes(b"repos/alpha/\n!repos/\n")
+            self.assertEqual(self._fetch(workspace)[0], 0)
+            self.assertEqual(
+                exclude.read_bytes(), b"repos/alpha/\n!repos/\n" + self.EXCLUDE_TAIL.encode()
+            )
+
+    def test_scoped_fetch_renders_both_blocks_from_the_whole_atlas(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._vendored_atlas(workspace)
+            created_gitignore = (workspace / ".gitignore").read_text()
+
+            code, out, err = self._fetch(workspace, "--repo", "beta")
+
+            self.assertEqual((code, err), (0, ""))
+            self.assertIn("Updated the search block in .ignore.", out)
+            self.assertIn("Updated the search block in .gitignore.", out)
+            self.assertEqual(
+                (workspace / ".ignore").read_text().splitlines(),
+                [
+                    SEARCH_BEGIN_MARKER,
+                    SEARCH_BLOCK_NOTE,
+                    "!/repos/",
+                    *self.VENDORED,
+                    SEARCH_END_MARKER,
+                ],
+            )
+            gitignore = (workspace / ".gitignore").read_text()
+            self.assertTrue(gitignore.startswith(created_gitignore))
+            self.assertEqual(
+                gitignore[len(created_gitignore) :].splitlines(),
+                [SEARCH_BEGIN_MARKER, SEARCH_BLOCK_NOTE, *self.VENDORED, SEARCH_END_MARKER],
+            )
+
+    def test_refetch_with_an_unchanged_atlas_writes_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._vendored_atlas(workspace)
+            self._fetch(workspace)
+            before = self._snapshot(workspace)
+
+            code, out, err = self._fetch(workspace)
+
+            self.assertEqual((code, err), (0, ""))
+            self.assertNotIn("search block", out)
+            self.assertNotIn("Added /repos/", out)
+            self.assertEqual(self._snapshot(workspace), before)
+
+    def test_dropping_every_search_exclude_removes_the_gitignore_block(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            created = {name: (workspace / name).read_text() for name in (".ignore", ".gitignore")}
+            self._vendored_atlas(workspace)
+            self._fetch(workspace)
+            self._write_atlas(workspace, [self._repo("alpha", "edit", []), self._repo("beta")])
+
+            code, out, err = self._fetch(workspace)
+
+            self.assertEqual((code, err), (0, ""))
+            self.assertIn("Removed the search block from .gitignore.", out)
+            self.assertIn("Updated the search block in .ignore.", out)
+            for name, text in created.items():
+                self.assertEqual((workspace / name).read_text(), text, name)
+
+    def test_lines_outside_the_blocks_are_kept(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._vendored_atlas(workspace)
+            self._fetch(workspace)
+            ignore = workspace / ".ignore"
+            gitignore = workspace / ".gitignore"
+            ignore.write_text("# mine\n*.log\n" + ignore.read_text() + "!keep.log\n")
+            gitignore.write_text(gitignore.read_text() + "*.swp\n")
+            self._write_atlas(workspace, [self._repo("alpha", "edit", ["vendor/"])])
+
+            self.assertEqual(self._fetch(workspace)[0], 0)
+
+            new_block = [SEARCH_BEGIN_MARKER, SEARCH_BLOCK_NOTE, "!/repos/"]
+            self.assertEqual(
+                ignore.read_text().splitlines(),
+                [
+                    "# mine",
+                    "*.log",
+                    *new_block,
+                    "/repos/alpha/vendor/",
+                    SEARCH_END_MARKER,
+                    "!keep.log",
+                ],
+            )
+            text = gitignore.read_text()
+            self.assertEqual(text.splitlines()[-1], "*.swp")
+            self.assertEqual(
+                self._block_lines(text),
+                [SEARCH_BEGIN_MARKER, SEARCH_BLOCK_NOTE, "/repos/alpha/vendor/", SEARCH_END_MARKER],
+            )
+
+    def test_unpaired_markers_leave_the_file_untouched(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._vendored_atlas(workspace)
+            for filename in (".ignore", ".gitignore"):
+                path = workspace / filename
+                original = path.read_text()
+                for broken in (
+                    original + SEARCH_BEGIN_MARKER + "\n",
+                    original + SEARCH_END_MARKER + "\n" + SEARCH_BEGIN_MARKER + "\n",
+                ):
+                    with self.subTest(file=filename, broken=broken.splitlines()[-2:]):
+                        path.write_text(broken)
+
+                        code, _out, err = self._fetch(workspace)
+
+                        self.assertEqual(code, 0)
+                        self.assertIn(f"WARNING {filename}: unpaired or misordered", err)
+                        self.assertEqual(path.read_text(), broken)
+                        self.assertTrue(
+                            self._search_lines(workspace)[0].startswith(
+                                f"Search: MALFORMED markers in {filename} — "
+                            )
+                        )
+                path.write_text(original)
+
+    def test_fetch_leaves_invalid_items_out_of_the_blocks_and_warns(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._write_atlas(
+                workspace, [self._repo("alpha", "edit", ["vendor/", "!secret/", "x\n!/etc"])]
+            )
+
+            code, _out, err = self._fetch(workspace)
+
+            self.assertEqual(code, 0)
+            self.assertIn(
+                "repos[1] search_exclude item '!secret/' starts with '!'; "
+                "left it out of the search blocks",
+                err,
+            )
+            self.assertIn("search_exclude item 'x\\n!/etc' contains a newline", err)
+            for name in (".ignore", ".gitignore"):
+                lines = self._block_lines((workspace / name).read_text())
+                self.assertIn("/repos/alpha/vendor/", lines)
+                self.assertEqual([line for line in lines if "secret" in line or "/etc" in line], [])
+
+    def test_fetch_moves_a_generation_6_clone_halfway_and_status_says_old_layout(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._write_atlas(workspace, [self._repo("alpha", "edit", ["vendor/"])])
+            # A generation-6 clone: .gitignore lists repos/, and there is no
+            # .ignore and no exclude line.
+            (workspace / ".gitignore").write_text(self.GEN6_GITIGNORE)
+            (workspace / ".ignore").unlink()
+            exclude = self._exclude(workspace)
+            git_default = exclude.read_text().replace(self.EXCLUDE_TAIL, "")
+            exclude.write_text(git_default)
+            old_layout = (
+                "Search: old layout — .gitignore still lists repos/, so root searches "
+                "miss the repos; run the 'upgrade-zentaizo' skill"
+            )
+            self.assertEqual(self._search_lines(workspace), [old_layout])
+
+            code, out, err = self._fetch(workspace)
+
+            self.assertEqual((code, err), (0, ""))
+            self.assertIn("Added /repos/ to .git/info/exclude", out)
+            self.assertEqual(exclude.read_text(), git_default + self.EXCLUDE_TAIL)
+            self.assertIn("!/repos/", (workspace / ".ignore").read_text().splitlines())
+            gitignore = (workspace / ".gitignore").read_text()
+            # Only the upgrade pass removes the repos/ line.
+            self.assertTrue(gitignore.startswith(self.GEN6_GITIGNORE))
+            self.assertIn("/repos/alpha/vendor/", gitignore.splitlines())
+            self.assertEqual(self._search_lines(workspace), [old_layout])
+
+            upgraded = (
+                gitignore.replace("repos/\n", "", 1)
+                .replace("graphify-out/\n", "", 1)
+                .replace(
+                    "docs/snapshots/*.flagged.*\n",
+                    f"docs/snapshots/*.flagged.*\n{GITIGNORE_REPOS_NOTE}\n",
+                    1,
+                )
+            )
+            (workspace / ".gitignore").write_text(upgraded)
+            self.assertEqual(
+                self._search_lines(workspace),
+                ["Search: current — root grep and rg see repos/; 1 vendored path excluded"],
+            )
+            (workspace / "repos" / "alpha").mkdir()
+            (workspace / "repos" / "alpha" / "code.py").write_text("x = 1\n")
+            self.assertEqual([line for line in self._git_status(workspace) if "repos/" in line], [])
+
+    def test_symlinked_repo_gets_one_fetch_warning_and_a_status_line(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._write_atlas(
+                workspace, [self._repo("alpha", "edit"), self._repo("beta"), self._repo("gamma")]
+            )
+            (workspace / "repos" / "alpha").mkdir()
+            elsewhere = Path(tmp) / "elsewhere"
+            for name in ("beta", "gamma"):
+                (elsewhere / name).mkdir(parents=True)
+                (workspace / "repos" / name).symlink_to(elsewhere / name, target_is_directory=True)
+
+            code, out, err = self._fetch(workspace)
+
+            self.assertEqual((code, err), (0, ""))
+            warnings = [line for line in out.splitlines() if "is a symlink" in line]
+            self.assertEqual(
+                warnings,
+                [
+                    f"  WARNING repos/{name} is a symlink, so searches from the workspace "
+                    f"root skip it. Search it by path, for example `rg PATTERN repos/{name}/`, "
+                    "or replace the symlink with a clone or a git worktree."
+                    for name in ("beta", "gamma")
+                ],
+            )
+            self.assertEqual(
+                self._search_lines(workspace)[1],
+                "  Symlinked repos: beta, gamma — root searches skip them; search each by "
+                "path, for example `rg PATTERN repos/beta/`",
+            )
+
+    def test_validate_accepts_search_exclude_lists(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._write_atlas(
+                workspace,
+                [
+                    self._repo("alpha", "edit", ["vendor/", "third_party/**/*.min.js", "v1..2/"]),
+                    self._repo("beta", search_exclude=[]),
+                    self._repo("gamma"),
+                ],
+            )
+            code, out, _err = self._run(["validate", str(workspace)])
+            self.assertEqual(code, 0, out)
+
+    def test_validate_rejects_each_invalid_search_exclude_form(self):
+        expected_list = "expected a list of paths relative to the repo root"
+        cases = [
+            ("vendor/", f"has invalid search_exclude 'vendor/'; {expected_list}"),
+            (
+                {"path": "vendor/"},
+                f"has invalid search_exclude {{'path': 'vendor/'}}; {expected_list}",
+            ),
+            (None, f"has invalid search_exclude None; {expected_list}"),
+            ([7], "search_exclude item 7 is not a string"),
+            ([""], "search_exclude item '' is empty"),
+            (["  "], "search_exclude item '  ' is empty"),
+            (["/vendor/"], "search_exclude item '/vendor/' starts with '/'"),
+            (["!vendor/"], "search_exclude item '!vendor/' starts with '!'"),
+            (["#vendor/"], "search_exclude item '#vendor/' starts with '#'"),
+            (["vendor/../../etc"], "search_exclude item 'vendor/../../etc' has a '..' segment"),
+            ([".."], "search_exclude item '..' has a '..' segment"),
+            (["vendor\\boost"], "search_exclude item 'vendor\\\\boost' contains a backslash"),
+            (["vendor/\nboost"], "search_exclude item 'vendor/\\nboost' contains a newline"),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            for value, message in cases:
+                with self.subTest(value=value):
+                    beta = self._repo("beta")
+                    beta["search_exclude"] = value
+                    self._write_atlas(workspace, [self._repo("alpha"), beta])
+                    code, out, _err = self._run(["validate", str(workspace)])
+                    self.assertEqual(code, 1)
+                    self.assertIn(f"- repos[2] {message}\n", out)
+
+    def test_status_reports_each_search_state_without_writing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._write_atlas(workspace, [self._repo("alpha", "edit")])
+            self.assertEqual(
+                self._search_lines(workspace),
+                ["Search: current — root grep and rg see repos/; no vendored paths excluded"],
+            )
+
+            # .ignore's block is now stale and .gitignore has none: "missing" wins.
+            self._vendored_atlas(workspace)
+            before = self._snapshot(workspace)
+            self.assertEqual(
+                self._search_lines(workspace),
+                ["Search: block missing from .gitignore — run `zentaizo fetch` to add it"],
+            )
+            self.assertEqual(self._snapshot(workspace), before)
+
+            self._fetch(workspace)
+            self.assertEqual(
+                self._search_lines(workspace),
+                ["Search: current — root grep and rg see repos/; 3 vendored paths excluded"],
+            )
+
+            self._write_atlas(workspace, [self._repo("alpha", "edit", ["vendor/"])])
+            self.assertEqual(
+                self._search_lines(workspace),
+                [
+                    "Search: STALE block in .ignore and .gitignore — run `zentaizo fetch` "
+                    "to refresh it"
+                ],
+            )
+            self._fetch(workspace)
+            (workspace / ".ignore").unlink()
+            self.assertEqual(
+                self._search_lines(workspace),
+                ["Search: block missing from .ignore — run `zentaizo fetch` to add it"],
+            )
+            self._fetch(workspace)
+
+            exclude = self._exclude(workspace)
+            exclude.write_text(exclude.read_text().replace("/repos/\n", ""))
+            self.assertEqual(
+                self._search_lines(workspace),
+                [
+                    "Search: exclude missing — .git/info/exclude does not hide repos/, so "
+                    "git status lists the repos as untracked; run `zentaizo fetch` before "
+                    "any `git add`"
+                ],
+            )
+            (workspace / "repos" / "alpha").mkdir()
+            (workspace / "repos" / "alpha" / "code.py").write_text("x = 1\n")
+            self.assertIn("?? repos/alpha/code.py", self._git_status(workspace))
+
+            gitignore = workspace / ".gitignore"
+            gitignore.write_text("repos/\n" + gitignore.read_text())
+            self.assertEqual(
+                self._search_lines(workspace),
+                [
+                    "Search: old layout — .gitignore still lists repos/, so root searches "
+                    "miss the repos; run the 'upgrade-zentaizo' skill"
+                ],
+            )
+
+    def test_build_search_block_shapes(self):
+        empty = {"name": "empty", "sources": {"repos": []}}
+        self.assertEqual(
+            build_search_block(empty, ".ignore").splitlines(),
+            [SEARCH_BEGIN_MARKER, SEARCH_BLOCK_NOTE, "!/repos/", SEARCH_END_MARKER],
+        )
+        self.assertIsNone(build_search_block(empty, ".gitignore"))
+        repeated = {
+            "sources": {
+                "repos": [
+                    {"name": "svc", "search_exclude": ["vendor/", "vendor/", "/abs/"]},
+                    {"name": "../escape", "search_exclude": ["vendor/"]},
+                    {"name": "text", "search_exclude": "vendor/"},
+                ]
+            }
+        }
+        self.assertEqual(
+            build_search_block(repeated, ".gitignore").splitlines(),
+            [SEARCH_BEGIN_MARKER, SEARCH_BLOCK_NOTE, "/repos/svc/vendor/", SEARCH_END_MARKER],
+        )
+
+    def test_generated_agents_and_readme_describe_root_search_briefly(self):
+        sentence_break = re.compile(r"(?<=\.)\s+(?=[A-Z`])")
+        skipped = ("`search_exclude`", "a repo's own `.gitignore`", "symlinks")
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            agents = (workspace / "AGENTS.md").read_text()
+            step = next(line for line in agents.splitlines() if line.startswith("3. Use `repos/`"))
+            sentences = sentence_break.split(step.removeprefix("3. "))
+            self.assertEqual(
+                sentences[0], "Use `repos/` for implementation details and ground truth."
+            )
+            search = sentences[1:]
+            self.assertEqual(len(search), 2)
+            self.assertIn("cover `repos/`", search[0])
+            for phrase in skipped:
+                self.assertIn(phrase, search[0])
+            self.assertIn("`zentaizo status` names the symlinked repos", search[1])
+            self.assertIn("`rg PATTERN repos/<name>/`", search[1])
+
+            readme = (workspace / "README.md").read_text()
+            paragraph = next(
+                part for part in readme.split("\n\n") if part.startswith("Searches from")
+            )
+            self.assertEqual(len(sentence_break.split(paragraph.strip())), 1)
+            self.assertIn("cover `repos/`", paragraph)
+            for phrase in skipped:
+                self.assertIn(phrase, paragraph)
+
+    def test_delta_7_and_the_upgrade_skill_give_the_migration_order(self):
+        from zentaizo.cli import CONVENTIONS_DELTAS
+
+        delta = CONVENTIONS_DELTAS[7]
+        for phrase in (
+            ".gitignore no longer lists repos/",
+            "each clone's .git/info/exclude hides it from git",
+            "a managed .ignore block shows it to rg",
+            "a repo's `search_exclude` hides vendored paths from both tools",
+            "run `zentaizo fetch` before deleting the repos/ line",
+            "in every other clone right after pulling",
+        ):
+            self.assertIn(phrase, delta)
+
+        skill = Path(__file__).resolve().parents[1] / (
+            "src/zentaizo/templates/global-skills/zentaizo/upgrade-zentaizo.md"
+        )
+        upgrade = skill.read_text()
+        heading = "### Generation 7: root searches see `repos/`"
+        self.assertIn(heading, upgrade.split("## Generation-specific steps", 1)[1])
+        section = upgrade.split(heading, 1)[1].split("\n## ", 1)[0]
+        ordered = [
+            "1. Run `zentaizo fetch`",
+            "2. Delete the `repos/` line from `.gitignore`",
+            GITIGNORE_REPOS_NOTE,
+            "3. Add `search_exclude` items",
+            "`repos/.graphifyignore`",
+            "4. Check that `git status` lists nothing under `repos/`",
+            "5. Tell the owner to run `zentaizo fetch` in every other clone",
+            "`Search: exclude missing`",
+        ]
+        positions = [section.index(phrase) for phrase in ordered]
+        self.assertEqual(positions, sorted(positions))
+        sharp_edges = upgrade.split("## Known sharp edges", 1)[1]
+        self.assertIn(
+            "The search blocks in `.ignore` and `.gitignore` are CLI-managed", sharp_edges
+        )
 
 
 class EffortTests(WorkspaceCliCase):
@@ -5786,6 +6414,27 @@ class BringUpTests(WorkspaceCliCase):
                 )
             )
 
+    def test_bring_up_fetch_step_writes_the_search_layout(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace, _upstream = self._local_repo_workspace(tmp)
+            atlas_path = workspace / "zentaizo.atlas.json"
+            atlas = json.loads(atlas_path.read_text())
+            atlas["sources"]["repos"][0]["search_exclude"] = ["vendor/"]
+            atlas_path.write_text(json.dumps(atlas))
+            (workspace / ".ignore").unlink()
+            exclude = workspace / ".git" / "info" / "exclude"
+            exclude.write_text("")
+
+            code, out, err = self._run(["bring-up", str(workspace), "--yes"])
+
+            self.assertEqual((code, err), (0, ""))
+            self.assertIn("Added /repos/ to .git/info/exclude", out)
+            self.assertEqual(exclude.read_text().splitlines()[-1], "/repos/")
+            for name in (".ignore", ".gitignore"):
+                lines = (workspace / name).read_text().splitlines()
+                self.assertIn("/repos/library/vendor/", lines, name)
+            self.assertIn("!/repos/", (workspace / ".ignore").read_text().splitlines())
+
     def test_bring_up_invalid_atlas_return_code_stops_before_fetch(self):
         with tempfile.TemporaryDirectory() as tmp:
             workspace = self._empty_workspace(tmp)
@@ -6123,7 +6772,7 @@ class GraphRemovalTests(WorkspaceCliCase):
     def test_created_workspace_has_no_graph_text(self):
         with tempfile.TemporaryDirectory() as tmp:
             workspace = self._make_workspace(tmp)
-            for name in ("AGENTS.md", "README.md", ".gitignore"):
+            for name in ("AGENTS.md", "README.md", ".gitignore", ".ignore"):
                 with self.subTest(file=name):
                     self.assertNotRegex((workspace / name).read_text(), GRAPH_TEXT)
             self.assertFalse((workspace / ".graphifyignore").exists())
@@ -6133,7 +6782,11 @@ class GraphRemovalTests(WorkspaceCliCase):
         with tempfile.TemporaryDirectory() as tmp:
             workspace = self._make_workspace(tmp)
             lines = (workspace / ".gitignore").read_text().splitlines()
-            self.assertEqual(lines, ["repos/", ".zentaizo/", "tmp/", "docs/snapshots/*.flagged.*"])
+            # repos/ is hidden by .git/info/exclude instead (SearchLayoutTests).
+            self.assertEqual(
+                lines,
+                [".zentaizo/", "tmp/", "docs/snapshots/*.flagged.*", GITIGNORE_REPOS_NOTE],
+            )
             # Snapshots and papers are committed; only quarantined snapshots stay out.
             self.assertNotIn("docs/snapshots/", lines)
             self.assertNotIn("papers/*.pdf", lines)

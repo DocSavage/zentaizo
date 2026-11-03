@@ -69,6 +69,23 @@ ROLES_BEGIN_MARKER = "<!-- BEGIN zentaizo repo-roles -->"
 ROLES_END_MARKER = "<!-- END zentaizo repo-roles -->"
 # Where the block goes when its markers are absent: the end of this section.
 ROLES_SECTION_HEADING = "## Editable vs Reference Repos"
+# The search layout. Git ignores repos/ through each clone's .git/info/exclude,
+# not the committed .gitignore, so that ugrep (which reads only .gitignore) sees
+# repos/. A CLI-managed block in the committed .ignore shows repos/ to rg, which
+# also reads the exclude. Vendored paths go in both committed files: rg stops
+# applying an outer .gitignore inside a nested repo, and ugrep never reads .ignore.
+SEARCH_BEGIN_MARKER = "# BEGIN zentaizo search"
+SEARCH_END_MARKER = "# END zentaizo search"
+SEARCH_BLOCK_NOTE = (
+    f"# Written by `zentaizo fetch` from {ATLAS_NAME}; edit the atlas, not this block."
+)
+SEARCH_BLOCK_FILES = (".ignore", ".gitignore")
+REPOS_EXCLUDE_LINES = ("# zentaizo: hide repos/ from git; .ignore shows it to rg", "/repos/")
+GITIGNORE_REPOS_NOTE = (
+    "# repos/ is hidden from git by .git/info/exclude, which `zentaizo fetch` writes."
+)
+# Any of these lines in an ignore file hides all of repos/.
+REPOS_IGNORE_FORMS = frozenset({"repos/", "/repos/", "repos", "/repos"})
 GLOBAL_SKILL_NAME = "zentaizo"
 GLOBAL_SKILL_TARGETS = ("claude", "codex", "gemini")
 SHORT_TITLE_MAX = 30
@@ -114,7 +131,11 @@ CONVENTIONS_DELTAS = {
     "from DocSavage/zentaizo)",
     7: "AGENTS.md/README.md/.gitignore and bundled skills: the knowledge-graph layer "
     "is removed; delete graphify-out/ and the managed .graphifyignore; "
-    "`zentaizo upgraded` drops the lock's graph block",
+    "`zentaizo upgraded` drops the lock's graph block; .gitignore no longer lists "
+    "repos/: each clone's .git/info/exclude hides it from git, a managed .ignore "
+    "block shows it to rg, and a repo's `search_exclude` hides vendored paths from "
+    "both tools (run `zentaizo fetch` before deleting the repos/ line, and in every "
+    "other clone right after pulling)",
 }
 
 
@@ -283,6 +304,8 @@ A workspace organizes knowledge as a level-of-detail spine — start at `summari
 
 `{ATLAS_NAME}` and `{LOCK_NAME}` do not exist yet in a freshly created workspace — the atlas is the first thing you author (see below), and the lock is written by `zentaizo fetch`. `sessions/efforts.json` is seeded with a reserved `main` effort, whose plan doc starts at `sessions/efforts/0001-main.md`.
 
+Searches from the workspace root with `rg` or Claude Code's `grep` cover `repos/`, but they skip vendored paths that the atlas lists in `search_exclude`, files that a repo's own `.gitignore` ignores, and repos that are symlinks.
+
 ## First Step
 
 This workspace intentionally starts without `{ATLAS_NAME}`. The first useful interaction is to ask an AI agent to help identify the repos, docs, papers, notes, deployment material, and issue context that belong in this atlas.
@@ -386,7 +409,7 @@ Use this order unless the user asks for something more specific:
 
 1. Start with `summaries/` for the big picture.
 2. Use `docs/` for upstream-authored API references and guides — the abbreviated, authoritative layer between summaries and raw code (prefer entries with `kind: api-reference` or `kind: spec`).
-3. Use `repos/` for implementation details and ground truth.
+3. Use `repos/` for implementation details and ground truth. Searches from the workspace root with `rg` or Claude Code's `grep` cover `repos/`, but they skip vendored paths that the atlas lists in `search_exclude`, files that a repo's own `.gitignore` ignores, and repos that are symlinks. `zentaizo status` names the symlinked repos; search each of those by path, for example `rg PATTERN repos/<name>/`.
 4. Use `papers/` for design rationale.
 5. Use `notes/` for traces, issue reports, and local decisions.
 
@@ -1491,18 +1514,20 @@ def create_workspace(args: argparse.Namespace) -> int:
     (target / "GEMINI.md").write_text(WORKSPACE_POINTER_MD)
     # Doc snapshots and papers are committed (papers have no fetcher; a
     # committed snapshot pins the exact text the safety pass reviewed), so
-    # only quarantined snapshots stay out.
+    # only quarantined snapshots stay out. repos/ is not listed: the clone's
+    # .git/info/exclude hides it from git, so root searches still see it.
     (target / ".gitignore").write_text(
         "\n".join(
             [
-                "repos/",
                 ".zentaizo/",
                 "tmp/",
                 "docs/snapshots/*.flagged.*",
+                GITIGNORE_REPOS_NOTE,
                 "",
             ]
         )
     )
+    (target / ".ignore").write_text(build_search_block({}, ".ignore") + "\n")
 
     # Seed the machine-authored lock with a conventions stamp so the workspace
     # deterministically records which generation scaffolded it; `fetch` fills
@@ -1525,6 +1550,8 @@ def create_workspace(args: argparse.Namespace) -> int:
             already_git = try_run_git(["rev-parse", "--git-dir"], cwd=target) is not None
             initialized = already_git or try_run_git(["init"], cwd=target) is not None
             if initialized:
+                # A no-op inside another repo, whose exclude is not ours to edit.
+                ensure_repos_excluded(target)
                 hooked = not getattr(args, "no_commit_hook", False) and (
                     install_commit_attribution_hook(target) is not None
                 )
@@ -1703,6 +1730,7 @@ def _validate_operation(*, workspace: str) -> OperationResult:
             errors.append(
                 f"repos[{index}] has invalid role {repo['role']!r}; expected one of {allowed}"
             )
+    errors.extend(search_exclude_errors(config))
 
     for group in ["docs", "papers", "notes"]:
         for index, item in enumerate(sources.get(group, []), start=1):
@@ -1926,6 +1954,46 @@ def _print_repo_roles_block_status(workspace: pathlib.Path, config: dict) -> Non
     print(_REPO_ROLES_STATUS[repo_roles_block_state(workspace, config)])
 
 
+def _print_search_status(workspace: pathlib.Path, config: dict) -> None:
+    """Print the `Search:` line, then name any symlinked repos."""
+    state, files = search_layout_state(workspace, config)
+    where = " and ".join(files)
+    if state == "current":
+        count = len(search_exclude_paths(config))
+        excluded = (
+            "no vendored paths excluded"
+            if count == 0
+            else f"{count} vendored path{'' if count == 1 else 's'} excluded"
+        )
+        print(f"Search: current — root grep and rg see repos/; {excluded}")
+    elif state == "old-layout":
+        print(
+            "Search: old layout — .gitignore still lists repos/, so root searches "
+            "miss the repos; run the 'upgrade-zentaizo' skill"
+        )
+    elif state == "exclude-missing":
+        print(
+            "Search: exclude missing — .git/info/exclude does not hide repos/, so "
+            "git status lists the repos as untracked; run `zentaizo fetch` before "
+            "any `git add`"
+        )
+    elif state == "malformed":
+        print(
+            f"Search: MALFORMED markers in {where} — fix the {SEARCH_BEGIN_MARKER} / "
+            f"{SEARCH_END_MARKER} pair by hand, then run `zentaizo fetch`"
+        )
+    elif state == "missing":
+        print(f"Search: block missing from {where} — run `zentaizo fetch` to add it")
+    else:
+        print(f"Search: STALE block in {where} — run `zentaizo fetch` to refresh it")
+    linked = symlinked_repos(workspace, config)
+    if linked:
+        print(
+            f"  Symlinked repos: {', '.join(linked)} — root searches skip them; search "
+            f"each by path, for example `rg PATTERN repos/{linked[0]}/`"
+        )
+
+
 def _print_doc_snapshot_status(lock: dict | None) -> None:
     entries = (lock or {}).get("doc_snapshots") or []
     if not entries:
@@ -1982,6 +2050,7 @@ def status_workspace(args: argparse.Namespace) -> int:
         for repo in ref_repos:
             _print_repo_status(workspace, repo, locked_index.get(repo["name"]))
     _print_repo_roles_block_status(workspace, config)
+    _print_search_status(workspace, config)
 
     _print_doc_snapshot_status(lock)
 
@@ -2243,6 +2312,13 @@ def _fetch_operation(
     prior_repos = _locked_repo_index(lock)
     fetched_repos: list[dict] = []
 
+    # Hide repos/ from git before any clone lands there. Once .gitignore no
+    # longer lists repos/, a clone without this line shows every repo as untracked.
+    exclude = ensure_repos_excluded(workspace_path)
+    if exclude is not None:
+        shown = _display_path(workspace_path, exclude)
+        print(f"Added /repos/ to {shown}, so git keeps hiding repos/.")
+
     for repo in repos_to_fetch:
         if repo_role(repo) == "edit":
             fetched_repos.append(fetch_edit_repo(workspace_path, repo, rebase))
@@ -2287,6 +2363,7 @@ def _fetch_operation(
             "Fix the markers by hand, then re-run `zentaizo fetch`.",
             file=sys.stderr,
         )
+    _report_search_layout(workspace_path, config)
 
     if not scoped and (sources.get("docs") or sources.get("papers")):
         print(
@@ -3703,6 +3780,275 @@ def refresh_repo_roles_block(workspace: pathlib.Path, config: dict) -> str:
         return "unchanged"
     path.write_text(placed)
     return "updated"
+
+
+def search_exclude_item_error(item: object) -> str | None:
+    """Say why ``item`` cannot be a ``search_exclude`` entry, or return None.
+
+    An item is a gitignore-style pattern relative to its repo's root, which
+    zentaizo writes as ``/repos/<name>/<item>``. A leading ``/``, ``!`` or ``#``
+    has a meaning at the start of a gitignore line but loses it after that
+    prefix, so the item must not start with one.
+    """
+    if not isinstance(item, str):
+        return "is not a string"
+    if not item.strip():
+        return "is empty"
+    if "\n" in item or "\r" in item:
+        return "contains a newline"
+    if "\\" in item:
+        return "contains a backslash"
+    if item[0] in "/!#":
+        return f"starts with {item[0]!r}"
+    if ".." in item.split("/"):
+        return "has a '..' segment"
+    return None
+
+
+def search_exclude_errors(config: dict) -> list[str]:
+    """Return a `validate` error for each invalid ``search_exclude`` value."""
+    errors: list[str] = []
+    for index, repo in enumerate(source_groups(config).get("repos", []), start=1):
+        if "search_exclude" not in repo:
+            continue
+        items = repo["search_exclude"]
+        if not isinstance(items, list):
+            errors.append(
+                f"repos[{index}] has invalid search_exclude {items!r}; "
+                "expected a list of paths relative to the repo root"
+            )
+            continue
+        for item in items:
+            reason = search_exclude_item_error(item)
+            if reason:
+                errors.append(f"repos[{index}] search_exclude item {item!r} {reason}")
+    return errors
+
+
+def search_exclude_paths(config: dict) -> list[str]:
+    """Return each valid ``search_exclude`` item as ``/repos/<name>/<item>``.
+
+    The paths keep atlas order and drop repeats. Invalid items, which
+    `validate` reports, and repos with unsafe names are left out.
+    """
+    paths: list[str] = []
+    for repo in source_groups(config).get("repos", []):
+        name = repo.get("name")
+        items = repo.get("search_exclude")
+        if not isinstance(name, str) or ".." in name or not SAFE_SOURCE_NAME.match(name):
+            continue
+        if not isinstance(items, list):
+            continue
+        paths.extend(
+            f"/repos/{name}/{item}" for item in items if search_exclude_item_error(item) is None
+        )
+    return list(dict.fromkeys(paths))
+
+
+def build_search_block(config: dict, filename: str) -> str | None:
+    """Render the search block for ``.ignore`` or ``.gitignore``.
+
+    The ``.ignore`` block always exists, because its ``!/repos/`` shows repos/
+    to rg despite the exclude. The ``.gitignore`` block exists only while some
+    repo has a ``search_exclude`` item, so it returns None otherwise. Every
+    pattern is anchored: an unanchored ``!repos/`` would also show rg a nested
+    repo's own ignored ``repos/`` directory.
+    """
+    paths = search_exclude_paths(config)
+    if filename == ".ignore":
+        body = ["!/repos/", *paths]
+    elif paths:
+        body = paths
+    else:
+        return None
+    return "\n".join([SEARCH_BEGIN_MARKER, SEARCH_BLOCK_NOTE, *body, SEARCH_END_MARKER])
+
+
+def _place_search_block(content: str, block: str | None) -> str | None:
+    """Return ``content`` with ``block`` placed, or None if its markers are malformed.
+
+    A marker pair is replaced in place, or removed when ``block`` is None.
+    Without markers, the block is appended at the end of the file.
+    """
+    lines = content.splitlines(keepends=True)
+    begins = [i for i, line in enumerate(lines) if line.rstrip() == SEARCH_BEGIN_MARKER]
+    ends = [i for i, line in enumerate(lines) if line.rstrip() == SEARCH_END_MARKER]
+    new = [] if block is None else [f"{line}\n" for line in block.split("\n")]
+    if begins or ends:
+        if len(begins) != 1 or len(ends) != 1 or ends[0] < begins[0]:
+            return None
+        return "".join(lines[: begins[0]] + new + lines[ends[0] + 1 :])
+    if block is None:
+        return content
+    if content and not content.endswith("\n"):
+        content += "\n"
+    return content + "".join(new)
+
+
+def _has_search_markers(content: str) -> bool:
+    lines = {line.rstrip() for line in content.splitlines()}
+    return SEARCH_BEGIN_MARKER in lines or SEARCH_END_MARKER in lines
+
+
+def search_block_state(workspace: pathlib.Path, config: dict, filename: str) -> str:
+    """Report one file's search block without writing anything.
+
+    Returns "current", "stale", "missing", or "malformed".
+    """
+    path = workspace / filename
+    content = path.read_text() if path.exists() else ""
+    placed = _place_search_block(content, build_search_block(config, filename))
+    if placed is None:
+        return "malformed"
+    if placed == content:
+        return "current"
+    return "stale" if _has_search_markers(content) else "missing"
+
+
+def refresh_search_blocks(workspace: pathlib.Path, config: dict) -> dict[str, str]:
+    """Write the search blocks into ``.ignore`` and ``.gitignore`` when they changed.
+
+    Maps each file name to "updated", "removed", "unchanged", or "malformed"
+    (nothing written).
+    """
+    results: dict[str, str] = {}
+    for filename in SEARCH_BLOCK_FILES:
+        path = workspace / filename
+        block = build_search_block(config, filename)
+        content = path.read_text() if path.exists() else ""
+        placed = _place_search_block(content, block)
+        if placed is None:
+            results[filename] = "malformed"
+        elif placed == content:
+            results[filename] = "unchanged"
+        else:
+            path.write_text(placed)
+            results[filename] = "removed" if block is None else "updated"
+    return results
+
+
+def _lists_all_repos(data: bytes) -> bool:
+    """True when ignore-file content has a line that hides all of repos/."""
+    lines = data.decode("utf-8", "replace").splitlines()
+    return any(line.rstrip() in REPOS_IGNORE_FORMS for line in lines)
+
+
+def _file_lists_all_repos(path: pathlib.Path) -> bool:
+    return path.is_file() and _lists_all_repos(path.read_bytes())
+
+
+def workspace_git_exclude(workspace: pathlib.Path) -> pathlib.Path | None:
+    """Return the ``info/exclude`` path of the workspace's own git repo.
+
+    Returns None unless the workspace is the top level of a git work tree.
+    In a directory nested inside another repo, git names the outer repo's
+    exclude, which zentaizo must leave alone. In a linked worktree, git names
+    the exclude that all of the repo's worktrees share.
+    """
+    try:
+        toplevel = try_run_git(["rev-parse", "--show-toplevel"], cwd=workspace)
+        git_path = try_run_git(["rev-parse", "--git-path", "info/exclude"], cwd=workspace)
+    except OSError:  # no git binary, or no such directory
+        return None
+    if not toplevel or not git_path:
+        return None
+    if pathlib.Path(toplevel).resolve() != workspace.resolve():
+        return None
+    path = pathlib.Path(git_path)
+    return path if path.is_absolute() else workspace / path
+
+
+def ensure_repos_excluded(workspace: pathlib.Path) -> pathlib.Path | None:
+    """Add the repos/ lines to the workspace clone's ``.git/info/exclude``.
+
+    Returns the exclude path when it writes. Returns None when the workspace
+    is not a git repo, or when the exclude already has a repos/ line in any
+    of its four forms. Every other line is kept byte for byte.
+    """
+    path = workspace_git_exclude(workspace)
+    if path is None:
+        return None
+    data = path.read_bytes() if path.exists() else b""
+    if _lists_all_repos(data):
+        return None
+    if data and not data.endswith(b"\n"):
+        data += b"\n"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data + "".join(f"{line}\n" for line in REPOS_EXCLUDE_LINES).encode())
+    return path
+
+
+def symlinked_repos(workspace: pathlib.Path, config: dict) -> list[str]:
+    """Name each atlas repo whose checkout under repos/ is a symlink.
+
+    Searches from the workspace root skip these repos, because rg and
+    ``grep -r`` do not follow symlinks.
+    """
+    names = [repo.get("name") for repo in source_groups(config).get("repos", [])]
+    return [
+        name
+        for name in names
+        if isinstance(name, str) and name and (workspace / "repos" / name).is_symlink()
+    ]
+
+
+def search_layout_state(workspace: pathlib.Path, config: dict) -> tuple[str, list[str]]:
+    """Report how root searches see repos/, without writing anything.
+
+    Returns the state and the files it concerns. The states, most urgent
+    first: "old-layout" (.gitignore still lists repos/), "exclude-missing"
+    (git would list every repo as untracked), "malformed", "missing" and
+    "stale" (a search block needs `zentaizo fetch`), then "current".
+    """
+    if _file_lists_all_repos(workspace / ".gitignore"):
+        return "old-layout", [".gitignore"]
+    exclude = workspace_git_exclude(workspace)
+    if exclude is not None and not _file_lists_all_repos(exclude):
+        return "exclude-missing", []
+    states = {name: search_block_state(workspace, config, name) for name in SEARCH_BLOCK_FILES}
+    for state in ("malformed", "missing", "stale"):
+        files = [name for name, found in states.items() if found == state]
+        if files:
+            return state, files
+    return "current", []
+
+
+def _display_path(workspace: pathlib.Path, path: pathlib.Path) -> str:
+    try:
+        return str(path.relative_to(workspace))
+    except ValueError:
+        return str(path)
+
+
+def _report_search_layout(workspace: pathlib.Path, config: dict) -> None:
+    """Refresh the search blocks after a fetch and print what changed.
+
+    The blocks come from the whole atlas, also on a scoped fetch.
+    """
+    for error in search_exclude_errors(config):
+        print(
+            f"  WARNING {ATLAS_NAME}: {error}; left it out of the search blocks. "
+            "Run `zentaizo validate`.",
+            file=sys.stderr,
+        )
+    for filename, result in refresh_search_blocks(workspace, config).items():
+        if result == "updated":
+            print(f"Updated the search block in {filename}.")
+        elif result == "removed":
+            print(f"Removed the search block from {filename}.")
+        elif result == "malformed":
+            print(
+                f"  WARNING {filename}: unpaired or misordered {SEARCH_BEGIN_MARKER} / "
+                f"{SEARCH_END_MARKER} markers; left the search block untouched. "
+                "Fix the markers by hand, then re-run `zentaizo fetch`.",
+                file=sys.stderr,
+            )
+    for name in symlinked_repos(workspace, config):
+        print(
+            f"  WARNING repos/{name} is a symlink, so searches from the workspace root "
+            f"skip it. Search it by path, for example `rg PATTERN repos/{name}/`, or "
+            "replace the symlink with a clone or a git worktree."
+        )
 
 
 def provide_info(args: argparse.Namespace) -> int:

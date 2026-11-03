@@ -13,8 +13,9 @@ developed by **dogfooding**: the canonical checkout is an `edit` clone vendored
 inside a `zen-zentaizo` workspace (the same kind the tool creates). That
 workspace's root holds the full design provenance — `zentaizo.atlas.json`, the
 `sessions/` trail, and `summaries/`. **This repo's tracked content never holds
-those workspace artifacts** (`repos/` is gitignored by the workspace, so the two
-git histories never cross); it carries the CLI, reference docs, and *distilled*
+those workspace artifacts** (each workspace clone hides `repos/` with
+`.git/info/exclude`, so the two git histories never cross); it carries the CLI,
+reference docs, and *distilled*
 design docs. The global Zentaizo skill explains how to *use* a workspace — when
 working inside `zen-zentaizo`, follow those workspace conventions; this repo is
 the edit target.

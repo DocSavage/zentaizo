@@ -86,6 +86,8 @@ files Zentaizo owns are:
   `@AGENTS.md` import.
 - `GEMINI.md` — the workspace pointer stub.
 - `.gitignore` — created by `zentaizo create`.
+- `.ignore` — created by `zentaizo create` (generation 7 and later). Its
+  search block is CLI-managed; see § Known sharp edges.
 - `skills/curate-atlas.md`, `skills/plan-and-implement.md`,
   `skills/effort-template.md`, `skills/plan-template.md`, `skills/report-template.md` — copied verbatim from
   `src/zentaizo/templates/skills/`.
@@ -232,6 +234,42 @@ these artifacts:
 Also delete the `graphify-out/` line from `.gitignore`. Leave the lock's
 `graph` block alone: the final `zentaizo upgraded` deletes it.
 
+### Generation 7: root searches see `repos/`
+
+Generation 7 also takes `repos/` out of `.gitignore`, so that `rg` and
+Claude Code's `grep` search the repos from the workspace root. Each clone's
+`.git/info/exclude` hides `repos/` from git instead. A CLI-managed block in
+the committed `.ignore` shows `repos/` to `rg`, and a repo's
+`search_exclude` list in the atlas keeps vendored code out of both tools'
+results. Take these steps in this order:
+
+1. Run `zentaizo fetch`, in any form, such as `zentaizo fetch --repo NAME`.
+   It adds `/repos/` to `.git/info/exclude` and writes the `.ignore` block.
+   Do not edit `.gitignore` before this step: without the exclude line,
+   `git status` lists every repo as untracked.
+2. Delete the `repos/` line from `.gitignore`. In its place, after the
+   `docs/snapshots/*.flagged.*` line, add this comment line:
+
+   ```text
+   # repos/ is hidden from git by .git/info/exclude, which `zentaizo fetch` writes.
+   ```
+
+3. Add `search_exclude` items to the atlas for vendored trees, such as a
+   copy of a library inside a repo. Write each item relative to its repo's
+   root, for example `"search_exclude": ["third_party/boost/"]`, and include
+   the lines from any `repos/.graphifyignore` (see the previous subsection).
+   Then run `zentaizo fetch` again. It writes the vendored paths into the
+   blocks in `.ignore` and `.gitignore`.
+4. Check that `git status` lists nothing under `repos/`, and that
+   `zentaizo status` reports `Search: current`. If `status` names symlinked
+   repos, tell the owner that root searches skip them. Replacing a symlink
+   with a clone or a git worktree is the owner's choice.
+5. Tell the owner to run `zentaizo fetch` in every other clone of this
+   workspace right after pulling this change. Until then, `git status` in
+   that clone lists every repo as untracked, and `git add -A` there would
+   add each repo as an embedded repository. `zentaizo status` in that clone
+   reports `Search: exclude missing`.
+
 ## Boundaries — what this procedure does NOT do
 
 - It does not silently rewrite the workspace. Every change is staged through
@@ -240,12 +278,15 @@ Also delete the `graphify-out/` line from `.gitignore`. Leave the lock's
   workspace shell — `AGENTS.md`, `skills/`, `sessions/`, the atlas. The
   editable repos themselves are out of scope.
 - It does not commit on the user's behalf unless they authorize it.
-- It does not rewrite `zentaizo.lock.json`'s resolved sources. Its only lock
-  changes are the two that `zentaizo upgraded` makes at the end: the
-  `conventions` re-stamp and, for a workspace from before generation 7, the
-  deletion of the retired `graph` block. If a fetch refresh is needed after
-  the migration (e.g. because a repo URL or ref shape changed), run
-  `zentaizo fetch` separately under the user's supervision.
+- It does not rewrite `zentaizo.lock.json`'s resolved sources on its own.
+  Its only direct lock changes are the two that `zentaizo upgraded` makes at
+  the end: the `conventions` re-stamp and, for a workspace from before
+  generation 7, the deletion of the retired `graph` block. The `zentaizo
+  fetch` runs in the generation-7 search steps also refresh the lock, as any
+  fetch does, so run them under the user's supervision. If another fetch
+  refresh is needed after the migration (e.g. because a repo URL or ref
+  shape changed), run `zentaizo fetch` separately under the user's
+  supervision.
 
 ## Known sharp edges
 
@@ -258,6 +299,11 @@ procedure over time:
   addition and not template text: keep it verbatim, with its markers, wherever
   the reconciled `AGENTS.md` places it, and never merge it by hand. If it is
   stale or missing, `zentaizo fetch` fixes it.
+- **The search blocks in `.ignore` and `.gitignore` are CLI-managed.** The
+  lines between `# BEGIN zentaizo search` and `# END zentaizo search` are
+  written by `zentaizo fetch` from the atlas, like the repo-roles block.
+  Keep them verbatim, and change `search_exclude` in the atlas instead. The
+  `.gitignore` lines outside the block are template-owned.
 - **Section-level merging in `AGENTS.md` is approximate.** Diffing whole files
   works for unchanged-or-completely-replaced sections. For sections that have
   been edited on both sides, asking the user is currently the only safe answer.

@@ -8,6 +8,8 @@ my-system-atlas/
   README.md
   zentaizo.atlas.json       # created after source discovery
   zentaizo.lock.json        # seeded by create (conventions stamp); sources written by fetch
+  .gitignore                # does not list repos/; see "How git and root searches see repos/"
+  .ignore                   # shows repos/ to rg (CLI-managed search block)
 
   repos/
   docs/
@@ -98,6 +100,59 @@ The split lets one workspace hold related repos the way a monorepo does, and it 
 `zentaizo fetch` also mirrors the roles into the workspace root `AGENTS.md`, as a CLI-managed block between `<!-- BEGIN zentaizo repo-roles -->` and `<!-- END zentaizo repo-roles -->` markers (see `zentaizo fetch` in `docs/cli.md`). The atlas stays the source of truth, so change roles there and re-run `fetch`, never edit the block. The block exists for readers that load `AGENTS.md` but never see tool output, such as harness permission layers. Content outside the markers is the workspace's own and is never touched.
 
 Use branches or tags while exploring. Use commits when you need a fully reproducible snapshot.
+
+### Repo `search_exclude`
+
+A repo entry may carry an optional `search_exclude` list. Each item is a gitignore-style pattern, relative to that repo's root, for a path that searches from the workspace root should skip. A vendored copy of a library is the usual case:
+
+```json
+{
+  "name": "shortener-api",
+  "url": "https://github.com/example/shortener-api.git",
+  "ref": "main",
+  "role": "edit",
+  "search_exclude": ["third_party/boost/"]
+}
+```
+
+`zentaizo fetch` writes each item as `/repos/<name>/<item>` into the search blocks of `.ignore` and `.gitignore`, so both `rg` and Claude Code's `grep` skip it (see the next section). `validate` rejects a value that is not a list. It also rejects an item that is empty, that starts with `/`, `!` or `#`, or that contains a `..` segment, a backslash or a newline. `fetch` leaves an invalid item out of the blocks and warns about it.
+
+## How git and root searches see `repos/`
+
+Git must not see `repos/`, because each repo there has its own history. Searches from the workspace root should see it, because agents expect a root search to cover the code. Three files do both. In a workspace whose `shortener-api` repo vendors a copy of Boost, they look like this:
+
+```text
+# .git/info/exclude (per clone, not committed; zentaizo adds two lines and keeps the rest)
+# zentaizo: hide repos/ from git; .ignore shows it to rg
+/repos/
+
+# .ignore (committed)
+# BEGIN zentaizo search
+# Written by `zentaizo fetch` from zentaizo.atlas.json; edit the atlas, not this block.
+!/repos/
+/repos/shortener-api/third_party/boost/
+# END zentaizo search
+
+# .gitignore (committed)
+.zentaizo/
+tmp/
+docs/snapshots/*.flagged.*
+# repos/ is hidden from git by .git/info/exclude, which `zentaizo fetch` writes.
+# BEGIN zentaizo search
+# Written by `zentaizo fetch` from zentaizo.atlas.json; edit the atlas, not this block.
+/repos/shortener-api/third_party/boost/
+# END zentaizo search
+```
+
+- **Git** ignores `repos/` through each clone's `.git/info/exclude`. `zentaizo create` writes the two lines after `git init`. `zentaizo fetch` writes them before it clones anything, so every clone gets them on its first fetch. They are added only when no line already hides all of `repos/` (`repos/`, `/repos/`, `repos` or `/repos`), and every other line stays. Nothing is written when the workspace is not the top level of its own git repo, for example a directory inside another repo.
+- **Claude Code's `grep`** runs ugrep with `--ignore-files`, which reads only `.gitignore` files. The workspace `.gitignore` does not list `repos/`, so a root search covers it, and each repo's own `.gitignore` still applies inside that repo. A plain GNU `grep -r` reads no ignore files at all.
+- **`rg`** reads `.gitignore`, `.git/info/exclude` and `.ignore`, and `.ignore` takes precedence. Its `!/repos/` line shows `repos/` to rg despite the exclude. Inside a nested git repo, rg stops applying an outer `.gitignore` but still applies an outer `.ignore`. That is why each vendored path goes in both blocks.
+- **Every pattern is anchored**: `/repos/`, `!/repos/` and `/repos/<name>/<item>`. An unanchored `!repos/` would also show rg a nested repo's own ignored `repos/` directory.
+- **Symlinked repos are skipped.** `rg` and `grep -r` do not follow symlinks, so a root search skips a repo that `repos/` holds as a symlink. Search it by path, for example `rg PATTERN repos/<name>/`, or replace the symlink with a clone or a git worktree. A worktree is searched like a clone. `zentaizo fetch` warns about each symlinked repo, and `zentaizo status` names them.
+
+`zentaizo fetch` renders both blocks from the whole atlas, also on a scoped fetch, and rewrites a file only when its block changed. It never writes over unpaired or misordered markers. The `.ignore` block always exists, because it carries `!/repos/`. The `.gitignore` block exists only while some repo has a `search_exclude` item. Lines outside the markers belong to the workspace.
+
+A workspace from before conventions generation 7 lists `repos/` in `.gitignore`. `fetch` writes the exclude and both blocks there too. That is safe: rg starts to see `repos/`, and git still hides it. The `upgrade-zentaizo` skill then deletes the `repos/` line. Every other clone must run `zentaizo fetch` right after it pulls that change. Until then, its `git status` lists every repo as untracked, and `zentaizo status` reports `Search: exclude missing`.
 
 ## `zentaizo.lock.json`
 

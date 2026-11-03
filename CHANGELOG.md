@@ -6,8 +6,38 @@ This project uses the Keep a Changelog format. Versions 0.8.0 and earlier predat
 
 ## [Unreleased]
 
+### Added
+
+- A repo entry in the atlas can carry a `search_exclude` list: paths, relative
+  to the repo root, that searches from the workspace root should skip, such as
+  a vendored copy of a library. `zentaizo validate` rejects a value that is
+  not a list, and an item that is empty, that starts with `/`, `!` or `#`, or
+  that contains a `..` segment, a backslash or a newline.
+- `zentaizo status` prints a `Search:` line: `current` (with the count of
+  excluded vendored paths), `old layout`, `exclude missing`, or a `MALFORMED`,
+  `missing` or `STALE` search block, each with its remedy. A second line names
+  the atlas repos that are symlinks under `repos/`, which root searches skip.
+- `tests/test_search_layout.py` checks the layout with the real `rg` and
+  `ugrep`, using the flags that Claude Code's `grep` adds. `pixi.toml` installs
+  both tools; the tests skip when a tool is missing.
+
 ### Changed
 
+- **Conventions generation 7** also moves `repos/` out of `.gitignore`
+  (foundations-0013, tracker issue #15). Each clone's `.git/info/exclude`
+  hides `repos/` from git instead: `zentaizo create` writes it after
+  `git init`, and `zentaizo fetch` writes it before cloning anything. A
+  CLI-managed block in the committed `.ignore` shows `repos/` to `rg`, and
+  `fetch` writes each `search_exclude` path into the `.ignore` block and into
+  a `.gitignore` block, because ugrep reads only `.gitignore` and rg stops
+  applying an outer `.gitignore` inside a nested repo. `fetch` renders both
+  blocks from the whole atlas, rewrites them only on change, never writes
+  over unpaired markers, and warns about each symlinked repo. The generated
+  `AGENTS.md` and `README.md` say what root searches cover and skip.
+- The `upgrade-zentaizo` skill gives the generation-7 search steps in order:
+  run `zentaizo fetch`, delete the `repos/` line from `.gitignore`, add
+  `search_exclude` items and fetch again, check `git status`, then have every
+  other clone run `zentaizo fetch` right after pulling.
 - `zentaizo upgraded` deletes the lock's retired `graph` block when it
   re-stamps the conventions. No other command touches the block.
 - The `upgrade-zentaizo` skill lists the artifacts that a generation-7 pass
@@ -39,6 +69,13 @@ This project uses the Keep a Changelog format. Versions 0.8.0 and earlier predat
   skill; the graph paths in the sandbox policy; and the `graphifyy`
   dependency and the empty `graph` extra. `pixi.lock` drops graphifyy,
   tree-sitter and its grammars, networkx, numpy and rapidfuzz.
+
+### Fixed
+
+- Searches from the workspace root with Claude Code's `grep` or with `rg`
+  skipped every repo without a warning, because the workspace `.gitignore`
+  listed `repos/` (tracker issue #15). They now cover `repos/` once a
+  workspace is at generation 7.
 
 ## [0.18.0] - 2026-10-11
 

@@ -50,8 +50,9 @@ To run Graphify on a workspace by hand:
 1. Install it yourself, for example with `pipx install graphifyy`. The package
    is `graphifyy`; the command it installs is `graphify`.
 2. Put `!repos/` in a `.graphifyignore` at the workspace root. Graphify also
-   reads `.gitignore`, and this line makes it scan `repos/` even when an
-   ignore rule hides `repos/` from git.
+   reads `.gitignore` and `.git/info/exclude` (checked in 0.9.86), and this
+   line makes it scan `repos/` even though `.git/info/exclude` hides `repos/`
+   from git.
 3. Keep `graphify-out/` out of git with a line in `.git/info/exclude`. That
    file belongs to the local clone, so the shared `.gitignore` stays as
    Zentaizo generates it.

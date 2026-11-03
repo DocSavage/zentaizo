@@ -7,6 +7,9 @@ platforms = ["osx-arm64", "osx-64", "linux-64"]
 
 [dependencies]
 python = ">=3.11"
+# Search tools for tests/test_search_layout.py; the tests skip without them.
+ripgrep = "*"
+ugrep = "*"
 
 [pypi-dependencies]
 zentaizo = { path = ".", editable = true, extras = ["dev"] }
