@@ -15,6 +15,8 @@ This project uses the Keep a Changelog format. Versions 0.8.0 and earlier predat
   slice that already holds several `aa` handoffs gets `ab` next, and the
   existing files keep their names. `zentaizo path handoff` lists handoffs in
   the same order, so `z` comes before `aa` and the newest handoff prints last.
+  Existing handoffs that share a letter sort by file name, which may differ
+  from the order they were made in.
 
 ## [0.19.0] - 2026-11-03
 

@@ -3899,14 +3899,16 @@ class SessionPathTests(WorkspaceCliCase):
             self._new_effort(workspace)
             ws = str(workspace)
             self._out(["next-change", "feature", "-C", ws])  # katana-0001
-            self._write_handoffs(workspace, "b-x", "aa-x", "z-x", "a-x", "ab-x")
+            # Two handoffs share `aa`, as in zen-DSG; they sort by file name.
+            self._write_handoffs(workspace, "b-x", "aa-y", "z-x", "a-x", "ab-x", "aa-b")
             self.assertEqual(
                 self._out(["path", "handoff", "1", "-C", ws]).splitlines(),
                 [
                     "sessions/handoffs/katana-0001a-x.md",
                     "sessions/handoffs/katana-0001b-x.md",
                     "sessions/handoffs/katana-0001z-x.md",
-                    "sessions/handoffs/katana-0001aa-x.md",
+                    "sessions/handoffs/katana-0001aa-b.md",
+                    "sessions/handoffs/katana-0001aa-y.md",
                     "sessions/handoffs/katana-0001ab-x.md",
                 ],
             )
