@@ -6,6 +6,16 @@ This project uses the Keep a Changelog format. Versions 0.8.0 and earlier predat
 
 ## [Unreleased]
 
+### Fixed
+
+- `zentaizo next-handoff` gave the letter `aa` on every call once a slice had
+  a `z` handoff, because it counted only one-letter suffixes (tracker issue
+  #28). It now goes on past `z` as `aa` … `az`, `ba` … `zz`, then `aaa`, so
+  each new handoff gets a letter that no earlier handoff of its slice has. A
+  slice that already holds several `aa` handoffs gets `ab` next, and the
+  existing files keep their names. `zentaizo path handoff` lists handoffs in
+  the same order, so `z` comes before `aa` and the newest handoff prints last.
+
 ## [0.19.0] - 2026-11-03
 
 One entry for three slices that land together: integrations-0006 removes the

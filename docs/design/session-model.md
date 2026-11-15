@@ -134,8 +134,8 @@ and full agent-chosen words don't truncate-collide.
   investigation"). `--short-title` fills the `short_title` frontmatter (capped at
   `SHORT_TITLE_MAX`), the field the Claude session-title hook reads.
 - **`next-handoff <id> [topic]`** reuses the slice id (never the counter) and
-  auto-allocates a per-slice letter `a`–`z` via `next_handoff_letter()` — the
-  uniqueness key — with an optional, non-load-bearing topic slug. For `id != 0000`
+  auto-allocates the next per-slice letter via `next_handoff_letter()` (`a`–`z`,
+  then `aa`, `ab`, …, `zz`, `aaa`) — the uniqueness key — with an optional, non-load-bearing topic slug. For `id != 0000`
   it verifies a paired plan exists and refuses an orphan handoff; `0000` is the
   untied (restart/multi-slice) handoff and skips that check.
 - **`next-brainstorming` / `next-note` / `next-report`** don't touch the counter
@@ -244,7 +244,7 @@ every frontmatter-bearing file.
 | Slice counter | One shared counter across `changes/` + `debugging/`, filesystem-derived | A change and an investigation never reuse a number; keeps the registry untouched by slice creation (low-conflict) |
 | No `next-effort` | `effort new` is the constructor | An effort is the parent of slices and already owns a lifecycle namespace; `next-effort` would re-split the collapse |
 | `base` field | Machine-computed via `merge-base`, else `null` | The one judgment field the CLI fills — only because it comes from real git state, never inferred |
-| Handoff uniqueness | Per-slice letter `a`–`z` (lowercase only), reusing the slice id | Case-insensitive filesystems make uppercase a latent collision; the optional topic stays non-load-bearing |
+| Handoff uniqueness | Per-slice letter `a`–`z`, then `aa`, `ab`, … (lowercase only), reusing the slice id | Case-insensitive filesystems make uppercase a latent collision; the optional topic stays non-load-bearing |
 | `path active` keys on status | Drop `CLOSED_SLICE_STATUSES`, take highest counter | A finished plan stops being active the instant closeout marks it terminal |
 | Editor identity | Resolved from the shared commit-trailer cache, never hand-written | A model can't reliably name its own id; keeps `edited_by` consistent with commit attribution |
 | Existing-workspace migration | Delegated to the `upgrade-zentaizo` skill, not a CLI command | Convention bumps touch frontmatter/filenames/cross-refs — reconciliation is an AI-driven plan, not an overwrite |

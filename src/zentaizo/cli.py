@@ -5178,20 +5178,47 @@ def resolve_session_title(cwd: pathlib.Path) -> str:
     return f"{workspace.name}: {label}"
 
 
-def next_handoff_letter(workspace: pathlib.Path, label: str, padded: str) -> str:
+def handoff_letter_index(letters: str) -> int:
+    """Position of a handoff letter: ``a`` is 1, ``z`` 26, ``aa`` 27, ``zz`` 702, ``aaa`` 703.
+
+    Shorter letters come first, then alphabetical order, so the position is
+    also the order in which ``next-handoff`` hands the letters out.
+    """
+    index = 0
+    for char in letters:
+        index = index * 26 + (ord(char) - ord("a") + 1)
+    return index
+
+
+def handoff_letter(index: int) -> str:
+    """The handoff letter at ``index`` (1 or more); the inverse of ``handoff_letter_index``."""
+    chars: list[str] = []
+    while index > 0:
+        index, rest = divmod(index - 1, 26)
+        chars.append(chr(ord("a") + rest))
+    return "".join(reversed(chars))
+
+
+def _handoff_letters(
+    workspace: pathlib.Path, label: str, padded: str
+) -> list[tuple[str, pathlib.Path]]:
+    """Each handoff file of slice ``label``-``padded`` with its whole letter suffix."""
     directory = workspace / SESSIONS_DIR / "handoffs"
     pattern = re.compile(rf"^{re.escape(label)}-{padded}([a-z]+)")
-    letters: list[str] = []
+    found: list[tuple[str, pathlib.Path]] = []
     if directory.is_dir():
         for path in directory.iterdir():
             match = pattern.match(path.name)
             if match and path.is_file():
-                letters.append(match.group(1))
-    singles = sorted(letter for letter in letters if len(letter) == 1)
-    if not singles:
-        return "a"
-    nxt = chr(ord(singles[-1]) + 1)
-    return nxt if nxt <= "z" else "aa"  # overflow past 'z' is effectively unreachable
+                found.append((match.group(1), path))
+    return found
+
+
+def next_handoff_letter(workspace: pathlib.Path, label: str, padded: str) -> str:
+    """The letter after the slice's highest one: ``a`` … ``z``, ``aa`` … ``zz``, ``aaa`` …"""
+    letters = _handoff_letters(workspace, label, padded)
+    highest = max((handoff_letter_index(letter) for letter, _ in letters), default=0)
+    return handoff_letter(highest + 1)
 
 
 def _rel(workspace: pathlib.Path, path: pathlib.Path) -> str:
@@ -5475,13 +5502,15 @@ def path_active(args: argparse.Namespace) -> int:
 def path_handoff(args: argparse.Namespace) -> int:
     workspace, label = _resolve_read_effort(args)
     padded = padded_id(args.id)
-    directory = workspace / SESSIONS_DIR / "handoffs"
-    pattern = re.compile(rf"^{re.escape(label)}-{padded}[a-z]")
-    matches = (
-        sorted(p for p in directory.iterdir() if pattern.match(p.name) and p.is_file())
-        if directory.is_dir()
-        else []
-    )
+    # Letter order, so the newest handoff prints last: ``z`` before ``aa``.
+    # Handoffs that share a letter sort by file name among themselves.
+    matches = [
+        path
+        for _, path in sorted(
+            _handoff_letters(workspace, label, padded),
+            key=lambda item: (handoff_letter_index(item[0]), item[1].name),
+        )
+    ]
     if not matches:
         raise CliError(f"No handoffs for {label}-{padded}.")
     if args.json:

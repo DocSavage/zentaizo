@@ -42,6 +42,8 @@ from zentaizo.cli import (
     compute_policy,
     default_atlas,
     git_style_now,
+    handoff_letter,
+    handoff_letter_index,
     inject_block,
     install_commit_attribution_hook,
     main,
@@ -3835,6 +3837,78 @@ class SessionPathTests(WorkspaceCliCase):
             self.assertEqual(
                 self._out(["path", "handoff", "1", "-C", ws]),
                 "sessions/handoffs/katana-0001a-codex.md\nsessions/handoffs/katana-0001b-resume.md",
+            )
+
+    def test_handoff_letter_positions(self):
+        letters = [handoff_letter(n) for n in range(1, 704)]
+        self.assertEqual(letters[:3], ["a", "b", "c"])
+        self.assertEqual(letters[25:28], ["z", "aa", "ab"])
+        self.assertEqual(letters[51:53], ["az", "ba"])
+        self.assertEqual(letters[-2:], ["zz", "aaa"])
+        self.assertEqual(len(set(letters)), 703)
+        self.assertEqual(letters, sorted(letters, key=lambda s: (len(s), s)))
+        for n, letter in enumerate(letters, start=1):
+            self.assertEqual(handoff_letter_index(letter), n)
+
+    def _write_handoffs(self, workspace: Path, *stems: str) -> None:
+        directory = workspace / "sessions" / "handoffs"
+        directory.mkdir(parents=True, exist_ok=True)
+        for stem in stems:
+            (directory / f"katana-0001{stem}.md").write_text("handoff\n")
+
+    def test_handoff_letters_continue_past_z(self):
+        # Issue #28: once a slice had a `z` handoff, every new one got `aa`.
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._new_effort(workspace)
+            ws = str(workspace)
+            self._out(["next-change", "feature", "-C", ws])  # katana-0001
+            self._write_handoffs(workspace, *(f"{chr(c)}-x" for c in range(ord("a"), ord("z") + 1)))
+            self.assertEqual(
+                self._out(["next-handoff", "1", "restart", "-C", ws]),
+                "sessions/handoffs/katana-0001aa-restart.md",
+            )
+            self.assertEqual(
+                self._out(["next-handoff", "1", "restart", "-C", ws]),
+                "sessions/handoffs/katana-0001ab-restart.md",
+            )
+            self._write_handoffs(workspace, "az-x")
+            self.assertTrue(self._out(["next-handoff", "1", "-C", ws]).endswith("katana-0001ba.md"))
+            self._write_handoffs(workspace, "zz-x")
+            self.assertTrue(
+                self._out(["next-handoff", "1", "-C", ws]).endswith("katana-0001aaa.md")
+            )
+
+    def test_handoff_letter_after_repeated_aa(self):
+        # zen-DSG's state: `a` to `z`, then several handoffs that all got `aa`.
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._new_effort(workspace)
+            ws = str(workspace)
+            self._out(["next-change", "feature", "-C", ws])  # katana-0001
+            self._write_handoffs(workspace, *(f"{chr(c)}-x" for c in range(ord("a"), ord("z") + 1)))
+            self._write_handoffs(workspace, "aa-restart", "aa-restart-2", "aa-recheck")
+            self.assertEqual(
+                self._out(["next-handoff", "1", "restart", "-C", ws]),
+                "sessions/handoffs/katana-0001ab-restart.md",
+            )
+
+    def test_path_handoff_lists_in_letter_order(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            self._new_effort(workspace)
+            ws = str(workspace)
+            self._out(["next-change", "feature", "-C", ws])  # katana-0001
+            self._write_handoffs(workspace, "b-x", "aa-x", "z-x", "a-x", "ab-x")
+            self.assertEqual(
+                self._out(["path", "handoff", "1", "-C", ws]).splitlines(),
+                [
+                    "sessions/handoffs/katana-0001a-x.md",
+                    "sessions/handoffs/katana-0001b-x.md",
+                    "sessions/handoffs/katana-0001z-x.md",
+                    "sessions/handoffs/katana-0001aa-x.md",
+                    "sessions/handoffs/katana-0001ab-x.md",
+                ],
             )
 
     def test_note_and_report_naming(self):
