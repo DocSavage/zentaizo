@@ -6,6 +6,8 @@ This project uses the Keep a Changelog format. Versions 0.8.0 and earlier predat
 
 ## [Unreleased]
 
+## [0.19.2] - 2026-11-15
+
 ### Fixed
 
 - `zentaizo next-change --short-title` and `next-debugging --short-title`
