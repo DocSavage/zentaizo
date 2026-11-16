@@ -17,6 +17,13 @@ This project uses the Keep a Changelog format. Versions 0.8.0 and earlier predat
   is written as a bare `short_title:`. A machine with an older zentaizo
   shows a quoted title that holds a backslash or a quote with its escapes, so
   update zentaizo there before you pull plans that have such titles.
+- `zentaizo fetch-docs` replaced a doc entry's page with the host's root
+  `llms-full.txt` or `llms.txt` whenever the host served one, without a
+  warning (tracker issue #14). It now probes those root files only for a
+  site-root URL. A URL that names an `llms.txt` or `llms-full.txt` file is
+  fetched as given, as before, and any other URL is snapshotted as the page
+  it names. Snapshots that the old behavior wrote stay until the next
+  `fetch-docs`.
 
 ## [0.19.1] - 2026-11-15
 

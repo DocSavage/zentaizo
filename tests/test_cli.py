@@ -1273,21 +1273,62 @@ class CliTests(unittest.TestCase):
         return output.getvalue()
 
     def test_fetch_docs_external_prefers_llms_txt(self):
+        # Only a site-root URL probes the host's root llms*.txt.
+        for url in ("https://example.com/", "https://example.com"):
+            with self.subTest(url=url), tempfile.TemporaryDirectory() as tmp:
+                workspace = self._docs_workspace(
+                    tmp,
+                    [{"name": "site", "kind": "api-reference", "url": url}],
+                )
+                self._run_fetch_docs_with_http(
+                    workspace,
+                    {"https://example.com/llms-full.txt": ("text/plain", "# API\n\nFull docs.\n")},
+                )
+                snapshot = workspace / "docs" / "snapshots" / "site.md"
+                self.assertTrue(snapshot.exists())
+                self.assertIn("Full docs.", snapshot.read_text())
+                lock = json.loads((workspace / "zentaizo.lock.json").read_text())
+                entry = lock["doc_snapshots"][0]
+                self.assertEqual(entry["status"], "ok")
+                self.assertEqual(entry["source"]["fetcher"], "llms-txt")
+
+    def test_fetch_docs_deep_url_snapshots_its_page_despite_root_llms_txt(self):
         with tempfile.TemporaryDirectory() as tmp:
             workspace = self._docs_workspace(
                 tmp,
-                [{"name": "site", "kind": "api-reference", "url": "https://example.com/docs/"}],
+                [{"name": "intro", "url": "https://example.com/guide/intro"}],
             )
             self._run_fetch_docs_with_http(
                 workspace,
-                {"https://example.com/llms-full.txt": ("text/plain", "# API\n\nFull docs.\n")},
+                {
+                    "https://example.com/llms-full.txt": ("text/plain", "# Whole site bundle\n"),
+                    "https://example.com/llms.txt": ("text/plain", "# Site index\n"),
+                    "https://example.com/guide/intro": ("text/plain", "Intro page only.\n"),
+                },
             )
-            snapshot = workspace / "docs" / "snapshots" / "site.md"
-            self.assertTrue(snapshot.exists())
-            self.assertIn("Full docs.", snapshot.read_text())
             entry = json.loads((workspace / "zentaizo.lock.json").read_text())["doc_snapshots"][0]
             self.assertEqual(entry["status"], "ok")
+            self.assertEqual(entry["source"]["fetcher"], "single-page")
+            self.assertEqual(entry["source"]["fetched_url"], "https://example.com/guide/intro")
+            text = (workspace / entry["snapshot"]).read_text()
+            self.assertIn("Intro page only.", text)
+            self.assertNotIn("bundle", text)
+
+    def test_fetch_docs_explicit_llms_txt_url_is_fetched_as_given(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            url = "https://example.com/docs/llms-full.txt"
+            workspace = self._docs_workspace(tmp, [{"name": "bundle", "url": url}])
+            self._run_fetch_docs_with_http(
+                workspace,
+                {
+                    "https://example.com/llms-full.txt": ("text/plain", "# Root bundle\n"),
+                    url: ("text/plain", "# Docs bundle\n"),
+                },
+            )
+            entry = json.loads((workspace / "zentaizo.lock.json").read_text())["doc_snapshots"][0]
             self.assertEqual(entry["source"]["fetcher"], "llms-txt")
+            self.assertEqual(entry["source"]["fetched_url"], url)
+            self.assertIn("Docs bundle", (workspace / entry["snapshot"]).read_text())
 
     def test_fetch_docs_external_falls_back_to_single_page(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1532,7 +1573,7 @@ class CliTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             workspace = self._docs_workspace(
                 tmp,
-                [{"name": "site", "url": "https://example.com/api"}],
+                [{"name": "site", "url": "https://example.com/"}],
             )
             self._run_fetch_docs_with_http(
                 workspace,
@@ -1541,7 +1582,7 @@ class CliTests(unittest.TestCase):
                         "application/octet-stream",
                         b"\x00\x01binary blob\x00",
                     ),
-                    "https://example.com/api": (
+                    "https://example.com/": (
                         "text/html",
                         "<html><body><p>Reference.</p></body></html>",
                     ),
@@ -1612,7 +1653,10 @@ class CliTests(unittest.TestCase):
             index_page = "# Knowledge base\n\nGeneric index of every article.\n"
             output = self._run_fetch_docs_with_http(
                 workspace,
-                {"https://kb.example.com/llms-full.txt": ("text/plain", index_page)},
+                {
+                    "https://kb.example.com/projections": ("text/plain", index_page),
+                    "https://kb.example.com/events": ("text/plain", index_page),
+                },
             )
             self.assertIn("WARNING identical snapshots", output)
             self.assertIn("'projections'", output)
@@ -1631,10 +1675,12 @@ class CliTests(unittest.TestCase):
             output = self._run_fetch_docs_with_http(
                 workspace,
                 {
-                    "https://a.example.com/llms-full.txt": ("text/plain", "# Alpha docs\n"),
-                    "https://b.example.com/llms-full.txt": ("text/plain", "# Beta docs\n"),
+                    "https://a.example.com/docs": ("text/plain", "# Alpha docs\n"),
+                    "https://b.example.com/docs": ("text/plain", "# Beta docs\n"),
                 },
             )
+            lock = json.loads((workspace / "zentaizo.lock.json").read_text())
+            self.assertEqual([e["status"] for e in lock["doc_snapshots"]], ["ok", "ok"])
             self.assertNotIn("WARNING identical snapshots", output)
 
     def test_fetch_docs_with_no_docs(self):

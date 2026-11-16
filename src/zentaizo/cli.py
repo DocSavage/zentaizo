@@ -2684,10 +2684,17 @@ def _try_http_get(url: str) -> tuple[_HttpResult | None, str | None]:
 
 
 def _llms_candidates(url: str) -> list[str]:
-    """URLs to probe for an llms.txt / llms-full.txt, most-complete first."""
+    """URLs to probe for an llms.txt / llms-full.txt, most-complete first.
+
+    A URL that names one of those files is probed as given, and a site-root
+    URL probes the host's root files. Any other URL names a page, so it gets
+    no candidates: the host's root bundle would replace the page it names.
+    """
     parsed = urllib.parse.urlparse(url)
     if parsed.path.rsplit("/", 1)[-1] in ("llms.txt", "llms-full.txt"):
         return [url]
+    if parsed.path not in ("", "/"):
+        return []
     root = f"{parsed.scheme}://{parsed.netloc}"
     return [f"{root}/llms-full.txt", f"{root}/llms.txt"]
 
@@ -2712,7 +2719,8 @@ def _fetch_external_doc(
         entry["reason"] = "no-source"
         return entry
 
-    # Tier 0: a single curated Markdown file, when the site publishes one.
+    # Tier 0: a single curated Markdown file, when the site publishes one and
+    # the URL names the site root or the file itself (see _llms_candidates).
     # A binary answer to the probe is never snapshotted; fall through.
     for candidate in _llms_candidates(url):
         result, _ = _try_http_get(candidate)

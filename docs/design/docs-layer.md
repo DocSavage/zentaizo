@@ -65,9 +65,11 @@ arbitrary external sites). It iterates atlas `docs` entries and routes each:
   missing file yields `reference-only` with reason `not-fetched`.
 - **External** (`_fetch_external_doc`) — a stdlib HTTP cascade (`_http_get`,
   bounded by `_HTTP_TIMEOUT` and `_HTTP_MAX_BYTES`, http/https only):
-  1. **Tier 0** — probe `llms-full.txt` then `llms.txt` at the site root
-     (`_llms_candidates`); if present, that single curated Markdown file *is* the
-     snapshot (fetcher `llms-txt`).
+  1. **Tier 0** — for a site-root URL, probe `llms-full.txt` then `llms.txt`
+     at the root; a URL that names one of those files is probed as given
+     (`_llms_candidates`). If present, that single curated Markdown file *is*
+     the snapshot (fetcher `llms-txt`). Any other URL names a page and skips
+     this tier, because the root file would replace the page it names.
   2. **Tier 2.5** — otherwise salvage the single referenced page (fetcher
      `single-page`); bundled Trafilatura extracts the main content as Markdown
      using the versioned `main-content-v1` profile.
