@@ -262,7 +262,9 @@ input should carry provenance and an `edited_by:` ledger, use
 human/agent-authored title for compact session headers. The CLI can fill it via
 `next-change --short-title` or `next-debugging --short-title`, but the field is
 workspace intent: review it like the rest of the plan frontmatter. It is not
-machine lock state and does not belong in `zentaizo.lock.json`.
+machine lock state and does not belong in `zentaizo.lock.json`. The CLI writes
+the title as a double-quoted YAML string; a hand-written title may also be
+plain or single-quoted.
 
 Frontmatter-bearing session files (`efforts/`, generated `brainstorming/`, `changes/`, `debugging/`, `reports/`, `handoffs/`) also carry an `edited_by:` ledger recording which model or human crafted, reviewed, or modified the file, in order. The scaffolding commands stamp the first entry, and `zentaizo edited <path>` appends or refreshes it on later edits — resolving the editor identity from the same commit-trailer cache the commit-attribution hook uses, with a Codex config fallback that populates that cache when it is missing, so the recorded model + reasoning effort is never the model's own guess. Raw/freeform brainstorming dumps may not have frontmatter and are not required to support `zentaizo edited`.
 

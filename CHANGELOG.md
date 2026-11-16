@@ -6,6 +6,18 @@ This project uses the Keep a Changelog format. Versions 0.8.0 and earlier predat
 
 ## [Unreleased]
 
+### Fixed
+
+- `zentaizo next-change --short-title` and `next-debugging --short-title`
+  wrote the title unquoted, so a title with a colon gave invalid YAML, and a
+  backslash such as `\d` crashed the command (tracker issue #24). They now
+  write the title as a double-quoted YAML string, and every title within the
+  30-character limit reads back exactly. The frontmatter reader decodes the
+  quoted form and still reads plain and single-quoted titles. An empty title
+  is written as a bare `short_title:`. A machine with an older zentaizo
+  shows a quoted title that holds a backslash or a quote with its escapes, so
+  update zentaizo there before you pull plans that have such titles.
+
 ## [0.19.1] - 2026-11-15
 
 ### Fixed

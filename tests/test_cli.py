@@ -47,6 +47,7 @@ from zentaizo.cli import (
     inject_block,
     install_commit_attribution_hook,
     main,
+    read_frontmatter,
 )
 from zentaizo.extract import ExtractionUnavailable, ExtractResult
 
@@ -3970,7 +3971,7 @@ class SessionPathTests(WorkspaceCliCase):
             body = (workspace / rel).read_text()
             self.assertTrue(body.startswith("---\n"))
             self.assertIn("label: katana", body)
-            self.assertIn("short_title:", body)
+            self.assertIn("\nshort_title:\n", body)  # an empty title stays bare
             self.assertIn("status: planned", body)
             self.assertRegex(body, r'created: "\d{4}-\d{2}-\d{2}T')
 
@@ -3988,7 +3989,7 @@ class SessionPathTests(WorkspaceCliCase):
                     str(workspace),
                 ]
             )
-            self.assertIn("short_title: Token rotation", (workspace / rel).read_text())
+            self.assertIn('short_title: "Token rotation"', (workspace / rel).read_text())
 
     def test_next_debugging_short_title_writes_frontmatter(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -4004,7 +4005,54 @@ class SessionPathTests(WorkspaceCliCase):
                     str(workspace),
                 ]
             )
-            self.assertIn("short_title: Auth trace", (workspace / rel).read_text())
+            self.assertIn('short_title: "Auth trace"', (workspace / rel).read_text())
+
+    def test_short_title_with_yaml_or_regex_characters_reads_back(self):
+        # A colon needs YAML quoting; a backslash once reached re.sub as an escape.
+        titles = ["fix: colon", r"match \d", r"group \1", 'say "hi"']
+        for template_has_line in (True, False):
+            with (
+                self.subTest(template_has_line=template_has_line),
+                tempfile.TemporaryDirectory() as tmp,
+            ):
+                workspace = self._make_workspace(tmp)
+                self._new_effort(workspace)
+                if not template_has_line:  # the line is then inserted after `label`
+                    template = workspace / "skills" / "plan-template.md"
+                    text = template.read_text()
+                    self.assertIn("\nshort_title:\n", text)
+                    template.write_text(text.replace("\nshort_title:\n", "\n", 1))
+                for index, title in enumerate(titles):
+                    rel = self._out(
+                        [
+                            "next-change",
+                            f"title-{index}",
+                            "--short-title",
+                            title,
+                            "-C",
+                            str(workspace),
+                        ]
+                    )
+                    path = workspace / rel
+                    self.assertEqual(read_frontmatter(path)["short_title"], title)
+                    lines = path.read_text().split("\n")
+                    after_label = lines[lines.index("label: katana") + 1]
+                    self.assertEqual(after_label, "short_title: " + json.dumps(title))
+
+    def test_read_frontmatter_reads_old_and_new_short_titles(self):
+        cases = {
+            "short_title: plain words": "plain words",
+            "short_title: 'single quoted'": "single quoted",
+            'short_title: "fix: colon"': "fix: colon",
+            'short_title: "say \\"hi\\""': 'say "hi"',
+            'short_title: "C:\\path"': "C:\\path",  # not a JSON string: quotes stripped
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "plan.md"
+            for line, expected in cases.items():
+                with self.subTest(line=line):
+                    path.write_text(f"---\n{line}\n---\n")
+                    self.assertEqual(read_frontmatter(path)["short_title"], expected)
 
     def test_short_title_over_budget_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -4041,7 +4089,7 @@ class SessionPathTests(WorkspaceCliCase):
             path = workspace / overlong
             path.write_text(
                 path.read_text().replace(
-                    "short_title: Debug title",
+                    'short_title: "Debug title"',
                     "short_title: " + "x" * 31,
                     1,
                 )

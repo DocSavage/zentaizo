@@ -4577,10 +4577,22 @@ def usable_short_title(value: object) -> str | None:
     return title
 
 
+def _frontmatter_scalar(value: str) -> str:
+    """Decode a double-quoted value, as ``scaffold_plan()`` writes a short title.
+    Any other value, or one that does not decode, has its quotes stripped."""
+    if len(value) >= 2 and value.startswith('"') and value.endswith('"'):
+        try:
+            return json.loads(value)
+        except ValueError:
+            pass
+    return value.strip('"').strip("'")
+
+
 def read_frontmatter(path: pathlib.Path) -> dict:
     """Minimal YAML-frontmatter reader: the leading ``---`` … ``---`` block.
 
-    No YAML dependency — splits ``key: value`` and strips one layer of quotes.
+    No YAML dependency — splits ``key: value``, decodes a double-quoted value
+    and strips the quotes from any other.
     Returns ``{}`` if the file has no frontmatter or cannot be read.
     """
     fm: dict[str, str] = {}
@@ -4595,7 +4607,7 @@ def read_frontmatter(path: pathlib.Path) -> dict:
                     continue  # indented continuation (e.g. an edited_by list item)
                 key, sep, val = line.partition(":")
                 if sep:
-                    fm[key.strip()] = val.strip().strip('"').strip("'")
+                    fm[key.strip()] = _frontmatter_scalar(val.strip())
     except OSError:
         return fm
     return fm
@@ -5233,28 +5245,33 @@ def _read_template(workspace: pathlib.Path, name: str) -> str:
     return resources.files("zentaizo").joinpath(f"templates/skills/{name}").read_text()
 
 
+# Each re.sub below takes its replacement as a function, so a backslash in the
+# value stays literal instead of being read as a group reference or an escape.
 def _set_frontmatter_field(text: str, key: str, value: str) -> str:
-    return re.sub(rf"^{re.escape(key)}:.*$", f"{key}: {value}", text, count=1, flags=re.M)
+    line = f"{key}: {value}"
+    return re.sub(rf"^{re.escape(key)}:.*$", lambda _match: line, text, count=1, flags=re.M)
 
 
 def _set_or_insert_frontmatter_field(
     text: str, key: str, value: str, *, after_key: str | None = None
 ) -> str:
-    replacement = f"{key}: {value}"
-    updated = re.sub(rf"^{re.escape(key)}:.*$", replacement, text, count=1, flags=re.M)
-    if updated != text:
+    line = f"{key}: {value}" if value else f"{key}:"
+    updated, count = re.subn(
+        rf"^{re.escape(key)}:.*$", lambda _match: line, text, count=1, flags=re.M
+    )
+    if count:
         return updated
     if after_key:
-        updated = re.sub(
+        updated, count = re.subn(
             rf"^({re.escape(after_key)}:.*)$",
-            rf"\1\n{replacement}",
+            lambda match: f"{match.group(1)}\n{line}",
             text,
             count=1,
             flags=re.M,
         )
-        if updated != text:
+        if count:
             return updated
-    return text.replace("---\n", f"---\n{replacement}\n", 1)
+    return text.replace("---\n", f"---\n{line}\n", 1)
 
 
 EDITED_BY_KEY = "edited_by"
@@ -5329,7 +5346,9 @@ def _record_edited_by(path: pathlib.Path, identity: str) -> None:
 def scaffold_plan(template: str, label: str, now: str, short_title: str = "") -> str:
     text = _set_frontmatter_field(template, "created", f'"{now}"')
     text = _set_frontmatter_field(text, "label", label)
-    return _set_or_insert_frontmatter_field(text, "short_title", short_title, after_key="label")
+    # A double-quoted scalar keeps any title valid YAML; read_frontmatter() decodes it.
+    title = json.dumps(short_title, ensure_ascii=False) if short_title else ""
+    return _set_or_insert_frontmatter_field(text, "short_title", title, after_key="label")
 
 
 def scaffold_effort(template: str, now: str, description: str) -> str:
