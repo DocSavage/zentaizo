@@ -2274,18 +2274,27 @@ def _fetch_operation(
         shown = _display_path(workspace_path, exclude)
         print(f"Added /repos/ to {shown}, so git keeps hiding repos/.")
 
+    # A failed repo must not stop the others, or keep their entries out of the
+    # lock: record the failure, go on, and report it after the lock is written.
+    failures: list[tuple[str, str]] = []
     for repo in repos_to_fetch:
-        if repo_role(repo) == "edit":
-            fetched_repos.append(fetch_edit_repo(workspace_path, repo, rebase))
-        else:
-            fetched_repos.append(fetch_reference_repo(workspace_path, repo))
+        try:
+            if repo_role(repo) == "edit":
+                fetched_repos.append(fetch_edit_repo(workspace_path, repo, rebase))
+            else:
+                fetched_repos.append(fetch_reference_repo(workspace_path, repo))
+        except SystemExit as exc:
+            detail = str(exc.code) if exc.code not in (None, "") else "exited without a message"
+            failures.append((repo["name"], detail))
+        except CliError as exc:
+            failures.append((repo["name"], str(exc)))
 
     _preserve_unchanged_fetched_at(fetched_repos, prior_repos, _repo_identity)
+    fetched_by_name = {entry["name"]: entry for entry in fetched_repos}
 
     lock["updated_at"] = utc_now()
     lock_sources = lock.setdefault("sources", {})
     if scoped:
-        fetched_by_name = {entry["name"]: entry for entry in fetched_repos}
         merged_repos = []
         replaced_names: set[str] = set()
         for entry in lock_sources.get("repos", []):
@@ -2294,14 +2303,20 @@ def _fetch_operation(
                 merged_repos.append(fetched_by_name[name])
                 replaced_names.add(name)
             else:
-                merged_repos.append(entry)
+                merged_repos.append(entry)  # unselected, or selected and failed
         for repo in repos_to_fetch:
             name = repo["name"]
-            if name not in replaced_names:
+            if name not in replaced_names and name in fetched_by_name:
                 merged_repos.append(fetched_by_name[name])
         lock_sources["repos"] = merged_repos
     else:
-        lock_sources["repos"] = fetched_repos
+        # In atlas order. A failed repo keeps its earlier entry, if it had one.
+        merged_repos = []
+        for repo in repos_to_fetch:
+            entry = fetched_by_name.get(repo["name"]) or prior_repos.get(repo["name"])
+            if entry is not None:
+                merged_repos.append(entry)
+        lock_sources["repos"] = merged_repos
         lock_sources["docs"] = sources.get("docs", [])
         lock_sources["papers"] = sources.get("papers", [])
         lock_sources["notes"] = sources.get("notes", [])
@@ -2325,17 +2340,29 @@ def _fetch_operation(
             "Docs and papers are recorded in the lock file; "
             "run `zentaizo fetch-docs` to snapshot doc sources."
         )
+    if failures:
+        sys.stdout.flush()  # keep the progress lines above the failures in a terminal
+        for name, detail in failures:
+            print(f"fetch: {name} failed: {detail}", file=sys.stderr)
+        names = ", ".join(name for name, _detail in failures)
+        return OperationResult.failed(
+            f"{len(failures)} of {len(repos_to_fetch)} repo(s) failed: {names}; "
+            "the lock holds the others, and a failed repo keeps any entry it had"
+        )
     return OperationResult.success()
 
 
 def fetch_workspace(args: argparse.Namespace) -> int:
     if getattr(args, "no_graph", False):
         print(FETCH_NO_GRAPH_NOTICE, file=sys.stderr)
-    return _fetch_operation(
+    result = _fetch_operation(
         workspace=args.workspace,
         rebase=bool(getattr(args, "rebase", False)),
         repo_names=getattr(args, "repo", None),
-    ).code
+    )
+    if result.code:
+        print(f"fetch: {result.reason}", file=sys.stderr)
+    return result.code
 
 
 DOC_SNAPSHOTS_SUBDIR = ("docs", "snapshots")

@@ -24,6 +24,12 @@ This project uses the Keep a Changelog format. Versions 0.8.0 and earlier predat
   fetched as given, as before, and any other URL is snapshotted as the page
   it names. Snapshots that the old behavior wrote stay until the next
   `fetch-docs`.
+- `zentaizo fetch` stopped at the first repo whose fetch failed, and wrote no
+  lock for any repo (tracker issue #23, part 1). It now goes on with the
+  other repos and writes the lock with their entries. A failed repo keeps
+  its earlier lock entry, and a new repo that failed gets none. `fetch` then
+  prints each failure and exits non-zero, for a full fetch and for
+  `fetch --repo`. `zentaizo bring-up` still stops after a failed fetch step.
 
 ## [0.19.1] - 2026-11-15
 

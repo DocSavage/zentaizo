@@ -94,7 +94,8 @@ summaries.
 The pipeline skips `fetch-docs` when the atlas declares no `docs` sources,
 including when it declares papers but no docs. An individual doc fetch failure
 remains nonfatal and is recorded as `reference-only`, matching
-`zentaizo fetch-docs`.
+`zentaizo fetch-docs`. A repo whose fetch fails makes the fetch step fail
+after it has locked the other repos, so the pipeline stops there.
 
 The command is not transactional. A failed step leaves earlier fetches,
 snapshots, quarantined artifacts, and lock updates in place. The failure
@@ -134,6 +135,8 @@ Fetches repositories listed in `zentaizo.atlas.json` and records resolved commit
 - `role: "edit"` — clones and checks out `ref` on first fetch only; on subsequent fetches refreshes remotes (`git fetch --tags --prune`) but leaves HEAD and the working tree alone. If the tree is clean and HEAD is behind the freshly-resolved upstream, `fetch` prints the exact rebase command. `--rebase` runs the rebase for every clean+behind edit repo.
 
 Repeat `--repo NAME` to fetch only named atlas repos; duplicate names are fetched once. A scoped fetch replaces those repos' lock entries in place, appends newly locked selections in atlas order, and preserves every unselected repo entry — including entries removed from the atlas — plus the lock's `docs`/`papers`/`notes` groups. An unknown name exits non-zero and lists the valid atlas repo names before any repo fetch starts. Without `--repo`, fetch keeps its full-refresh behavior: every atlas repo is fetched, the repo list is replaced wholesale, removed entries are pruned, and the other source groups are refreshed from the atlas.
+
+When a repo's fetch fails, `fetch` goes on with the other repos and writes the lock with their entries. The failed repo keeps its earlier lock entry, and a repo that was never locked gets none. `fetch` finishes the steps below, then prints each failure on stderr and exits non-zero, so `bring-up` stops after its fetch step. This holds for a full fetch and for `--repo`.
 
 After writing the lock, every fetch (scoped or not) refreshes the repo-roles block in the workspace root `AGENTS.md`: a CLI-managed section between `<!-- BEGIN zentaizo repo-roles -->` and `<!-- END zentaizo repo-roles -->` that lists each atlas repo as editable or reference. It always reflects the whole atlas. Harness permission layers that read `AGENTS.md` but not tool output (such as Claude Code's auto-mode classifier, through the `CLAUDE.md` import) can only see roles this way. An existing marker pair is replaced in place; a workspace without one gets the block at the end of its "Editable vs Reference Repos" section, or at the end of the file if that section is gone. The write is skipped when nothing changed. Unpaired or misordered markers are never rewritten: `fetch` warns and leaves the file alone, and a workspace with no `AGENTS.md` is skipped.
 

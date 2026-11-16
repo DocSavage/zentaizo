@@ -2346,11 +2346,13 @@ class ReferenceFetchTests(WorkspaceCliCase):
             checkout = workspace / "repos" / "library"
             (checkout / "base.txt").write_text("dirty\n")
 
-            with self.assertRaisesRegex(
-                SystemExit,
-                r"library \(reference\) has local changes; refusing to overwrite",
-            ):
-                main(["fetch", str(workspace)])
+            code, _out, err = self._run(["fetch", str(workspace)])
+            self.assertEqual(code, 1)
+            self.assertRegex(
+                err,
+                r"fetch: library failed: library \(reference\) has local changes; "
+                r"refusing to overwrite",
+            )
             self.assertEqual((checkout / "base.txt").read_text(), "dirty\n")
 
     def test_fetch_reference_immutable_tag_stays_detached_at_object(self):
@@ -2564,6 +2566,40 @@ class ScopedFetchTests(WorkspaceCliCase):
             fetch_edit.assert_not_called()
             fetch_reference.assert_not_called()
             self.assertEqual(lock_path.read_bytes(), before)
+
+    def test_fetch_goes_on_past_a_failed_repo_and_keeps_its_entry(self):
+        def fetched(_workspace: Path, repo: dict) -> dict:
+            if repo["name"] == "alpha":
+                raise SystemExit("git fetch --tags --prune failed (exit 128):\nfatal: offline")
+            return self._locked_repo(repo["name"], f"{repo['name']}-new", "new-time")
+
+        scopes = {"full": [], "scoped": ["--repo", "alpha", "--repo", "beta"]}
+        for scope, repo_args in scopes.items():
+            for alpha_was_locked in (True, False):
+                with (
+                    self.subTest(scope=scope, alpha_was_locked=alpha_was_locked),
+                    tempfile.TemporaryDirectory() as tmp,
+                ):
+                    workspace = self._scoped_workspace(tmp)
+                    lock_path = workspace / "zentaizo.lock.json"
+                    lock = json.loads(lock_path.read_text())
+                    alpha_before = lock["sources"]["repos"][0]
+                    if not alpha_was_locked:
+                        del lock["sources"]["repos"][0]
+                        lock_path.write_text(json.dumps(lock))
+
+                    with mock.patch("zentaizo.cli.fetch_reference_repo", side_effect=fetched):
+                        code, out, err = self._run(["fetch", *repo_args, str(workspace)])
+
+                    self.assertEqual(code, 1)
+                    self.assertIn("fetch: alpha failed: git fetch", err)
+                    self.assertIn("fatal: offline", err)
+                    self.assertIn("fetch: 1 of 2 repo(s) failed: alpha", err)
+                    self.assertIn("Updated the repo-roles block", out)  # later steps ran
+                    entries = json.loads(lock_path.read_text())["sources"]["repos"]
+                    beta_after = self._locked_repo("beta", "beta-new", "new-time")
+                    expected = [alpha_before, beta_after] if alpha_was_locked else [beta_after]
+                    self.assertEqual(entries, expected)
 
     def test_scoped_fetch_deduplicates_repeated_names(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -6655,6 +6691,33 @@ class BringUpTests(WorkspaceCliCase):
             self.assertIn("last completed step: validate", err)
             self.assertNotIn("bring-up: fetch-docs\n", out)
             self.assertFalse((workspace / "summaries" / "summarize.prompt.md").exists())
+
+    def test_bring_up_stops_after_a_fetch_with_a_failed_repo(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace, _upstream = self._local_repo_workspace(tmp)
+            atlas_path = workspace / "zentaizo.atlas.json"
+            atlas = json.loads(atlas_path.read_text())
+            missing = {
+                "name": "missing",
+                "url": str(Path(tmp) / "no-such-remote.git"),
+                "ref": "main",
+                "role": "reference",
+                "description": "A remote that does not exist.",
+            }
+            atlas["sources"]["repos"].insert(0, missing)  # fails first; library still locks
+            atlas_path.write_text(json.dumps(atlas))
+
+            code, out, err = self._run(["bring-up", str(workspace), "--yes"])
+
+            self.assertEqual(code, 1)
+            self.assertIn("fetch: missing failed: git clone", err)
+            self.assertIn("bring-up: fetch failed: 1 of 2 repo(s) failed: missing", err)
+            self.assertIn("last completed step: validate", err)
+            self.assertIn("Locked library", out)
+            self.assertNotIn("bring-up: fetch-docs\n", out)
+            self.assertFalse((workspace / "repos" / "missing").exists())
+            lock = json.loads((workspace / "zentaizo.lock.json").read_text())
+            self.assertEqual([entry["name"] for entry in lock["sources"]["repos"]], ["library"])
 
     def test_bring_up_step_cli_error_preserves_code_and_stops(self):
         with tempfile.TemporaryDirectory() as tmp:
