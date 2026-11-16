@@ -30,6 +30,13 @@ This project uses the Keep a Changelog format. Versions 0.8.0 and earlier predat
   its earlier lock entry, and a new repo that failed gets none. `fetch` then
   prints each failure and exits non-zero, for a full fetch and for
   `fetch --repo`. `zentaizo bring-up` still stops after a failed fetch step.
+- `zentaizo commit-trailer`, run in a linked worktree, credited only the
+  committing session when `zentaizo delegation note` had written to the main
+  checkout's ledger, and it gave no warning (tracker issue #17). Each
+  checkout still keeps its own ledger. When the worktree's ledger is empty
+  and the main checkout's ledger holds entries, `commit-trailer` now warns
+  on stderr, names that ledger, and suggests
+  `zentaizo delegation note --repo <worktree path>`. Its stdout is unchanged.
 
 ## [0.19.1] - 2026-11-15
 

@@ -6184,6 +6184,63 @@ class DelegationLedgerTests(unittest.TestCase):
         self.assertEqual(stdout, f"{self.CLAUDE_TRAILER}\n")
         self.assertEqual(stderr, "")
 
+    def _linked_worktree(self) -> Path:
+        worktree = self.tmp / "wt"
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(self.repo),
+                "worktree",
+                "add",
+                "-q",
+                str(worktree),
+                "-b",
+                "wt-branch",
+            ],
+            check=True,
+        )
+        return worktree
+
+    def test_trailer_in_worktree_warns_when_main_ledger_holds_entries(self):
+        worktree = self._linked_worktree()
+        subdir = worktree / "src"
+        subdir.mkdir()
+        self._write_entry("a.json", self._codex_entry())  # the main checkout's ledger
+        runs = {
+            "worktree root": (["commit-trailer"], worktree),
+            "subdirectory": (["commit-trailer"], subdir),
+            "--repo path": (["commit-trailer", "--repo", str(worktree)], None),
+        }
+        for label, (argv, cwd) in runs.items():
+            with self.subTest(run=label):
+                code, stdout, stderr = self._run(
+                    argv, env=self._claude_committer_env(), cwd=cwd
+                )
+                self.assertEqual(code, 0)
+                self.assertEqual(stdout, f"{self.CLAUDE_TRAILER}\n")  # unchanged
+                self.assertIn("the main checkout's ledger holds entries", stderr)
+                self.assertIn(str(self._ledger_dir().resolve()), stderr)
+                self.assertIn(f"delegation note --repo {worktree.resolve()}", stderr)
+
+    def test_trailer_in_worktree_is_quiet_when_main_ledger_is_empty(self):
+        worktree = self._linked_worktree()
+        code, stdout, stderr = self._run(
+            ["commit-trailer"], env=self._claude_committer_env(), cwd=worktree
+        )
+        self.assertEqual((code, stdout, stderr), (0, f"{self.CLAUDE_TRAILER}\n", ""))
+
+    def test_trailer_in_main_checkout_ignores_a_worktree_ledger(self):
+        worktree = self._linked_worktree()
+        code, _, _ = self._run(
+            ["delegation", "note", "--codex", "--repo", str(worktree), "--as", "Codex X"]
+        )
+        self.assertEqual(code, 0)
+        code, stdout, stderr = self._run(
+            ["commit-trailer"], env=self._claude_committer_env(), cwd=self.repo
+        )
+        self.assertEqual((code, stdout, stderr), (0, f"{self.CLAUDE_TRAILER}\n", ""))
+
     def test_trailer_warns_on_stale_entries_but_still_emits(self):
         self._write_entry("a.json", self._codex_entry(noted_hours_ago=30))
         code, stdout, stderr = self._trailer()

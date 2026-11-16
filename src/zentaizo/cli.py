@@ -1194,6 +1194,38 @@ def _warn_unnoted_codex_session(repo_dir: pathlib.Path, provider: str) -> None:
         )
 
 
+def _warn_main_checkout_ledger(repo_dir: pathlib.Path) -> None:
+    """Empty-ledger safety net for a linked worktree. Each checkout keeps its
+    own ledger, so a `delegation note` that named the main checkout leaves the
+    worktree's ledger empty, and the trailer credits only the committer. Warn
+    on stderr when the main checkout's ledger holds entries. Warn-only: any git
+    error skips silently.
+    """
+    git_dir = _discover_git_dir(repo_dir)
+    if git_dir is None:
+        return
+    try:
+        common_raw = try_run_git(["rev-parse", "--git-common-dir"], cwd=repo_dir)
+        worktree = try_run_git(["rev-parse", "--show-toplevel"], cwd=repo_dir)
+    except OSError:
+        return
+    if not common_raw or not worktree:
+        return
+    common = (pathlib.Path(repo_dir) / common_raw).resolve()  # relative to repo_dir
+    if common == git_dir.resolve():
+        return  # the main checkout, or a repo without linked worktrees
+    ledger = common / "zentaizo" / "pending-authors"
+    if not any(ledger.glob("*.json")):
+        return
+    print(
+        "delegation: this worktree's ledger is empty, but the main checkout's "
+        f"ledger holds entries: {ledger}. If they credit this commit, note the "
+        f"author here with 'zentaizo delegation note --repo {worktree}', run "
+        "commit-trailer again, and clear the main checkout's ledger",
+        file=sys.stderr,
+    )
+
+
 def commit_trailer(args: argparse.Namespace) -> int:
     """Print the current agent's canonical commit attribution trailer.
 
@@ -1261,6 +1293,7 @@ def commit_trailer(args: argparse.Namespace) -> int:
 
     if not coauthors:  # empty (or wholly unreadable) ledger: today's output, byte-identical
         print(_format_commit_trailer(provider, model, effort))
+        _warn_main_checkout_ledger(repo_dir)
         _warn_unnoted_codex_session(repo_dir, provider)
         return 0
 
