@@ -4091,7 +4091,15 @@ class SessionPathTests(WorkspaceCliCase):
 
     def test_short_title_with_yaml_or_regex_characters_reads_back(self):
         # A colon needs YAML quoting; a backslash once reached re.sub as an escape.
-        titles = ["fix: colon", r"match \d", r"group \1", 'say "hi"']
+        # Printable Unicode stays readable; characters YAML cannot hold are escaped.
+        lines = {
+            "fix: colon": 'short_title: "fix: colon"',
+            r"match \d": 'short_title: "match \\\\d"',
+            r"group \1": 'short_title: "group \\\\1"',
+            'say "hi"': 'short_title: "say \\"hi\\""',
+            "café — ok": 'short_title: "café — ok"',
+            "a\x7fb\x80c\x85d e": 'short_title: "a\\u007fb\\u0080c\\u0085d\\u2028e"',
+        }
         for template_has_line in (True, False):
             with (
                 self.subTest(template_has_line=template_has_line),
@@ -4104,7 +4112,7 @@ class SessionPathTests(WorkspaceCliCase):
                     text = template.read_text()
                     self.assertIn("\nshort_title:\n", text)
                     template.write_text(text.replace("\nshort_title:\n", "\n", 1))
-                for index, title in enumerate(titles):
+                for index, (title, line) in enumerate(lines.items()):
                     rel = self._out(
                         [
                             "next-change",
@@ -4117,9 +4125,8 @@ class SessionPathTests(WorkspaceCliCase):
                     )
                     path = workspace / rel
                     self.assertEqual(read_frontmatter(path)["short_title"], title)
-                    lines = path.read_text().split("\n")
-                    after_label = lines[lines.index("label: katana") + 1]
-                    self.assertEqual(after_label, "short_title: " + json.dumps(title))
+                    written = path.read_text().split("\n")
+                    self.assertEqual(written[written.index("label: katana") + 1], line)
 
     def test_read_frontmatter_reads_old_and_new_short_titles(self):
         cases = {

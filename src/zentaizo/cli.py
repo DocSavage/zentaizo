@@ -5411,11 +5411,24 @@ def _record_edited_by(path: pathlib.Path, identity: str) -> None:
     path.write_text(_stamp_edited_by(text, identity, git_style_now()), encoding="utf-8")
 
 
+# Characters that json.dumps(ensure_ascii=False) leaves raw but YAML cannot hold
+# as they are: it rejects DEL, the C1 controls, lone surrogates and U+FFFE/U+FFFF,
+# and reads U+0085, U+2028 and U+2029 as line breaks.
+_YAML_UNSAFE_CHARS = re.compile("[\x7f-\x9f  \ud800-\udfff￾￿]")
+
+
+def _yaml_double_quoted(value: str) -> str:
+    """``value`` as a double-quoted YAML scalar that ``json.loads`` also reads.
+    Printable Unicode stays readable; the characters above become ``\\u`` escapes."""
+    text = json.dumps(value, ensure_ascii=False)
+    return _YAML_UNSAFE_CHARS.sub(lambda match: f"\\u{ord(match.group()):04x}", text)
+
+
 def scaffold_plan(template: str, label: str, now: str, short_title: str = "") -> str:
     text = _set_frontmatter_field(template, "created", f'"{now}"')
     text = _set_frontmatter_field(text, "label", label)
     # A double-quoted scalar keeps any title valid YAML; read_frontmatter() decodes it.
-    title = json.dumps(short_title, ensure_ascii=False) if short_title else ""
+    title = _yaml_double_quoted(short_title) if short_title else ""
     return _set_or_insert_frontmatter_field(text, "short_title", title, after_key="label")
 
 

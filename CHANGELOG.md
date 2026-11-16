@@ -12,11 +12,14 @@ This project uses the Keep a Changelog format. Versions 0.8.0 and earlier predat
   wrote the title unquoted, so a title with a colon gave invalid YAML, and a
   backslash such as `\d` crashed the command (tracker issue #24). They now
   write the title as a double-quoted YAML string, and every title within the
-  30-character limit reads back exactly. The frontmatter reader decodes the
-  quoted form and still reads plain and single-quoted titles. An empty title
-  is written as a bare `short_title:`. A machine with an older zentaizo
-  shows a quoted title that holds a backslash or a quote with its escapes, so
-  update zentaizo there before you pull plans that have such titles.
+  30-character limit reads back exactly. As before, they trim whitespace at
+  either end of the title. A character that YAML cannot hold as it is, such
+  as a control character, is written as a `\u` escape. The frontmatter
+  reader decodes the quoted form and still reads plain and single-quoted
+  titles. An empty title is written as a bare `short_title:`. An older
+  zentaizo reads a quoted title that holds a backslash, a quote or a `\u`
+  escape with the escapes left in, so update zentaizo on each machine before
+  you pull plans that have such titles.
 - `zentaizo fetch-docs` replaced a doc entry's page with the host's root
   `llms-full.txt` or `llms.txt` whenever the host served one, without a
   warning (tracker issue #14). It now probes those root files only for a
