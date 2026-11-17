@@ -6,6 +6,8 @@ This project uses the Keep a Changelog format. Versions 0.8.0 and earlier predat
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-11-16
+
 Existing workspaces reach the new generation through an `upgrade-zentaizo`
 pass. Generation 8 changes only skills and generated text, so it migrates no
 session files. A workspace that missed earlier generations also takes their
