@@ -306,13 +306,13 @@ A workspace organizes knowledge as a level-of-detail spine — start at `summari
     reports/                # living evidence-backed syntheses (must-read deliverables)
 ```
 
-`{ATLAS_NAME}` and `{LOCK_NAME}` do not exist yet in a freshly created workspace — the atlas is the first thing you author (see below), and the lock is written by `zentaizo fetch`. `sessions/efforts.json` is seeded with a reserved `main` effort, whose plan doc starts at `sessions/efforts/0001-main.md`.
+A new workspace has no `{ATLAS_NAME}` yet: the atlas is the first thing you author (see below). `zentaizo create` writes `{LOCK_NAME}` with the conventions stamp, and `zentaizo fetch` adds the resolved sources. `sessions/efforts.json` is seeded with a reserved `main` effort, whose plan doc starts at `sessions/efforts/0001-main.md`.
 
 Searches from the workspace root with `rg` or Claude Code's `grep` cover `repos/`, but they skip vendored paths that the atlas lists in `search_exclude`, files that a repo's own `.gitignore` ignores, and repos that are symlinks.
 
 ## First Step
 
-This workspace intentionally starts without `{ATLAS_NAME}`. The first useful interaction is to ask an AI agent to help identify the repos, docs, papers, notes, deployment material, and issue context that belong in this atlas.
+If `{ATLAS_NAME}` does not exist yet, the first useful interaction is to ask an AI agent to help identify the repos, docs, papers, notes, deployment material, and issue context that belong in this atlas.
 
 Example prompt:
 
@@ -465,6 +465,8 @@ Work is grouped into efforts: named bodies of work that may span several editabl
 After each substantive edit to a session file that has frontmatter, run `zentaizo edited <path>`. It resolves who is editing and adds that editor to the file's `edited_by:` list.
 
 `skills/plan-and-implement.md` gives the procedure for planning and implementing a slice. It is also the reference for session filenames, the `edited_by` ledger, and commit attribution. `skills/plan-template.md` and the other templates in `skills/` give each file's frontmatter and sections.
+
+Fit each plan and each review to how the software is used. A review brief states the use and the key goals, and asks the reviewer to report over-engineering as well as gaps. Before you write a review brief or do a review, read § Reviews in `skills/plan-and-implement.md`.
 
 Use `tmp/` for scratch files. Git ignores it, and only the user clears it.
 

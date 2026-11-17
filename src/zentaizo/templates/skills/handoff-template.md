@@ -14,6 +14,12 @@ edited_by:
 
 Implement the plan at `<spec>` as the authoritative spec.
 
+## Scope directions in force
+
+Quote each scope direction from the user that still holds, word for word. Give its date and what it supersedes. These directions override the parts of the plan that they supersede. Write "None" if there are none.
+
+- "<direction>" (YYYY-MM-DD). Supersedes: <the earlier direction or rule, or "nothing">.
+
 <Write the self-contained prompt here — name only what this slice needs (scope &
 guardrails, branch + base + HEAD, inputs/preflight, verification). See
 `skills/plan-and-implement.md` § Handing off for the full authoring checklist.>

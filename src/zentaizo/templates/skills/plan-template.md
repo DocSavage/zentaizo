@@ -31,6 +31,10 @@ Brief one-paragraph framing of what this change is and why now. Link to the brai
 
 Written before work starts. Treat as frozen once `status` moves to `in-progress`; edit only to correct factual errors.
 
+### Use and key goals
+
+Name the effort doc that states the use, or state it here if this slice differs: who runs the software, who can change it, where it runs, and who can reach it. Then list this slice's key goals, most important first.
+
 ### Problem
 
 What needs to change and why. One short paragraph. Cite the system context from `zentaizo.atlas.json` rather than restating it.
@@ -46,7 +50,7 @@ List the editable repos this plan touches (must match `role: "edit"` entries in 
 
 ### Approach
 
-1. Step 1 — small, verifiable.
+1. Step 1 — small, verifiable. Each safeguard names the threat it answers, given the use above.
 2. Step 2.
 3. ...
 

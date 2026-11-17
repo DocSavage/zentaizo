@@ -48,6 +48,14 @@ Before drafting the plan:
 5. Leave `## Outcome` empty (or omit it) until work is done.
 6. Show the user the plan file (or a unified diff) and wait for confirmation before editing any code. Do not start implementation while `status: planned`.
 
+## Reviews
+
+Another agent can review a plan before work starts, or the code before it lands. Fit each review to the use that the plan states.
+
+- **Budget.** Each slice gets one plan review and one code review, unless the effort's "First pass" block sets another budget. A second code review follows only if the fixes change the design.
+- **Brief.** Each review brief states the use and the key goals. It asks the reviewer to report over-engineering as well as gaps, and to mark each finding as needed for a key goal or beyond the use.
+- **Findings.** Fix the findings that a key goal needs. List the rest for the user as later work, and don't build them.
+
 ## Handing off to an implementing agent (planner/implementor split)
 
 If the agent that drafted the plan will also implement it, skip this section and continue to *Executing the plan*.
@@ -57,7 +65,7 @@ If a *different* agent will implement (e.g. one model plans, an implementing age
 1. After the user approves the plan (while `status:` is still `planned`), run `zentaizo next-handoff <id> [agent]` — where `<id>` is the paired plan's slice number and the optional `[agent]` topic is `codex`/`claude`/`gemini`/… — to scaffold `sessions/handoffs/<label>-NNNN<letter>[-<agent>].md` from `skills/handoff-template.md`. The handoff is handed to the implementing agent **by reference**, so everything below the frontmatter *is* the prompt: keep it self-contained, cut surrounding narration, and delete the scaffold comment once written. The CLI stamps `created`/`edited_by` (so it's clear which model wrote it) and names the plan as the spec; re-run `zentaizo edited <handoff>` after revising.
 
    Write the body to name — and *only* what this slice needs (omit what doesn't apply; don't paste standing boilerplate):
-   - **Spec** — the plan file is authoritative; a contradiction with it is a STOP, not something to reinterpret.
+   - **Spec** — the plan file is authoritative. Follow it, except where a quoted scope direction in the handoff supersedes it. Stop on any other contradiction.
    - **Scope & guardrails** — which editable repo(s) to change, and the hard "do not touch" boundaries.
    - **Branch state** — the branch, its base, and the expected HEAD, so the implementor doesn't act on stale state.
    - **Inputs / preflight** — required inputs, cached-artifact locations, and the regenerate command when an artifact may be missing.
@@ -78,6 +86,13 @@ Once the user approves (and, for a split, once the handoff has been written):
 2. Work step by step through the approach.
 3. Run the verification steps as you go, not just at the end.
 4. If a substantive cross-repo question comes up that the user answers, run `zentaizo next-note <slug>` and fill in the Q&A. If a new pre-decision planning input appears, run `zentaizo next-brainstorming <slug>` and keep it cross-effort unless or until an effort consumes it. If a bug investigation is needed mid-implementation, run `zentaizo next-debugging <slug>` — it scaffolds the **same plan shape** as a change (Context / Hypotheses / Investigation / Acceptance criteria / Outcome), so a debugging note is "a plan for an investigation," not a loose trace. Link these back from the plan if they were load-bearing.
+
+### Pausing and resuming
+
+Pause a slice or an effort when it reaches a milestone and more work is planned later.
+
+- **A slice.** Set `status: paused`, and append a `## Paused` section with the date, where the work stopped, and what would resume it. Run `zentaizo edited <plan>`. `zentaizo path active` skips a paused slice. To resume, set `status: in-progress` and run `zentaizo edited` again.
+- **An effort.** Run `zentaizo effort pause <label>`. A paused effort takes no new slices or handoffs until `zentaizo effort resume <label>`.
 
 ## Closing out
 
@@ -134,7 +149,7 @@ edited_by:
 
 When another agent implemented the change and the orchestrating session commits it, take these steps:
 
-1. When the delegated run returns, run `zentaizo delegation note --codex|--claude --repo <repo>` once for each repo it touched. `--as "<identity>"` overrides the resolved identity.
+1. When the delegated run returns, run `zentaizo delegation note --codex|--claude --repo <repo>` once for each repo it touched. `--as "<identity>"` overrides the resolved identity. `--repo` names the checkout where the commit will be made. In a linked worktree, pass the worktree's path.
 2. At commit time, run `zentaizo commit-trailer --repo <repo>`. It prints one `Co-authored-by:` line for each recorded implementor and a `Reviewed-by:` line for the committing session. Pass `--also-author` when the committing session also wrote code.
 3. After the commit lands, run `zentaizo delegation clear --repo <repo>`.
 

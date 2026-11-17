@@ -7365,6 +7365,191 @@ class AgentsTrimTests(WorkspaceCliCase):
             self.assertIn(phrase, section)
 
 
+class Generation8WordingTests(WorkspaceCliCase):
+    """Generation 8's settled text (tracker issues 2, 26 and 27): plans and
+    efforts state the use first, reviews have a budget and a brief, handoffs
+    quote the user's scope directions, slices and efforts can pause, and the
+    generated README holds true once the atlas exists."""
+
+    TEMPLATES = Path(__file__).resolve().parents[1] / "src/zentaizo/templates"
+
+    def _template(self, name: str) -> str:
+        return (self.TEMPLATES / "skills" / name).read_text()
+
+    @staticmethod
+    def _headings(text: str, level: int) -> list[str]:
+        return [line for line in text.splitlines() if re.match(rf"#{{{level}}} ", line)]
+
+    @staticmethod
+    def _section(text: str, heading: str) -> str:
+        """The text under ``heading``, up to the next heading of its level or higher."""
+        level = len(heading.split(" ", 1)[0])
+        body = text.split(f"\n{heading}\n", 1)[1]
+        return re.split(rf"\n#{{1,{level}}} ", body, maxsplit=1)[0]
+
+    def test_effort_template_states_the_use_and_the_first_pass(self):
+        text = self._template("effort-template.md")
+        headings = self._headings(text, 2)
+        self.assertEqual(
+            headings[:3], ["## Use and key goals", "## First pass", "## Shape of the solution"]
+        )
+        self.assertIn("<framing>\n\n## Use and key goals\n", text)
+        use = self._section(text, "## Use and key goals")
+        self.assertIn("Name the threat that each safeguard answers.", use)
+        for field in ("Who runs it", "Who can change it", "Where it runs", "Who can reach it"):
+            self.assertIn(f"- **{field}:**", use)
+        self.assertIn("Key goals, most important first.", use)
+        first_pass = self._section(text, "## First pass")
+        for field in ("Out of scope", "Time box"):
+            self.assertIn(f"- **{field}:**", first_pass)
+        self.assertIn(
+            "- **Review budget:** one plan review and one code review per slice, "
+            "unless this line says otherwise.",
+            first_pass,
+        )
+        comment = " ".join(text.split("<!--", 1)[1].split("-->", 1)[0].split())
+        self.assertIn("status (open, paused or closed)", comment)
+
+    def test_plan_template_puts_the_use_first(self):
+        text = self._template("plan-template.md")
+        plan = self._section(text, "## Plan")
+        self.assertEqual(self._headings(plan, 3)[0], "### Use and key goals")
+        self.assertIn("Name the effort doc that states the use", plan)
+        approach = self._section(text, "### Approach")
+        self.assertIn(
+            "small, verifiable. Each safeguard names the threat it answers, given the use above.",
+            approach,
+        )
+
+    def test_plan_and_implement_gives_reviews_and_pauses(self):
+        skill = self._template("plan-and-implement.md")
+        top = [h.removeprefix("## ") for h in self._headings(skill, 2)]
+        drafting = top.index("Drafting the plan")
+        self.assertEqual(top[drafting + 1], "Reviews")
+        self.assertTrue(top[drafting + 2].startswith("Handing off"))
+        reviews = self._section(skill, "## Reviews")
+        for phrase in (
+            "Each slice gets one plan review and one code review",
+            'the effort\'s "First pass" block',
+            "A second code review follows only if the fixes change the design.",
+            "Each review brief states the use and the key goals.",
+            "over-engineering as well as gaps",
+            "needed for a key goal or beyond the use",
+            "List the rest for the user as later work, and don't build them.",
+        ):
+            self.assertIn(phrase, reviews)
+
+        executing = self._section(skill, "## Executing the plan")
+        self.assertIn("### Pausing and resuming", executing)
+        pausing = self._section(skill, "### Pausing and resuming")
+        for phrase in (
+            "Set `status: paused`",
+            "append a `## Paused` section",
+            "`zentaizo path active` skips a paused slice",
+            "set `status: in-progress`",
+            "`zentaizo effort pause <label>`",
+            "`zentaizo effort resume <label>`",
+        ):
+            self.assertIn(phrase, pausing)
+
+        self.assertIn(
+            "- **Spec** — the plan file is authoritative. Follow it, except where a quoted "
+            "scope direction in the handoff supersedes it. Stop on any other contradiction.",
+            skill,
+        )
+        self.assertNotIn("a contradiction with it is a STOP", skill)
+        attribution = self._section(skill, "### Commit attribution")
+        step_one = attribution.split("\n1. ", 1)[1].split("\n2. ", 1)[0]
+        self.assertIn(
+            "`--repo` names the checkout where the commit will be made. "
+            "In a linked worktree, pass the worktree's path.",
+            step_one,
+        )
+
+    def test_handoff_template_quotes_scope_directions(self):
+        text = self._template("handoff-template.md")
+        self.assertIn(
+            "as the authoritative spec.\n\n## Scope directions in force\n\nQuote each scope "
+            "direction from the user that still holds, word for word.",
+            text,
+        )
+        self.assertIn(
+            '- "<direction>" (YYYY-MM-DD). Supersedes: <the earlier direction or rule, '
+            'or "nothing">.',
+            text,
+        )
+
+    def test_generated_agents_md_points_reviewers_at_the_rules(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            agents = (self._make_workspace(tmp) / "AGENTS.md").read_text()
+        pointer = "`skills/plan-and-implement.md` gives the procedure for planning"
+        rule = (
+            "Fit each plan and each review to how the software is used. A review brief "
+            "states the use and the key goals, and asks the reviewer to report "
+            "over-engineering as well as gaps. Before you write a review brief or do a "
+            "review, read § Reviews in `skills/plan-and-implement.md`."
+        )
+        paragraphs = agents.split("\n\n")
+        index = next(i for i, p in enumerate(paragraphs) if p.startswith(pointer))
+        self.assertEqual(paragraphs[index + 1], rule)
+
+    def test_generated_readme_holds_true_once_the_atlas_exists(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            readme = (workspace / "README.md").read_text()
+            self.assertTrue((workspace / "zentaizo.lock.json").is_file())
+        self.assertNotIn("do not exist yet", readme)
+        self.assertNotIn("intentionally starts without", readme)
+        self.assertIn(
+            "A new workspace has no `zentaizo.atlas.json` yet: the atlas is the first thing "
+            "you author (see below). `zentaizo create` writes `zentaizo.lock.json` with the "
+            "conventions stamp, and `zentaizo fetch` adds the resolved sources.",
+            readme,
+        )
+        first_step = self._section(readme, "## First Step")
+        self.assertTrue(
+            first_step.lstrip().startswith(
+                "If `zentaizo.atlas.json` does not exist yet, the first useful interaction "
+                "is to ask an AI agent"
+            ),
+            first_step,
+        )
+
+    def test_scaffolds_fill_the_new_templates(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            ws = str(workspace)
+            code, _, _ = self._run(["effort", "new", "dojo", "--describe", "Rotate keys", "-C", ws])
+            self.assertEqual(code, 0)
+            effort_doc = (workspace / "sessions/efforts/0002-dojo.md").read_text()
+            self.assertNotIn("<framing>", effort_doc)
+            self.assertIn("Rotate keys\n\n## Use and key goals\n", effort_doc)
+            self.assertIn("## First pass", effort_doc)
+
+            code, plan_rel, _ = self._run(["next-change", "wire", "-C", ws])
+            self.assertEqual(code, 0)
+            plan = (workspace / plan_rel.strip()).read_text()
+            self.assertRegex(plan, r'created: "\d{4}-\d{2}-\d{2}T')
+            self.assertIn("## Plan", plan)
+            self.assertIn("### Use and key goals", plan)
+
+            code, tied_rel, _ = self._run(["next-handoff", "1", "-C", ws])
+            self.assertEqual(code, 0)
+            tied = (workspace / tied_rel.strip()).read_text()
+            self.assertIn(
+                f"Implement the plan at `{plan_rel.strip()}` as the authoritative spec.\n\n"
+                "## Scope directions in force\n",
+                tied,
+            )
+
+            code, untied_rel, _ = self._run(["next-handoff", "0000", "kickoff", "-C", ws])
+            self.assertEqual(code, 0)
+            untied = (workspace / untied_rel.strip()).read_text()
+            self.assertNotIn("authoritative spec", untied)
+            self.assertIn("-->\n\n## Scope directions in force\n", untied)
+            self.assertNotIn("\n\n\n", untied)
+
+
 class ConventionsTests(WorkspaceCliCase):
     """Conventions-generation tracking: the create stamp, `zentaizo upgraded`,
     and the three-state (plus workspace-ahead) `status` reporting."""
