@@ -106,7 +106,7 @@ VALID_DOC_KINDS = ("api-reference", "guide", "tutorial", "spec", "changelog")
 # generated workspace artifacts or session-file conventions — the same class
 # of change docs/design/versioning.md already calls MINOR. Behavior-only
 # releases leave it alone, so `zentaizo status` never over-reports staleness.
-CONVENTIONS_GENERATION = 7
+CONVENTIONS_GENERATION = 8
 
 # One concise entry per generation (machine/AI-read: `status` prints them as
 # "missed" lines and the upgrade-zentaizo skill scopes its reconciliation by
@@ -140,6 +140,14 @@ CONVENTIONS_DELTAS = {
     "skills/plan-and-implement.md, which README.md and the global skill now cite "
     "(keep workspace-specific AGENTS.md sections); the plan, effort, report and "
     "brainstorming templates ask agents to keep their opening comment",
+    8: "skills/effort-template.md, skills/plan-template.md, skills/plan-and-implement.md "
+    "and skills/handoff-template.md: efforts and plans state the use and the key goals "
+    "first, the effort doc gains a 'First pass' block, plan-and-implement gains "
+    "§ Reviews and § Pausing and resuming, and handoffs quote the user's scope "
+    "directions; README.md: the atlas and lock sentences hold true once the atlas "
+    "exists; AGENTS.md: one paragraph in § Recording Work points reviewers at § Reviews "
+    "(keep workspace text in all three); efforts and slices can pause "
+    "(`zentaizo effort pause`/`resume`, `status: paused`), which needs no migration",
 }
 
 

@@ -7817,6 +7817,25 @@ class ConventionsTests(WorkspaceCliCase):
         ):
             self.assertIn(phrase, delta)
 
+    def test_generation_8_names_each_changed_file(self):
+        from zentaizo.cli import CONVENTIONS_DELTAS
+
+        self.assertGreaterEqual(CONVENTIONS_GENERATION, 8)
+        delta = CONVENTIONS_DELTAS[8]
+        for phrase in (
+            "skills/effort-template.md",
+            "skills/plan-template.md",
+            "skills/plan-and-implement.md",
+            "skills/handoff-template.md",
+            "README.md",
+            "AGENTS.md: one paragraph in § Recording Work points reviewers at § Reviews",
+            "keep workspace text",
+            "`zentaizo effort pause`/`resume`",
+            "`status: paused`",
+            "needs no migration",
+        ):
+            self.assertIn(phrase, delta)
+
     def test_upgraded_creates_missing_lock_when_atlas_exists(self):
         from zentaizo.cli import CONVENTIONS_GENERATION
 
