@@ -283,6 +283,8 @@ the effort label. Repos can also be attached at creation time (`--repo` on
 ```bash
 zentaizo effort list           # all efforts; the current one is marked
 zentaizo effort show expiry    # plan doc path, description, repos/branches, slices
+zentaizo effort pause expiry   # at a milestone, with more work planned later
+zentaizo effort resume expiry  # when that work starts
 zentaizo effort close expiry   # when the work lands
 ```
 

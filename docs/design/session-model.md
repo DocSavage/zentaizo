@@ -34,7 +34,7 @@ single source of truth per field so the facets cannot drift:
 
 - **Machine state** lives in `sessions/efforts.json` (the registry). Each entry
   carries `label`, an integer `number`, a one-line `description`, `status`
-  (`open`/`closed`), a `repos` map of `{ name: { branch, base } }`, and
+  (`open`/`paused`/`closed`), a `repos` map of `{ name: { branch, base } }`, and
   `created`/`updated` timestamps. The registry also tracks `current` — the
   effort that `next-*` and `path` default to, the deterministic
   git-`HEAD`-analogue that replaces "the checked-out branch" as the signal for
@@ -45,8 +45,9 @@ single source of truth per field so the facets cannot drift:
   frontmatter is deliberately minimal (`created` + `edited_by` only); status, the
   branch map, and the number are registry-owned. The template
   (`src/zentaizo/templates/skills/effort-template.md`) is lean: a framing line
-  then `Shape of the solution` / `Constraints & appetite` / `Non-goals /
-  deferred` / `Open questions` / `Phasing & related efforts`.
+  then `Use and key goals` / `First pass` / `Shape of the solution` /
+  `Constraints & appetite` / `Non-goals / deferred` / `Open questions` /
+  `Phasing & related efforts`.
 
 The number is **registry-owned and allocated** by `allocate_effort_number()` as
 `1 + max(existing registry numbers)`; the filesystem is never the allocator. A
@@ -61,7 +62,8 @@ per-repo branch/base, and the effort number; the **filesystem** owns slice
 numbering. The registry deliberately does *not* store the slice counter, so
 creating a slice never writes the registry — keeping it a low-frequency,
 low-conflict file (written only by `effort new` / `set-branch` / `close` /
-`switch` — `switch` moves the `current` pointer, which is registry state). Of a
+`pause` / `resume` / `switch` — `switch` moves the `current` pointer, which is
+registry state). Of a
 slice's frontmatter, only `label` and `editable_repos` name the effort and its repos;
 `status`, `created`, `short_title`, `edited_by`, and the optional `related` complete
 the template (`templates/skills/plan-template.md`). The branch and base are looked up
@@ -80,8 +82,9 @@ effort: it can carry slices and record editable repos it touches (with
 
 ### The `effort` command group
 
-`effort` (`effort_new` / `switch` / `show` / `list` / `set_branch` / `close`,
-all in `src/zentaizo/cli.py`) manages the registry and reads its state:
+`effort` (`effort_new` / `switch` / `show` / `list` / `set_branch` / `close` /
+`pause` / `resume`, all in `src/zentaizo/cli.py`) manages the registry and reads
+its state:
 
 - **`effort new [label]`** is the constructor and the step that captures intent.
   It allocates the registry number, normalizes or (with no label)
@@ -104,6 +107,13 @@ all in `src/zentaizo/cli.py`) manages the registry and reads its state:
   already-recorded branch, consistent with fail-loud.
 - **`effort close`** flips `status` to `closed` (refusing `main`). A closed
   effort is refused for writes but still readable.
+- **`effort pause` / `effort resume`** flip `status` to `paused` and back to
+  `open` (`_set_paused()`), for work that stops at a milestone with more
+  planned later. Both refuse `main`, as `close` does, and a closed effort,
+  because neither reopens one. `resolve_effort()` refuses a paused effort for
+  writes, as it refuses a closed one, and its message names `effort resume`;
+  reads and `switch` still work. An older CLI keeps and prints `paused` but
+  does not enforce it.
 
 `base` is machine-computed, never guessed: `compute_base()` runs
 `git merge-base <branch> <atlas-ref>` (short SHA) when the repo is fetched and the
@@ -132,7 +142,9 @@ and full agent-chosen words don't truncate-collide.
   from `plan-template.md` (`_next_slice()`); `next-debugging` reuses the same
   plan-shaped template deliberately (a debugging note is "a plan for an
   investigation"). `--short-title` fills the `short_title` frontmatter (capped at
-  `SHORT_TITLE_MAX`), the field the Claude session-title hook reads.
+  `SHORT_TITLE_MAX`), a title for compact session headers. The Claude
+  session-title hook does not read it: `resolve_session_title()` names only the
+  workspace and the effort.
 - **`next-handoff <id> [topic]`** reuses the slice id (never the counter) and
   auto-allocates the next per-slice letter via `next_handoff_letter()` (`a`–`z`,
   then `aa`, `ab`, …, `zz`, `aaa`) — the uniqueness key — with an optional, non-load-bearing topic slug. For `id != 0000`
@@ -150,9 +162,10 @@ ambiguity across dirs is fail-loud); `path slice --next` previews the next stem
 without writing; `path effort` resolves the effort doc; `path handoff <id>` lists
 a slice's handoffs in letter order. **`path active`** (`find_active_plan()`) is
 defined exactly: of the `changes/` files for the effort, drop any whose `status`
-is in `CLOSED_SLICE_STATUSES`, then take the highest counter — so a plan stops
-being "active" the moment closeout marks it terminal (`debugging/` is excluded;
-"active" means the implementation plan).
+is in `INACTIVE_SLICE_STATUSES` (the closed statuses plus `paused`), then take
+the highest counter — so a plan stops being "active" the moment closeout marks
+it terminal or a pause marks it `paused` (`debugging/` is excluded; "active"
+means the implementation plan).
 
 All creators write with `_write_exclusive()` (exclusive-create, refusing to
 clobber and losing cleanly on a same-instant double-run) and emit a uniform
@@ -162,12 +175,17 @@ is not a hotspot, and git worktrees are the escape hatch.
 
 ### Slice statuses
 
-Statuses are free-form strings; the only behavior is membership in
-`CLOSED_SLICE_STATUSES = {"done", "superseded", "abandoned"}` (`src/zentaizo/cli.py`),
-which `path active`/`find_active_slice()` and the `short_title` warning check key
-on. `superseded` distinguishes *work continued under a successor plan* from
-`abandoned` (*work we decided not to do*); the CLI handles all three identically
-wherever "closed" matters, including `effort show`'s per-slice status display.
+Statuses are free-form strings; the only behavior is membership in two sets in
+`src/zentaizo/cli.py`. `CLOSED_SLICE_STATUSES = {"done", "superseded", "abandoned"}`
+is what the `short_title` warning check keys on. `superseded` distinguishes
+*work continued under a successor plan* from `abandoned` (*work we decided not
+to do*); the CLI handles all three identically wherever "closed" matters.
+`INACTIVE_SLICE_STATUSES` adds `paused`, and `path active`/`find_active_plan()`
+keys on it. A paused slice stopped at a milestone and resumes later, so it is
+skipped as the active plan but is not closed: `validate` still warns about its
+empty `short_title`. A slice pauses by a frontmatter edit, with a `## Paused`
+section in the plan, and resumes by setting `status: in-progress`; no command
+does either. `effort show` prints each slice's stored status.
 
 ### The handoff / restart loop
 
@@ -245,7 +263,8 @@ every frontmatter-bearing file.
 | No `next-effort` | `effort new` is the constructor | An effort is the parent of slices and already owns a lifecycle namespace; `next-effort` would re-split the collapse |
 | `base` field | Machine-computed via `merge-base`, else `null` | The one judgment field the CLI fills — only because it comes from real git state, never inferred |
 | Handoff uniqueness | Per-slice letter `a`–`z`, then `aa`, `ab`, … (lowercase only), reusing the slice id | Case-insensitive filesystems make uppercase a latent collision; the optional topic stays non-load-bearing |
-| `path active` keys on status | Drop `CLOSED_SLICE_STATUSES`, take highest counter | A finished plan stops being active the instant closeout marks it terminal |
+| `path active` keys on status | Drop `INACTIVE_SLICE_STATUSES` (closed or paused), take highest counter | A finished or paused plan stops being active the instant its status says so |
+| Pausing | `effort pause`/`resume` in the registry; `status: paused` in a slice's frontmatter | Work that stops at a milestone, with more planned later, gets a status; a paused effort refuses new slices and handoffs, so a pause means what it says |
 | Editor identity | Resolved from the shared commit-trailer cache, never hand-written | A model can't reliably name its own id; keeps `edited_by` consistent with commit attribution |
 | Existing-workspace migration | Delegated to the `upgrade-zentaizo` skill, not a CLI command | Convention bumps touch frontmatter/filenames/cross-refs — reconciliation is an AI-driven plan, not an overwrite |
 
@@ -266,8 +285,12 @@ every frontmatter-bearing file.
   consumption / a `path brainstorming` resolver — deferred; the directory stays
   permissive and brainstorming links stay advisory until real usage justifies
   schema.
-- **Status enforcement** — rejected; statuses stay free-form strings,
-  `CLOSED_SLICE_STATUSES` membership is the only behavior.
+- **Status enforcement** — rejected; statuses stay free-form strings, and
+  membership in `CLOSED_SLICE_STATUSES` and `INACTIVE_SLICE_STATUSES` is the
+  only behavior.
+- **A command to pause a slice**, and **reopening a closed effort** — not
+  taken. A slice changes status by a frontmatter edit, as it does at every
+  other step, and an effort with work left is paused, not closed.
 - **Automating the restart itself** — out of scope; the user still opens the fresh
   session and gives a thin signal, no conversational state leaves the committed
   files.

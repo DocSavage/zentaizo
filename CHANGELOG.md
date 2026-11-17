@@ -6,6 +6,64 @@ This project uses the Keep a Changelog format. Versions 0.8.0 and earlier predat
 
 ## [Unreleased]
 
+Existing workspaces reach the new generation through an `upgrade-zentaizo`
+pass. It changes skills and generated text only, so the pass migrates no
+session files. **Conventions generation: 8.**
+
+### Added
+
+- `zentaizo effort pause <label>` and `zentaizo effort resume <label>`
+  (tracker issue #26, part 3). A paused effort takes no new slices or
+  handoffs: `next-change`, `next-debugging` and `next-handoff` refuse it and
+  name `effort resume`. Reads, `effort switch` and `effort close` still work
+  on it. Both commands refuse `main` and a closed effort. `effort list` and
+  `effort show` print the status. An older zentaizo shows `paused` but still
+  lets a paused effort take new slices and handoffs, so update zentaizo on
+  each machine that works in the workspace.
+- A slice can pause as well: set `status: paused` in its frontmatter, add a
+  `## Paused` section, and run `zentaizo edited`. `zentaizo path active`
+  skips a paused slice. `zentaizo validate` still warns when a paused slice
+  has an empty `short_title`, because a paused slice is not closed.
+
+### Changed
+
+- **Conventions generation 8** fits plans and reviews to how the software is
+  used (tracker issue #27). The effort template gains a "Use and key goals"
+  section: who runs the software, who can change it, where it runs, who can
+  reach it, and the key goals. The plan template opens its Plan section with
+  "Use and key goals", and its Approach asks each safeguard to name the
+  threat it answers. `skills/plan-and-implement.md` gains § Reviews: one plan
+  review and one code review per slice by default, a brief that states the
+  use and the key goals and asks for over-engineering as well as gaps, and
+  findings that no key goal needs listed as later work. The generated
+  `AGENTS.md` gains one paragraph that points reviewers at § Reviews.
+- **Conventions generation 8** also keeps a first pass in bounds (tracker
+  issue #26, parts 1 and 2). The effort template gains a "First pass" block
+  with what is out of scope, a time box and the review budget. The handoff
+  template gains "Scope directions in force": each of the user's scope
+  directions, quoted word for word, with its date and what it supersedes. The
+  Spec rule in § Handing off now yields to a quoted scope direction, and
+  `skills/plan-and-implement.md` gains § Pausing and resuming.
+- The generated `README.md` no longer says that the atlas and the lock "do
+  not exist yet" (tracker issue #2). `zentaizo create` writes the lock, and
+  the sentences about the atlas hold true once it exists.
+- `skills/plan-and-implement.md` says that `--repo` on
+  `zentaizo delegation note` names the checkout where the commit will be
+  made, so in a linked worktree it is the worktree's path (tracker issue
+  #17).
+- The `upgrade-zentaizo` skill skips a workspace only when `zentaizo status`
+  reports `Conventions: current`. It used to skip one whose `AGENTS.md`
+  matched the template, which missed a generation that changes only skills.
+  One fleet plan can cover several workspaces when every generation the pass
+  crosses changes only skills, `README.md` and template text in `AGENTS.md`;
+  each workspace keeps its own diff, text, stamp and commit. A workspace that
+  missed several generations takes each one's steps in order. Pre-flight puts
+  `zentaizo validate` failures that come from old conventions into the
+  migration plan instead of requiring a fix first. A new § Generation 8 lists
+  that generation's steps.
+- The `zentaizo path active` error says that it skips closed and paused
+  plans.
+
 ## [0.19.2] - 2026-11-15
 
 ### Fixed

@@ -249,9 +249,13 @@ zentaizo effort show [LABEL]
 zentaizo effort switch LABEL
 zentaizo effort set-branch LABEL --repo NAME[=BRANCH] [--base SHA]
 zentaizo effort close LABEL
+zentaizo effort pause LABEL
+zentaizo effort resume LABEL
 ```
 
-`effort list` shows all efforts and marks the current one. `effort show` prints the effort doc path, description, repos/branches, and slices. `effort switch` changes the current pointer. `effort set-branch` records repo participation: bare `--repo NAME` attaches a repo with no branch yet (`branch: null`, `base: null`), while `--repo NAME=BRANCH` records a real branch and computes the merge base when possible. Bare `--repo NAME` refuses to erase an existing recorded branch; pass `NAME=BRANCH` to update it. `effort close` closes non-main efforts; `main` is the uncloseable deliverable trunk.
+`effort list` shows all efforts and marks the current one. `effort show` prints the effort doc path, description, repos/branches, and slices. Both print each effort's status: `open`, `paused` or `closed`. `effort switch` changes the current pointer. `effort set-branch` records repo participation: bare `--repo NAME` attaches a repo with no branch yet (`branch: null`, `base: null`), while `--repo NAME=BRANCH` records a real branch and computes the merge base when possible. Bare `--repo NAME` refuses to erase an existing recorded branch; pass `NAME=BRANCH` to update it. `effort close` closes non-main efforts, paused ones included; `main` is the uncloseable deliverable trunk.
+
+`effort pause` sets an effort's status to `paused`, for work that stops at a milestone with more planned later. `effort resume` sets it back to `open`. Both refuse `main` and a closed effort. A paused effort takes no new slices or handoffs: `next-change`, `next-debugging` and `next-handoff` refuse it and name `effort resume`. Reads and `effort switch` still work. A slice pauses without a command: set `status: paused` in its frontmatter, then run `zentaizo edited`. An older zentaizo shows `paused` but does not enforce it.
 
 ```bash
 zentaizo path effort [LABEL]
@@ -261,7 +265,7 @@ zentaizo path active
 zentaizo path handoff <ID>
 ```
 
-`path effort` resolves the effort doc from the registry number and label. `path slice` recovers an existing `changes/` or `debugging/` file by numeric id; `--next` previews the next `<label>-NNNN` id without writing. `path active` resolves the highest open plan for the current effort. `path handoff` lists handoffs tied to a slice id.
+`path effort` resolves the effort doc from the registry number and label. `path slice` recovers an existing `changes/` or `debugging/` file by numeric id; `--next` previews the next `<label>-NNNN` id without writing. `path active` resolves the highest-numbered plan in `changes/` for the current effort that is neither closed (`done`, `superseded` or `abandoned`) nor `paused`. `path handoff` lists handoffs tied to a slice id.
 
 ```bash
 zentaizo next-change SLUG [--short-title TEXT]
@@ -272,7 +276,7 @@ zentaizo next-note SLUG
 zentaizo next-report SLUG
 ```
 
-These commands allocate session files through the CLI. `next-change` and `next-debugging` share the per-effort slice counter and scaffold frontmatter from `skills/plan-template.md`; `--short-title` fills the `short_title` frontmatter field and rejects values over 30 characters. It trims whitespace at either end of the title, then writes the title as a double-quoted YAML string, so a title with a colon, a backslash or a quote reads back exactly. A character that YAML cannot hold as it is, such as a control character, becomes a `\u` escape. `next-handoff` creates a per-slice handoff letter without consuming the slice counter. `next-brainstorming` writes a dated, provenance-bearing planning input under `sessions/brainstorming/`; raw freeform dumps are still allowed there. `next-note` writes a dated Q&A log under `sessions/questions/`. `next-report` writes a living report under `sessions/reports/`.
+These commands allocate session files through the CLI. `next-change` and `next-debugging` share the per-effort slice counter and scaffold frontmatter from `skills/plan-template.md`; `--short-title` fills the `short_title` frontmatter field and rejects values over 30 characters. It trims whitespace at either end of the title, then writes the title as a double-quoted YAML string, so a title with a colon, a backslash or a quote reads back exactly. A character that YAML cannot hold as it is, such as a control character, becomes a `\u` escape. `next-handoff` creates a per-slice handoff letter without consuming the slice counter. `next-change`, `next-debugging` and `next-handoff` refuse a closed or paused effort. `next-brainstorming` writes a dated, provenance-bearing planning input under `sessions/brainstorming/`; raw freeform dumps are still allowed there. `next-note` writes a dated Q&A log under `sessions/questions/`. `next-report` writes a living report under `sessions/reports/`.
 
 Every command in this section accepts `-C PATH` / `--workspace PATH` to target a workspace other than the current directory (it defaults to `.`).
 

@@ -242,7 +242,9 @@ Work is grouped into **efforts** — named bodies of work that may span several
 editable repos. `sessions/efforts.json` owns each effort's label, number,
 status, current pointer, and repo branch/base map. `sessions/efforts/NNNN-<label>.md`
 is the human-authored effort plan doc; the CLI derives its path from the
-registry number and label.
+registry number and label. An effort's status is `open`, `paused` or `closed`.
+A paused effort takes no new slices or handoffs until `zentaizo effort resume`;
+a closed one takes none at all.
 
 The effort label, not a git branch, prefixes a slice's filename
 (`<label>-NNNN-<slug>.md`). The CLI allocates every session file — `zentaizo
@@ -265,6 +267,12 @@ workspace intent: review it like the rest of the plan frontmatter. It is not
 machine lock state and does not belong in `zentaizo.lock.json`. The CLI writes
 the title as a double-quoted YAML string; a hand-written title may also be
 plain or single-quoted.
+
+A slice's `status` moves from `planned` to `in-progress`, then to `done`,
+`abandoned` or `superseded`, the closed statuses. A slice that stops at a
+milestone, with more work planned later, is `paused`: the plan gets a
+`## Paused` section, and `status: in-progress` resumes it. `zentaizo path
+active` skips closed and paused slices.
 
 Frontmatter-bearing session files (`efforts/`, generated `brainstorming/`, `changes/`, `debugging/`, `reports/`, `handoffs/`) also carry an `edited_by:` ledger recording which model or human crafted, reviewed, or modified the file, in order. The scaffolding commands stamp the first entry, and `zentaizo edited <path>` appends or refreshes it on later edits — resolving the editor identity from the same commit-trailer cache the commit-attribution hook uses, with a Codex config fallback that populates that cache when it is missing, so the recorded model + reasoning effort is never the model's own guess. Raw/freeform brainstorming dumps may not have frontmatter and are not required to support `zentaizo edited`.
 
