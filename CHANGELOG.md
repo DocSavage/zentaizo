@@ -7,8 +7,9 @@ This project uses the Keep a Changelog format. Versions 0.8.0 and earlier predat
 ## [Unreleased]
 
 Existing workspaces reach the new generation through an `upgrade-zentaizo`
-pass. It changes skills and generated text only, so the pass migrates no
-session files. **Conventions generation: 8.**
+pass. Generation 8 changes only skills and generated text, so it migrates no
+session files. A workspace that missed earlier generations also takes their
+migrations. **Conventions generation: 8.**
 
 ### Added
 
