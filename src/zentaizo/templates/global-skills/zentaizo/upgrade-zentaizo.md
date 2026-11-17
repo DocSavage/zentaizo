@@ -31,7 +31,7 @@ Symptoms that motivate running it:
 
 Do **not** run it for:
 
-- Workspaces whose `AGENTS.md` matches the current template byte-for-byte. There
+- A workspace for which `zentaizo status` reports `Conventions: current`. There
   is nothing to do.
 - Trivial typo fixes in template prose. Just edit the workspace file directly.
 - Adding the workspace's project-specific instructions. That's atlas curation
@@ -48,12 +48,12 @@ Do **not** run it for:
    read them first and let them focus the diff phase. An unstamped
    workspace (`Conventions: not tracked`) gets the full reconciliation —
    diff everything.
-1. Run `zentaizo validate` in the workspace and resolve anything it reports
-   **before** starting the upgrade. The most common pre-existing issue is
-   dangling `path:` entries in `zentaizo.atlas.json` whose targets were
-   renamed or removed in earlier work. Integrity bugs in the workspace are
-   not part of an upgrade's scope — fixing them up front keeps the upgrade
-   diff narrow and the `## Outcome` honest about what changed.
+1. Run `zentaizo validate`. Put failures that come from old conventions into
+   the migration plan, and fix the others first. Run `zentaizo validate` again
+   before `zentaizo upgraded`. The most common other failure is a dangling
+   `path:` entry in `zentaizo.atlas.json` whose target was renamed or removed
+   in earlier work. Fixing such failures up front keeps the upgrade diff
+   narrow and the `## Outcome` honest about what changed.
 2. Confirm the workspace is clean in git (`git status` shows no unstaged
    changes), or that the user understands the upgrade will land alongside their
    existing work-in-progress.
@@ -110,9 +110,12 @@ For every difference, decide which category it belongs to:
   Action: write the new template content into the workspace file.
 - **Workspace-ahead, keep.** The workspace deliberately diverged for
   project-specific reasons (a custom section in AGENTS.md, a tightened rule, a
-  project-specific note). Action: preserve the workspace's content. If the
-  divergence looks broadly useful, surface it to the user as a candidate to
-  promote upstream into Zentaizo, but do not silently re-upstream it.
+  project-specific note). Any workspace text that differs from the old
+  template counts, whether it is a section, an edit to a skill, or a whole
+  `README.md` that the owner rewrote. Action: preserve the workspace's
+  content. If the divergence looks broadly useful, surface it to the user as a
+  candidate to promote upstream into Zentaizo, but do not silently re-upstream
+  it.
 - **Both diverged.** Template and workspace both moved in the same area but in
   different directions. Action: ask the user. Do not guess.
 - **Convention rename.** A frontmatter field, filename pattern, or directory
@@ -186,6 +189,12 @@ exist yet — write the numbered seed `efforts.json` by hand and backfill the
 plan's `## Plan` section lays out every file affected and the verification the
 user will use to confirm correctness.
 
+One plan can cover several workspaces, as a fleet plan kept in one of them,
+when every generation that the pass crosses changes only skills, the
+generated `README.md`, and template text in the generated `AGENTS.md`. Each
+workspace still gets its own diff, keeps its own text, runs
+`zentaizo upgraded`, and gets its own commit.
+
 ### 4. Execute on approval
 
 Once the plan is approved by the user, follow `plan-and-implement.md`'s
@@ -211,8 +220,10 @@ executing-the-plan procedure exactly. Specifically:
 
 Most deltas are template text, and the diff phase finds them. Some generations
 also retire or move artifacts that no template produces, so a diff never shows
-them. When the pass crosses one of these generations, add its steps to the
-migration plan.
+them, and some need care that a diff does not show. When the pass crosses one
+of these generations, add its steps to the migration plan. A workspace that
+missed several generations takes the steps of every generation it missed, in
+order, before `zentaizo upgraded`.
 
 ### Generation 7: retired knowledge-graph artifacts
 
@@ -286,6 +297,24 @@ these two steps need care:
 2. Search the workspace-specific text that stays for references to the three
    removed sections, such as "§ Filename Convention". Point each one at the
    matching subsection of § Reference in `skills/plan-and-implement.md`.
+
+### Generation 8: the use first, reviews and a paused state
+
+Generation 8 changes four skills, two passages of the generated `README.md`,
+and one paragraph of the generated `AGENTS.md`. Keep the workspace's own text
+in each of them, as § 2 says for workspace-ahead text.
+
+1. Copy `skills/effort-template.md`, `skills/plan-template.md`,
+   `skills/plan-and-implement.md` and `skills/handoff-template.md` from the
+   templates.
+2. In `README.md`, adopt the new sentence about the atlas and the lock under
+   § Layout, and the new opening of § First Step.
+3. In `AGENTS.md` § Recording Work in `sessions/`, add the paragraph that
+   starts "Fit each plan and each review", right after the paragraph that
+   starts "`skills/plan-and-implement.md` gives the procedure".
+
+The paused state needs no migration. Efforts and slices keep their status,
+and existing plans and effort docs need no new sections.
 
 ## Boundaries — what this procedure does NOT do
 

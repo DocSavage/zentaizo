@@ -7664,6 +7664,57 @@ class Generation8WordingTests(WorkspaceCliCase):
             self.assertIn("-->\n\n## Scope directions in force\n", untied)
             self.assertNotIn("\n\n\n", untied)
 
+    def test_upgrade_skill_handles_generation_8(self):
+        upgrade = (self.TEMPLATES / "global-skills/zentaizo/upgrade-zentaizo.md").read_text()
+
+        def flat(text: str) -> str:
+            return " ".join(text.split())
+
+        skip = flat(upgrade.split("Do **not** run it for:", 1)[1].split("\n## ", 1)[0])
+        self.assertIn("`zentaizo status` reports `Conventions: current`", skip)
+        self.assertNotIn("byte-for-byte", upgrade)
+
+        preflight = flat(self._section(upgrade, "## Pre-flight"))
+        self.assertIn(
+            "Run `zentaizo validate`. Put failures that come from old conventions into the "
+            "migration plan, and fix the others first. Run `zentaizo validate` again before "
+            "`zentaizo upgraded`.",
+            preflight,
+        )
+        self.assertNotIn("resolve anything it reports", preflight)
+
+        classify = flat(self._section(upgrade, "### 2. Classify each delta"))
+        self.assertIn("Any workspace text that differs from the old template counts", classify)
+        self.assertIn("a whole `README.md` that the owner rewrote", classify)
+
+        migrations = flat(self._section(upgrade, "### 3. Plan artifact migrations"))
+        self.assertIn("One plan can cover several workspaces", migrations)
+        self.assertIn(
+            "changes only skills, the generated `README.md`, and template text in the "
+            "generated `AGENTS.md`. Each workspace still gets its own diff, keeps its own "
+            "text, runs `zentaizo upgraded`, and gets its own commit.",
+            migrations,
+        )
+
+        steps = flat(self._section(upgrade, "## Generation-specific steps"))
+        self.assertIn(
+            "A workspace that missed several generations takes the steps of every generation "
+            "it missed, in order, before `zentaizo upgraded`.",
+            steps,
+        )
+        gen8 = flat(
+            self._section(upgrade, "### Generation 8: the use first, reviews and a paused state")
+        )
+        for name in ("effort", "plan", "handoff"):
+            self.assertIn(f"`skills/{name}-template.md`", gen8)
+        self.assertIn("`skills/plan-and-implement.md`", gen8)
+        self.assertIn("§ First Step", gen8)
+        self.assertIn('"Fit each plan and each review"', gen8)
+        self.assertIn("The paused state needs no migration.", gen8)
+        with tempfile.TemporaryDirectory() as tmp:
+            agents = (self._make_workspace(tmp) / "AGENTS.md").read_text()
+        self.assertIn("\n\nFit each plan and each review", agents)
+
 
 class ConventionsTests(WorkspaceCliCase):
     """Conventions-generation tracking: the create stamp, `zentaizo upgraded`,
