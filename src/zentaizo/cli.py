@@ -4544,6 +4544,9 @@ UPGRADE_ZENTAIZO_HINT = "Run the experimental `upgrade-zentaizo` skill to reconc
 
 # Slice statuses that mean "no longer the active plan" (closeout-owned).
 CLOSED_SLICE_STATUSES = {"done", "superseded", "abandoned"}
+# Statuses that `path active` skips. A paused slice is not closed: it stopped
+# at a milestone and resumes later, so `validate` still checks its short_title.
+INACTIVE_SLICE_STATUSES = CLOSED_SLICE_STATUSES | {"paused"}
 
 # Curated themed wordlist — well-known Japanese words an English speaker knows.
 # Only a *suggestion* fallback for `effort new` when the agent passes no label;
@@ -4898,8 +4901,9 @@ def resolve_effort(
     A label that is absent from the registry but already present on disk
     (legacy workspace) resolves to a synthetic open effort so reads/creates
     still work; an unknown label with no on-disk files is an error (exit 2).
-    A *closed* effort is refused only for writes (``for_write=True``) — reads
-    (``path``/``effort show``) can still resolve a closed effort.
+    A *closed* or *paused* effort is refused only for writes (``for_write=True``,
+    the commands that add slices and handoffs) — reads (``path``/``effort show``)
+    can still resolve it.
     """
     target = label or data.get("current") or MAIN_EFFORT
     effort = find_effort(data, target)
@@ -4912,6 +4916,12 @@ def resolve_effort(
         raise CliError(
             f"Effort {target!r} is closed. Run `zentaizo effort switch <label>` "
             "or `zentaizo effort new <label>` first."
+        )
+    if for_write and effort.get("status") == "paused":
+        raise CliError(
+            f"Effort {target!r} is paused and takes no new slices or handoffs. "
+            f"Run `zentaizo effort resume {target}` first, or "
+            "`zentaizo effort switch <label>` to work on another effort."
         )
     return effort
 
@@ -5186,6 +5196,42 @@ def effort_close(args: argparse.Namespace) -> int:
     return 0
 
 
+def _set_paused(args: argparse.Namespace, paused: bool) -> int:
+    """`effort pause` / `effort resume`: flip an open effort to paused and back.
+
+    A paused effort takes no new slices or handoffs (see `resolve_effort`).
+    Like `close`, these refuse the reserved `main` effort; they also refuse a
+    closed effort, which neither pausing nor resuming reopens.
+    """
+    workspace = pathlib.Path(args.workspace).resolve()
+    sessions_root(workspace)
+    data = load_efforts(workspace)
+    effort = find_effort(data, args.label)
+    if effort is None:
+        raise CliError(f"Unknown effort {args.label!r}.")
+    verb = "paused" if paused else "resumed"
+    if effort.get("label") == MAIN_EFFORT:
+        raise CliError(f"The reserved 'main' effort is the deliverable trunk and cannot be {verb}.")
+    if effort.get("status") == "closed":
+        raise CliError(f"Effort {args.label!r} is closed and cannot be {verb}.")
+    effort["status"] = "paused" if paused else "open"
+    effort["updated"] = utc_now()
+    save_efforts(workspace, data)
+    if args.json:
+        print(json.dumps(effort))
+    else:
+        print(f"Effort {args.label!r} {verb}.")
+    return 0
+
+
+def effort_pause(args: argparse.Namespace) -> int:
+    return _set_paused(args, True)
+
+
+def effort_resume(args: argparse.Namespace) -> int:
+    return _set_paused(args, False)
+
+
 # --------------------------------------------------------------------------
 # Resolver core (read) + creators (write) over the effort registry
 # --------------------------------------------------------------------------
@@ -5213,7 +5259,7 @@ def find_slice_paths(workspace: pathlib.Path, label: str, padded: str) -> list[p
 
 
 def find_active_plan(workspace: pathlib.Path, label: str) -> pathlib.Path | None:
-    """Highest-counter changes/ plan for ``label`` whose status is still open."""
+    """Highest-counter changes/ plan for ``label`` that is neither closed nor paused."""
     changes = workspace / SESSIONS_DIR / "changes"
     pattern = _slice_pattern(label)
     best: tuple[int, pathlib.Path] | None = None
@@ -5222,7 +5268,7 @@ def find_active_plan(workspace: pathlib.Path, label: str) -> pathlib.Path | None
             match = pattern.match(path.name)
             if not match or not path.is_file():
                 continue
-            if read_frontmatter(path).get("status", "") in CLOSED_SLICE_STATUSES:
+            if read_frontmatter(path).get("status", "") in INACTIVE_SLICE_STATUSES:
                 continue
             counter = int(match.group(1))
             if best is None or counter > best[0]:
@@ -5597,7 +5643,7 @@ def path_active(args: argparse.Namespace) -> int:
     workspace, label = _resolve_read_effort(args)
     plan = find_active_plan(workspace, label)
     if plan is None:
-        raise CliError(f"No active (open) plan for effort {label!r}.")
+        raise CliError(f"No active plan for effort {label!r}; closed and paused plans are skipped.")
     return _emit_path(args, workspace, plan, kind="active", label=label, counter=None)
 
 
@@ -6497,6 +6543,20 @@ def _add_effort_parser(sub: argparse._SubParsersAction) -> None:
     close.add_argument("--json", action="store_true", help="emit JSON")
     _add_workspace_arg(close)
     close.set_defaults(func=effort_close)
+
+    pause = effort_sub.add_parser(
+        "pause", help="pause an effort: it takes no new slices or handoffs until resumed"
+    )
+    pause.add_argument("label", help="effort label to pause")
+    pause.add_argument("--json", action="store_true", help="emit JSON")
+    _add_workspace_arg(pause)
+    pause.set_defaults(func=effort_pause)
+
+    resume = effort_sub.add_parser("resume", help="resume a paused effort")
+    resume.add_argument("label", help="effort label to resume")
+    resume.add_argument("--json", action="store_true", help="emit JSON")
+    _add_workspace_arg(resume)
+    resume.set_defaults(func=effort_resume)
 
 
 def _add_label_arg(parser: argparse.ArgumentParser) -> None:

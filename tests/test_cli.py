@@ -3748,6 +3748,88 @@ class EffortTests(WorkspaceCliCase):
             )
             self.assertEqual(main_effort["status"], "open")
 
+    def _status(self, workspace: Path, label: str) -> str:
+        return next(e for e in self._registry(workspace)["efforts"] if e["label"] == label)[
+            "status"
+        ]
+
+    def test_pause_and_resume_flip_status_and_show_it(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            ws = str(workspace)
+            self._run(["effort", "new", "katana", "-C", ws])
+            code, out, _ = self._run(["effort", "pause", "katana", "-C", ws])
+            self.assertEqual((code, out.strip()), (0, "Effort 'katana' paused."))
+            self.assertEqual(self._status(workspace, "katana"), "paused")
+            self.assertIn("* katana (paused, ", self._run(["effort", "list", "-C", ws])[1])
+            self.assertIn("katana (paused)", self._run(["effort", "show", "katana", "-C", ws])[1])
+
+            code, out, _ = self._run(["effort", "resume", "katana", "--json", "-C", ws])
+            self.assertEqual(code, 0)
+            self.assertEqual(json.loads(out)["status"], "open")
+            self.assertEqual(self._status(workspace, "katana"), "open")
+
+    def test_pause_and_resume_refuse_main_and_closed_efforts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            ws = str(workspace)
+            for command in ("pause", "resume"):
+                code, _, err = self._run(["effort", command, "main", "-C", ws])
+                self.assertEqual(code, 2, command)
+                self.assertIn("deliverable trunk", err)
+            self.assertEqual(self._status(workspace, "main"), "open")
+
+            self._run(["effort", "new", "katana", "-C", ws])
+            self._run(["effort", "close", "katana", "-C", ws])
+            for command in ("pause", "resume"):
+                code, _, err = self._run(["effort", command, "katana", "-C", ws])
+                self.assertEqual(code, 2, command)
+                self.assertIn("is closed", err)
+            self.assertEqual(self._status(workspace, "katana"), "closed")
+            self.assertEqual(self._run(["effort", "pause", "ghost", "-C", ws])[0], 2)
+
+    def test_paused_effort_refuses_new_slices_and_handoffs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            ws = str(workspace)
+            self._run(["effort", "new", "katana", "-C", ws])
+            self.assertEqual(self._run(["next-change", "first", "-C", ws])[0], 0)
+            self._run(["effort", "pause", "katana", "-C", ws])
+            for argv in (
+                ["next-change", "second"],
+                ["next-debugging", "probe"],
+                ["next-handoff", "1"],
+                ["next-handoff", "0000", "kickoff"],
+            ):
+                code, _, err = self._run([*argv, "-C", ws])
+                self.assertEqual(code, 2, argv)
+                self.assertIn("is paused", err)
+                self.assertIn("`zentaizo effort resume katana`", err)
+            # --label reaches a paused effort that is not current, too.
+            self._run(["effort", "switch", "main", "-C", ws])
+            code, _, err = self._run(["next-change", "x", "--label", "katana", "-C", ws])
+            self.assertEqual(code, 2)
+            self.assertIn("is paused", err)
+
+            # Reads and switch still work on a paused effort.
+            self.assertEqual(self._run(["effort", "switch", "katana", "-C", ws])[0], 0)
+            self.assertEqual(self._run(["path", "effort", "-C", ws])[0], 0)
+            self.assertEqual(self._run(["path", "slice", "1", "-C", ws])[0], 0)
+            self.assertEqual(self._run(["path", "active", "-C", ws])[0], 0)
+
+            self._run(["effort", "resume", "katana", "-C", ws])
+            self.assertEqual(self._run(["next-change", "second", "-C", ws])[0], 0)
+            self.assertEqual(self._run(["next-handoff", "1", "-C", ws])[0], 0)
+
+    def test_close_accepts_a_paused_effort(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            ws = str(workspace)
+            self._run(["effort", "new", "katana", "-C", ws])
+            self._run(["effort", "pause", "katana", "-C", ws])
+            self.assertEqual(self._run(["effort", "close", "katana", "-C", ws])[0], 0)
+            self.assertEqual(self._status(workspace, "katana"), "closed")
+
     def test_missing_effort_doc_fails_path_and_show(self):
         with tempfile.TemporaryDirectory() as tmp:
             workspace = self._make_workspace(tmp)
@@ -3896,6 +3978,39 @@ class SessionPathTests(WorkspaceCliCase):
             p = workspace / "sessions" / "changes" / "katana-0001-one.md"
             p.write_text(p.read_text().replace("status: planned", "status: abandoned", 1))
             self.assertEqual(self._run(["path", "active", "-C", ws])[0], 2)
+
+    def test_path_active_skips_a_paused_slice(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self._make_workspace(tmp)
+            write_example_atlas(workspace)
+            self._new_effort(workspace)
+            ws = str(workspace)
+            self._out(["next-change", "one", "-C", ws])
+            self._out(["next-change", "two", "-C", ws])
+            top = workspace / "sessions" / "changes" / "katana-0002-two.md"
+            planned = top.read_text()
+            top.write_text(planned.replace("status: planned", "status: paused", 1))
+            self.assertEqual(
+                self._out(["path", "active", "-C", ws]),
+                "sessions/changes/katana-0001-one.md",
+            )
+            # Paused is not closed: validate still asks for its short_title.
+            code, out, _ = self._run(["validate", ws])
+            self.assertEqual(code, 0)
+            self.assertIn("WARNING: sessions/changes/katana-0002-two.md has empty short_title", out)
+
+            bottom = workspace / "sessions" / "changes" / "katana-0001-one.md"
+            bottom.write_text(bottom.read_text().replace("status: planned", "status: paused", 1))
+            code, _, err = self._run(["path", "active", "-C", ws])
+            self.assertEqual(code, 2)
+            self.assertIn("closed and paused plans are skipped", err)
+
+            # Resuming makes the slice active again.
+            top.write_text(planned.replace("status: planned", "status: in-progress", 1))
+            self.assertEqual(
+                self._out(["path", "active", "-C", ws]),
+                "sessions/changes/katana-0002-two.md",
+            )
 
     def test_handoff_letters_and_orphan_refusal(self):
         with tempfile.TemporaryDirectory() as tmp:
